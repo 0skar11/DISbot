@@ -33,7 +33,7 @@ import { handleAfkMessage } from '../services/afkService.js';
 import { handleSalam } from '../services/chat/salamReply.js';
 import { handleQr } from '../services/chat/qrReply.js';
 import { handleMentionGroupCommand } from '../services/mentionGroup.js';
-import { handleStreakCommand, handleStreakMessage } from '../services/cc/streakService.js';
+import { handleStreakCommand, handleStreakMessage, isStreakChannel } from '../services/cc/streakService.js';
 import { handleDangerCommand, handleDangerMessage, punishDanger, blockDangerCommand, DANGER_COMMAND_WORD } from '../services/moderation/dangerList.js';
 
 const AFK_COMMAND = /^\s*[^\p{L}\p{N}\s]{0,3}(?:afk|افك|أفك)(?:\s|$)/iu;
@@ -72,12 +72,13 @@ export default {
       if (await handleOwnerMentionSpam(message)) return;
       if (await handleForeignInviteLink(message)) return;
       if (await handleImageOnlyChannelMessage(message)) return;
-      if (await handleMediaMessage(message)) return;
+      // The streak room takes everyone's daily picture, so the media role guard skips it.
+      if (!isStreakChannel(message.channelId) && await handleMediaMessage(message)) return;
       if (await handleReportChannelMessage(message, { isCommand: (msg) => isBotCommand(msg, client) })) return;
       // Chat XP (runs in the background; the cooldown keeps it from being farmed with commands or spam).
       handleMessageXp(message, client);
       countMessage(client, message.guild.id, message.author.id);
-      // Daily streak (our server only): the first message of the day pays the streak bonus.
+      // Daily streak (our server only): a picture or GIF in the streak room pays the day's bonus.
       handleStreakMessage(message);
       // Clears the author's AFK (unless this is the afk command itself) and announces AFK members they mention.
       await handleAfkMessage(message, client, { isAfkCommand: AFK_COMMAND.test(message.content || '') });

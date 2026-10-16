@@ -4,6 +4,7 @@ import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { getEconomyKey } from '../src/utils/database.js';
 import {
   recordStreakMessage, streakBonus, liveStreak, getStreakLeaderboard, handleStreakCommand, resetStreakCache, STREAK,
+  ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel,
 } from '../src/services/cc/streakService.js';
 
 const USER = '200000000000000001';
@@ -81,5 +82,76 @@ describe('daily streak (report #229)', () => {
     assert.equal(store.size, 0);
     const message = { guild: { id: '300000000000000001', client }, author: { id: USER }, channel: { send: async () => {} } };
     assert.equal(await handleStreakCommand(message, 'ستريك', []), false);
+  });
+});
+
+describe('streak room: pictures and GIFs only, a reply every time, a daily reminder', () => {
+  beforeEach(() => resetStreakCache());
+  const ROOM = '400000000000000099';
+
+  async function room() {
+    const base = setup();
+    const posted = [];
+    const channel = {
+      id: ROOM, topic: '', send: async (payload) => { posted.push(payload); return { id: `m${posted.length}` }; },
+      permissionOverwrites: { cache: new Map(), edit: async () => {} }, setTopic: async () => {},
+    };
+    const guild = { id: HOME_GUILD_ID, client: base.client, channels: { cache: new Map([[ROOM, channel]]), fetch: async () => null } };
+    base.client.guilds = { cache: new Map([[HOME_GUILD_ID, guild]]) };
+    // The room's ID is saved in the guild config, as after the first startup.
+    const { updateGuildConfig } = await import('../src/services/config/guildConfig.js');
+    await updateGuildConfig(base.client, HOME_GUILD_ID, { streakChannelId: ROOM });
+    await ensureStreakChannel(guild);
+    const message = (extra = {}) => {
+      const replies = [];
+      return {
+        guild, client: base.client, channelId: ROOM, author: { id: USER }, content: '', attachments: new Map(), embeds: [],
+        reply: async (payload) => { replies.push(payload); return { delete: async () => {} }; }, react: async () => {}, replies, ...extra,
+      };
+    };
+    return { ...base, guild, posted, message };
+  }
+
+  test('pictures and GIF links count, text does not', () => {
+    const image = { attachments: new Map([['1', { contentType: 'image/png', name: 'a.png' }]]) };
+    assert.equal(hasStreakMedia(image), true);
+    assert.equal(hasStreakMedia({ content: 'https://tenor.com/view/happy-123' }), true);
+    assert.equal(hasStreakMedia({ embeds: [{ data: { type: 'gifv' } }] }), true);
+    assert.equal(hasStreakMedia({ content: 'صباح الخير' }), false);
+  });
+
+  test('a picture updates the streak, a second one says it is done today, text is told it does not count', async () => {
+    const { message, ccOf } = await room();
+    assert.equal(isStreakChannel(ROOM), true);
+    const picture = () => message({ attachments: new Map([['1', { contentType: 'image/gif', name: 'x.gif' }]]) });
+
+    const first = picture();
+    assert.equal((await handleStreakMessage(first)).count, 1);
+    assert.match(first.replies[0].content, /ستريكك اتحدث: \*\*1\*\* يوم/u);
+    assert.equal(ccOf(), STREAK.base);
+
+    const again = picture();
+    assert.equal(await handleStreakMessage(again), null);
+    assert.match(again.replies[0].content, /متحدث النهارده خلاص \(\*\*1\*\* يوم\)/u);
+
+    const text = message({ content: 'ازيكم' });
+    await handleStreakMessage(text);
+    assert.match(text.replies[0].content, /الكلام مابيتحسبش/u);
+    assert.equal(ccOf(), STREAK.base);
+
+    const elsewhere = message({ channelId: '400000000000000001', attachments: picture().attachments });
+    assert.equal(await handleStreakMessage(elsewhere), null);
+    assert.equal(elsewhere.replies.length, 0);
+  });
+
+  test('the evening reminder goes once a day and mentions streaks that would end tonight', async () => {
+    const { client, guild, posted } = await room();
+    await recordStreakMessage(client, HOME_GUILD_ID, USER, NOW - DAY);
+    const evening = NOW - 12 * 60 * 60 * 1000 + (STREAK.reminderHourUtc + 1) * 60 * 60 * 1000;
+    assert.equal(await sendDailyReminder(guild, NOW - 12 * 60 * 60 * 1000 + 60 * 60 * 1000), false, 'too early');
+    assert.equal(await sendDailyReminder(guild, evening), true);
+    assert.match(posted.at(-1).content, /تذكير الستريك/u);
+    assert.deepEqual(posted.at(-1).allowedMentions.users, [USER]);
+    assert.equal(await sendDailyReminder(guild, evening + 60 * 1000), false, 'once a day');
   });
 });

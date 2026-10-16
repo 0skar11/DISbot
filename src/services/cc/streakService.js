@@ -1,12 +1,16 @@
 // streakService.js — the daily streak (report #229, the idea saved for later), our server only.
 //
-// A member who writes in chat on a day (UTC) keeps their streak going; missing a whole day starts it
-// again at 1. The first message of each day pays a bonus that grows with the streak (STREAK.base, then
-// +STREAK.perDay a day, up to STREAK.cap), plus a one-time bonus on the milestones (7, 30, 100 days).
+// A member keeps their streak going by posting a picture or a GIF in the streak room once a day (UTC);
+// text doesn't count (owner's request), and missing a whole day starts it again at 1. The first picture
+// of each day pays a bonus that grows with the streak (STREAK.base, then +STREAK.perDay a day, up to
+// STREAK.cap), plus a one-time bonus on the milestones (7, 30, 100 days); the bot reacts 🔥 on it.
+// Every evening (STREAK.reminderHourUtc) the bot reminds, in the streak room, the members whose streak
+// would end that night.
 // The streak lives next to CC in the economy record as `ccStreak: { day, count, best }`.
 //
-// The streak room sits in the games category, right under the games channel: it holds the live top
-// streak board (edited every few minutes) and the milestone announcements. `ستريك` / `streak` shows a
+// The streak room sits in the games category, right under the games channel: members post their daily
+// picture there and the bot replies to every message (updated, already counted today, or text doesn't
+// count); it also holds the live top streak board (edited every few minutes) and the daily reminder. The media role guard doesn't apply in this room. `ستريك` / `streak` shows a
 // member's streak and `توب ستريك` / `top streak` the longest ones.
 
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
@@ -25,18 +29,40 @@ export const STREAK = {
     perDay: 2,
     cap: 30,
     milestones: { 7: 100, 30: 500, 100: 2000 },
+    // 17:00 UTC is 8 PM in Egypt (summer time), well before the day ends at midnight UTC.
+    reminderHourUtc: 17,
+    // At most this many members are mentioned in the reminder.
+    reminderMentions: 25,
 };
 export const STREAK_CHANNEL_NAME = '🔥┃streak';
 export const STREAK_BOARD_REFRESH_MS = 10 * 60 * 1000;
 const STREAK_BOARD_TITLE = '🔥 Top Streak';
 const BOARD_KEY = 'streak';
 const CONFIG_KEY = 'streakChannelId';
+const REMINDER_KEY = 'streakReminderDay';
+const GIF_LINK = /https?:\/\/(?:\S+\.)?(?:tenor\.com|giphy\.com)\/\S+|https?:\/\/\S+\.gif(?:\?\S*)?(?:\s|$)/iu;
+const IMAGE_EXTENSION = /\.(?:png|jpe?g|gif|webp|bmp|heic|heif|avif)$/iu;
 const BOARD_SIZE = 15;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // The day each member's streak was last counted, so most messages don't touch the database.
 const counted = new Map();
 let timer = null;
+// The streak room's ID once it is known (ensureStreakChannel).
+let streakChannelId = null;
+
+/** Whether a message is in the streak room. */
+export function isStreakChannel(channelId) {
+    return Boolean(streakChannelId) && channelId === streakChannelId;
+}
+
+/** Whether a message has a picture or a GIF: an image file, a GIF link (Tenor, Giphy, .gif) or its embed. */
+export function hasStreakMedia(message) {
+    const attachments = [...(message.attachments?.values?.() || [])];
+    if (attachments.some((file) => (file.contentType ? file.contentType.startsWith('image/') : IMAGE_EXTENSION.test(file.name || '')))) return true;
+    if ((message.embeds || []).some((embed) => ['gifv', 'image'].includes(embed.data?.type || embed.type))) return true;
+    return GIF_LINK.test(message.content || '');
+}
 
 const n = (amount) => amount.toLocaleString('en-US');
 
@@ -107,9 +133,9 @@ export async function streakTopEmbed(client, guild, userId = null, now = Date.no
         color: 0xe67e22,
         title: STREAK_BOARD_TITLE,
         description: [
-            lines.join('\n') || 'لسه محدش عنده ستريك. اكتب في الشات كل يوم!',
+            lines.join('\n') || 'لسه محدش عنده ستريك. ابعت صورة أو GIF هنا كل يوم!',
             '',
-            `📅 اكتب في الشات كل يوم عشان الستريك يكمل، ولو فوّت يوم كامل يرجع من 1.`,
+            `📸 ابعت صورة أو GIF في الروم دي كل يوم عشان الستريك يكمل (الكلام مابيتحسبش)، ولو فوّت يوم كامل يرجع من 1.`,
             `🌀 كل يوم: ${STREAK.base} ${CC.short} + ${STREAK.perDay} كل يوم لحد ${STREAK.cap} • 🏅 ${Object.entries(STREAK.milestones).map(([day, cc]) => `${day} يوم = ${n(cc)}`).join(' • ')}`,
             '',
             summary.join(' • '),
@@ -123,11 +149,11 @@ export async function streakProfileLine(client, guildId, userId, now = Date.now(
     const count = liveStreak(record?.ccStreak, now);
     const best = record?.ccStreak?.best || 0;
     const today = record?.ccStreak?.day === utcDay(now);
-    if (!count) return `🔥 <@${userId}> معندوش ستريك دلوقتي${best ? ` (أحسن ستريك: **${best}** يوم)` : ''}. اكتب في الشات النهارده عشان تبدأ.`;
+    if (!count) return `🔥 <@${userId}> معندوش ستريك دلوقتي${best ? ` (أحسن ستريك: **${best}** يوم)` : ''}. ابعت صورة أو GIF في روم الستريك النهارده عشان تبدأ.`;
     const next = streakBonus(count + 1);
     return [
         `🔥 ستريك <@${userId}>: **${count}** يوم (أحسن: **${Math.max(best, count)}**)`,
-        today ? `✅ اتحسب النهارده. بكرة هتاخد **${next.total}** ${CC.short}.` : `⚠️ لسه ماكتبش النهارده، اكتب في الشات قبل ما اليوم يخلص عشان الستريك مايقعش.`,
+        today ? `✅ اتحسب النهارده. بكرة هتاخد **${next.total}** ${CC.short}.` : `⚠️ لسه مابعتش النهارده، ابعت صورة أو GIF في روم الستريك قبل ما اليوم يخلص عشان الستريك مايقعش.`,
     ].join('\n');
 }
 
@@ -153,12 +179,32 @@ export async function handleStreakCommand(message, commandName, args = []) {
     return true;
 }
 
+const STREAK_TOPIC = 'الستريك اليومي: ابعت صورة أو GIF هنا كل يوم عشان الستريك يكمل وتاخد CC (الكلام مابيتحسبش). اكتب `ستريك` تشوف ستريكك.';
+const MEMBER_ALLOW = [
+    PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions,
+];
+
+/** Members can post pictures and GIFs in the room (it was read-only at first). */
+async function openForPictures(channel, guild) {
+    const everyone = channel.permissionOverwrites?.cache?.get(guild.id);
+    if (everyone && MEMBER_ALLOW.every((flag) => everyone.allow?.has?.(flag))) return;
+    await channel.permissionOverwrites?.edit?.(guild.id, {
+        ViewChannel: true, ReadMessageHistory: true, SendMessages: true, AttachFiles: true, EmbedLinks: true, AddReactions: true,
+    }, { reason: 'Streak room: daily pictures' }).catch((error) => logger.warn(`[STREAK] Could not open the room: ${error.message}`));
+    if (channel.topic !== STREAK_TOPIC) await channel.setTopic?.(STREAK_TOPIC).catch(() => {});
+}
+
 /** Finds or makes the streak room in the games category, right under the games channel. */
 export async function ensureStreakChannel(guild) {
     if (!isHomeGuild(guild?.id)) return null;
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
     const saved = config?.[CONFIG_KEY] && (guild.channels.cache.get(config[CONFIG_KEY]) || await guild.channels.fetch(config[CONFIG_KEY]).catch(() => null));
-    if (saved) return saved;
+    if (saved) {
+        streakChannelId = saved.id;
+        await openForPictures(saved, guild);
+        return saved;
+    }
 
     const games = guild.channels.cache.get(GAMES_CHANNEL_ID) || await guild.channels.fetch(GAMES_CHANNEL_ID).catch(() => null);
     const parentId = games?.parentId || null;
@@ -169,15 +215,18 @@ export async function ensureStreakChannel(guild) {
             name: STREAK_CHANNEL_NAME,
             type: ChannelType.GuildText,
             parent: parentId,
-            topic: 'الستريك اليومي: اكتب في الشات كل يوم عشان الستريك يكمل وتاخد CC. اكتب `ستريك` في أي روم تشوف ستريكك.',
+            topic: STREAK_TOPIC,
             reason: 'Streak room (report #229)',
             permissionOverwrites: [
-                { id: guild.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory], deny: [PermissionFlagsBits.SendMessages, PermissionFlagsBits.AddReactions, PermissionFlagsBits.CreatePublicThreads] },
-                ...(me ? [{ id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.ReadMessageHistory] }] : []),
+                { id: guild.id, allow: MEMBER_ALLOW, deny: [PermissionFlagsBits.CreatePublicThreads] },
+                ...(me ? [{ id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions, PermissionFlagsBits.ReadMessageHistory] }] : []),
             ],
         });
         if (games && Number.isInteger(games.position)) await channel.setPosition(games.position + 1).catch(() => {});
+    } else {
+        await openForPictures(channel, guild);
     }
+    streakChannelId = channel.id;
     await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: channel.id }).catch(() => {});
     return channel;
 }
@@ -200,23 +249,47 @@ export async function publishStreakBoard(guild) {
     return { status: 'sent', channelId: channel.id };
 }
 
-/** Announces a milestone in the streak room. */
-export async function announceStreakMilestone(guild, userId, result) {
-    if (!result?.milestone) return false;
-    const channel = await ensureStreakChannel(guild).catch(() => null);
-    if (!channel?.send) return false;
-    await channel.send({
-        content: `🏅 <@${userId}> وصل ستريك **${result.count}** يوم! 🔥 خد **${n(result.bonus)}** ${CC.short}.`,
-        allowedMentions: { users: [userId] },
-    }).catch(() => {});
-    return true;
+// Replies that only say "already counted" or "text doesn't count" go away after this long.
+const SHORT_REPLY_DELETE_MS = 15_000;
+
+/** The reply to a message in the streak room: counted now, already counted today, or text only. */
+export function streakReplyText(userId, { result = null, current = 0, media = true } = {}) {
+    if (!media) return `📸 <@${userId}> الكلام مابيتحسبش في الستريك، ابعت صورة أو GIF.`;
+    if (result) {
+        const milestone = result.milestone ? ` 🏅 وجايزة **${n(result.milestone)}**` : '';
+        const restarted = result.restarted ? ' (الستريك كان وقع ورجع من الأول)' : '';
+        return `🔥 <@${userId}> ستريكك اتحدث: **${result.count}** يوم${restarted}، وخدت **${n(result.bonus)}** ${CC.short}${milestone}. ارجع بكرة!`;
+    }
+    return `✅ <@${userId}> ستريكك متحدث النهارده خلاص (**${current}** يوم). ابعت تاني بكرة.`;
 }
 
-/** messageCreate: counts the message for the streak and announces a milestone. Never throws. */
+async function replyInRoom(message, content, deleteAfterMs = 0) {
+    const sent = await message.reply?.({ content, allowedMentions: { users: [message.author.id], repliedUser: false } }).catch(() => null);
+    if (sent && deleteAfterMs) setTimeout(() => sent.delete().catch(() => {}), deleteAfterMs).unref?.();
+}
+
+/**
+ * messageCreate: every message in the streak room gets a reply. A picture or GIF counts for the
+ * streak (🔥 on it, the reply names a milestone); one already counted today says so; text doesn't count.
+ * Messages elsewhere are left alone. Never throws.
+ */
 export async function handleStreakMessage(message) {
     try {
-        const result = await recordStreakMessage(message.client || message.guild?.client, message.guild?.id, message.author?.id);
-        if (result?.milestone) await announceStreakMilestone(message.guild, message.author.id, result);
+        if (!isHomeGuild(message.guild?.id) || !isStreakChannel(message.channelId)) return null;
+        const client = message.client || message.guild.client;
+        const userId = message.author?.id;
+        if (!hasStreakMedia(message)) {
+            await replyInRoom(message, streakReplyText(userId, { media: false }), SHORT_REPLY_DELETE_MS);
+            return null;
+        }
+        const result = await recordStreakMessage(client, message.guild.id, userId);
+        if (result) {
+            await message.react?.('🔥').catch(() => {});
+            await replyInRoom(message, streakReplyText(userId, { result }));
+        } else {
+            const record = await client.db.get(getEconomyKey(message.guild.id, userId), null);
+            await replyInRoom(message, streakReplyText(userId, { current: liveStreak(record?.ccStreak) }), SHORT_REPLY_DELETE_MS);
+        }
         return result;
     } catch (error) {
         logger.warn(`[STREAK] Could not count a message: ${error.message}`);
@@ -224,14 +297,56 @@ export async function handleStreakMessage(message) {
     }
 }
 
-/** Startup: the streak room and its board in our server, refreshed every STREAK_BOARD_REFRESH_MS. */
+/** Members whose streak runs out tonight: it was counted yesterday but not yet today. */
+export async function streaksEndingTonight(client, guildId, now = Date.now()) {
+    const yesterday = utcDay(now - DAY_MS);
+    const prefix = getEconomyPrefix(guildId);
+    const keys = await client.db.list(prefix);
+    const rows = [];
+    for (const key of Array.isArray(keys) ? keys : []) {
+        const record = await client.db.get(key, null);
+        if (record?.ccStreak?.day === yesterday && record.ccStreak.count > 0) rows.push({ userId: key.slice(prefix.length), count: record.ccStreak.count });
+    }
+    return rows.sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Once a day, from STREAK.reminderHourUtc, reminds the streak room to post today's picture and mentions
+ * the members whose streak would end tonight. Returns true when the reminder was sent.
+ */
+export async function sendDailyReminder(guild, now = Date.now()) {
+    if (!isHomeGuild(guild?.id) || new Date(now).getUTCHours() < STREAK.reminderHourUtc) return false;
+    const today = utcDay(now);
+    const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
+    if (config?.[REMINDER_KEY] === today) return false;
+    const channel = await ensureStreakChannel(guild).catch(() => null);
+    if (!channel?.send) return false;
+    await updateGuildConfig(guild.client, guild.id, { [REMINDER_KEY]: today }).catch(() => {});
+
+    const ending = (await streaksEndingTonight(guild.client, guild.id, now)).slice(0, STREAK.reminderMentions);
+    const ids = ending.map((row) => row.userId);
+    await channel.send({
+        content: [
+            '⏰ **تذكير الستريك:** متنساش تبعت صورة أو GIF هنا النهارده عشان الستريك بتاعك يكمل! 🔥',
+            ...(ids.length ? ['', `⚠️ دول الستريك بتاعهم هيقع الليلة لو مابعتوش: ${ending.map((row) => `<@${row.userId}> (${row.count})`).join(' ')}`] : []),
+        ].join('\n'),
+        allowedMentions: { users: ids },
+    }).catch((error) => logger.warn(`[STREAK] Could not send the reminder: ${error.message}`));
+    return true;
+}
+
+/** Startup: the streak room, its board and the daily reminder in our server, checked every STREAK_BOARD_REFRESH_MS. */
 export async function startStreak(client) {
     const guild = [...client.guilds.cache.values()].find((item) => isHomeGuild(item.id));
     if (!guild) return { status: 'skipped' };
-    const refresh = () => publishStreakBoard(guild).catch((error) => {
-        logger.error('Failed to refresh the streak board:', error);
-        return { status: 'failed' };
-    });
+    const refresh = async () => {
+        const result = await publishStreakBoard(guild).catch((error) => {
+            logger.error('Failed to refresh the streak board:', error);
+            return { status: 'failed' };
+        });
+        await sendDailyReminder(guild).catch((error) => logger.error('Failed to send the streak reminder:', error));
+        return result;
+    };
     if (!timer) {
         timer = setInterval(refresh, STREAK_BOARD_REFRESH_MS);
         timer.unref?.();
