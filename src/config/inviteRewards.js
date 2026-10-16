@@ -14,7 +14,8 @@ export { HOME_GUILD_ID as CHAOS_GUILD_ID } from './homeGuild.js';
 export const WELCOME_CHANNEL_ID = '1547305745417113700';
 
 export const INVITE_REWARDS = {
-    reward: 1000,
+    // 5k per invite (report #230).
+    reward: 5000,
     level: 5,
     // The invited member must also have really talked: at least this many chat messages (report #167:
     // a member reached the level without taking part, e.g. with voice XP only).
