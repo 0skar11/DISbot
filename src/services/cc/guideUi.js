@@ -8,6 +8,7 @@ import { bourseSettings } from '../../config/store/bourse.js';
 import { INVITE_REWARDS } from '../../config/inviteRewards.js';
 import { GAMES_BOTS_CHANNEL_ID } from '../../config/games.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { STREAK } from './streakService.js';
 
 const n = (value) => Number(value || 0).toLocaleString('en-US');
 
@@ -27,6 +28,7 @@ export function buildGuideEmbeds({ boostLine = ccBoostLine(), guildId = null } =
             `🎮 **الألعاب** في <#${GAMES_BOTS_CHANNEL_ID}>: الفوز في لعبة جماعية **${n(gamesBotReward('group', guildId))}**، وأول واحد يكتب الإجابة **${n(gamesBotReward('answer', guildId))}**`,
             `⭐ **اللفل**: كل لفل جديد بيديك (رقم اللفل × ${n(levelUp.perLevel)})، يعني لفل 10 = ${n(levelUp.perLevel * 10)}`,
             `📨 **الدعوات**: **${n(INVITE_REWARDS.reward)}** لكل حد تدعوه و${inviteConditions()}`,
+            ...(isHomeGuild(guildId) ? [`🔥 **الستريك**: اكتب في الشات كل يوم وخد من **${STREAK.base}** لحد **${STREAK.cap}** في اليوم، وجوايز عند ${Object.keys(STREAK.milestones).join(' و ')} يوم (\`ستريك\` تشوف ستريكك)`] : []),
             '🔁 **التحويل**: صحابك يقدروا يحوّلولك',
         ].join('\n\n'), { color: 'success' }),
         ccEmbed('🛒 المتجر', [

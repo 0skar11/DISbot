@@ -75,8 +75,8 @@ function fakeSetup() {
 }
 
 describe('invite rewards rules', () => {
-  test('the owner asked for 1000 CC at level 5 and 50 messages, no stay (report #223), and roles at 5, 10 and 25 invites', () => {
-    assert.equal(INVITE_REWARDS.reward, 1000);
+  test('the owner asked for 5000 CC (report #230) at level 5 and 50 messages, no stay (report #223), and roles at 5, 10 and 25 invites', () => {
+    assert.equal(INVITE_REWARDS.reward, 5000);
     assert.equal(INVITE_REWARDS.level, 5);
     assert.equal(INVITE_REWARDS.minMessages, 50);
     assert.equal(INVITE_REWARDS.minStayDays, 0);
@@ -124,7 +124,7 @@ describe('invite rewards rules', () => {
     const counted = inviteWelcomeNotice(NEWBIE, { inviterId: INVITER, reason: null });
     assert.ok(counted.split('\n').every((line) => line.startsWith('-# ')));
     assert.match(counted, new RegExp(`دعاه <@${INVITER}>`));
-    assert.match(counted, /1,000/);
+    assert.match(counted, /5,000/);
     assert.match(counted, /لفل 5/);
     assert.match(counted, /50 رسالة/);
     // No stay condition any more (report #223).
@@ -173,7 +173,7 @@ describe('invite rewards rules', () => {
 });
 
 describe('invite rewards flow', () => {
-  test('pays the inviter 1000 CC once the invited member is level 5 and 3 days in, only once', async () => {
+  test('pays the inviter 5000 CC once the invited member is level 5 and 3 days in, only once', async () => {
     const setup = fakeSetup();
     const newbie = setup.join(fakeMember(NEWBIE));
     assert.deepEqual(await registerJoin(setup.client, newbie, INVITER, { now: NOW }), { inviterId: INVITER, reason: null });
@@ -192,13 +192,13 @@ describe('invite rewards flow', () => {
 
     setup.setMessages(NEWBIE, INVITE_REWARDS.minMessages);
     assert.equal(await sweepInviteRewards(setup.client, { now: NOW + 3 * DAY }), 1);
-    assert.equal(setup.ccOf(INVITER), 1000);
-    assert.match(setup.sent[0].content, /1,000/);
+    assert.equal(setup.ccOf(INVITER), 5000);
+    assert.match(setup.sent[0].content, /5,000/);
     assert.deepEqual(setup.sent[0].allowedMentions, { users: [INVITER] });
 
     assert.equal(await checkInviteReward(setup.client, setup.guild, NEWBIE, { level: 6, now: NOW + 4 * DAY }), null);
     assert.equal(await sweepInviteRewards(setup.client, { now: NOW + 4 * DAY }), 0);
-    assert.equal(setup.ccOf(INVITER), 1000, 'paid only once');
+    assert.equal(setup.ccOf(INVITER), 5000, 'paid only once');
 
     const top = await inviteTopEmbed(setup.client, setup.guild, INVITER);
     assert.match(top.description, new RegExp(`<@${INVITER}> — \\*\\*1\\*\\* دعوة`));
@@ -248,7 +248,7 @@ describe('invite rewards flow', () => {
       setup.setLevel(id, 5);
     }
     assert.equal(await sweepInviteRewards(setup.client, { now: NOW + 3 * DAY }), 5);
-    assert.equal(setup.ccOf(INVITER), 5000);
+    assert.equal(setup.ccOf(INVITER), 5 * INVITE_REWARDS.reward);
     assert.deepEqual([...setup.members.get(INVITER).roles.cache.keys()], [roleIds[5]]);
     assert.match(setup.sent.at(-1).content, new RegExp(`<@&${roleIds[5]}>`));
   });

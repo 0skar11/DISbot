@@ -33,6 +33,7 @@ import { handleAfkMessage } from '../services/afkService.js';
 import { handleSalam } from '../services/chat/salamReply.js';
 import { handleQr } from '../services/chat/qrReply.js';
 import { handleMentionGroupCommand } from '../services/mentionGroup.js';
+import { handleStreakCommand, handleStreakMessage } from '../services/cc/streakService.js';
 import { handleDangerCommand, handleDangerMessage, punishDanger, blockDangerCommand, DANGER_COMMAND_WORD } from '../services/moderation/dangerList.js';
 
 const AFK_COMMAND = /^\s*[^\p{L}\p{N}\s]{0,3}(?:afk|افك|أفك)(?:\s|$)/iu;
@@ -76,6 +77,8 @@ export default {
       // Chat XP (runs in the background; the cooldown keeps it from being farmed with commands or spam).
       handleMessageXp(message, client);
       countMessage(client, message.guild.id, message.author.id);
+      // Daily streak (our server only): the first message of the day pays the streak bonus.
+      handleStreakMessage(message);
       // Clears the author's AFK (unless this is the afk command itself) and announces AFK members they mention.
       await handleAfkMessage(message, client, { isAfkCommand: AFK_COMMAND.test(message.content || '') });
       // In the games channel only game commands run (the rest there is game answers).
@@ -127,6 +130,7 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     const parsed = parseTypedCommand(message.content, prefix);
     // `منشن` group (our server): runs before the role shortcuts so `شيل منشن @x` isn't "remove role منشن".
     if (parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;
+    if (parsed && await handleStreakCommand(message, parsed.commandName, parsed.args)) return;
     if (await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
     if (!parsed) return;
 
