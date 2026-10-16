@@ -29,8 +29,10 @@ describe('daily streak (report #229)', () => {
 
   test('bonus grows with the streak, is capped, and milestones pay once', () => {
     assert.equal(streakBonus(1).total, STREAK.base);
-    assert.equal(streakBonus(2).total, STREAK.base + STREAK.perDay);
-    assert.equal(streakBonus(50).daily, STREAK.cap);
+    assert.equal(STREAK.base, 250);
+    assert.equal(streakBonus(STREAK.raiseEvery).daily, STREAK.base);
+    assert.equal(streakBonus(STREAK.raiseEvery + 1).daily, STREAK.base + STREAK.raiseBy);
+    assert.equal(streakBonus(1000).daily, STREAK.cap);
     assert.equal(streakBonus(7).milestone, STREAK.milestones[7]);
     assert.equal(streakBonus(8).milestone, 0);
   });
@@ -44,7 +46,7 @@ describe('daily streak (report #229)', () => {
     resetStreakCache();
     const second = await recordStreakMessage(client, HOME_GUILD_ID, USER, NOW + DAY);
     assert.equal(second.count, 2);
-    assert.equal(ccOf(), STREAK.base * 2 + STREAK.perDay);
+    assert.equal(ccOf(), STREAK.base * 2);
 
     const missed = await recordStreakMessage(client, HOME_GUILD_ID, USER, NOW + 3 * DAY);
     assert.equal(missed.count, 1);
