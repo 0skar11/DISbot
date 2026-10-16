@@ -2,8 +2,9 @@
 //
 // A member keeps their streak going by posting a picture or a GIF in the streak room once a day (UTC);
 // text doesn't count (owner's request), and missing a whole day starts it again at 1. The first picture
-// of each day pays a bonus that grows with the streak (STREAK.base, then +STREAK.perDay a day, up to
-// STREAK.cap), plus a one-time bonus on the milestones (7, 30, 100 days); the bot reacts 🔥 on it.
+// of each day pays STREAK.base, and every STREAK.raiseEvery days of streak the daily bonus goes up by
+// STREAK.raiseBy (up to STREAK.cap), plus a one-time bonus on the milestones (7, 30, 100 days); the bot
+// reacts 🔥 on it. The owner asked for 250 a day that grows over time.
 // Every evening (STREAK.reminderHourUtc) the bot reminds, in the streak room, the members whose streak
 // would end that night.
 // The streak lives next to CC in the economy record as `ccStreak: { day, count, best }`.
@@ -25,10 +26,12 @@ import { MEDALS } from '../games/text.js';
 import { logger } from '../../utils/logger.js';
 
 export const STREAK = {
-    base: 5,
-    perDay: 2,
-    cap: 30,
-    milestones: { 7: 100, 30: 500, 100: 2000 },
+    base: 250,
+    // Every 7 days of streak the daily bonus goes up by 50: days 1-7 = 250, 8-14 = 300, … up to 1000.
+    raiseEvery: 7,
+    raiseBy: 50,
+    cap: 1000,
+    milestones: { 7: 1000, 30: 5000, 100: 20000 },
     // 17:00 UTC is 8 PM in Egypt (summer time), well before the day ends at midnight UTC.
     reminderHourUtc: 17,
     // At most this many members are mentioned in the reminder.
@@ -68,7 +71,7 @@ const n = (amount) => amount.toLocaleString('en-US');
 
 /** CC for reaching day `count` of a streak: the daily bonus and the milestone bonus. */
 export function streakBonus(count) {
-    const daily = Math.min(STREAK.base + STREAK.perDay * (count - 1), STREAK.cap);
+    const daily = Math.min(STREAK.base + STREAK.raiseBy * Math.floor((count - 1) / STREAK.raiseEvery), STREAK.cap);
     const milestone = STREAK.milestones[count] || 0;
     return { daily, milestone, total: daily + milestone };
 }
@@ -136,7 +139,7 @@ export async function streakTopEmbed(client, guild, userId = null, now = Date.no
             lines.join('\n') || 'لسه محدش عنده ستريك. ابعت صورة أو GIF هنا كل يوم!',
             '',
             `📸 ابعت صورة أو GIF في الروم دي كل يوم عشان الستريك يكمل (الكلام مابيتحسبش)، ولو فوّت يوم كامل يرجع من 1.`,
-            `🌀 كل يوم: ${STREAK.base} ${CC.short} + ${STREAK.perDay} كل يوم لحد ${STREAK.cap} • 🏅 ${Object.entries(STREAK.milestones).map(([day, cc]) => `${day} يوم = ${n(cc)}`).join(' • ')}`,
+            `🌀 كل يوم: ${n(STREAK.base)} ${CC.short}، وكل ${STREAK.raiseEvery} أيام بتزيد ${n(STREAK.raiseBy)} لحد ${n(STREAK.cap)} • 🏅 ${Object.entries(STREAK.milestones).map(([day, cc]) => `${day} يوم = ${n(cc)}`).join(' • ')}`,
             '',
             summary.join(' • '),
         ].join('\n'),
