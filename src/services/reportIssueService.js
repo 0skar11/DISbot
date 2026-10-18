@@ -7,7 +7,8 @@ import { logger } from '../utils/logger.js';
 // short reply that deletes itself after 5 seconds.
 //   GITHUB_TOKEN   fine-grained token with Issues read/write on REPORTS_REPO
 //   REPORTS_REPO   owner/name of the repo the report issues go to
-const REPORTS_REPO = process.env.REPORTS_REPO || '0skar11/-';
+// The repo was renamed from 0skar11/- to 0skar11/DISbot; the old name now belongs to another repo.
+const REPORTS_REPO = process.env.REPORTS_REPO || '0skar11/DISbot';
 const REPORT_LABEL = 'بلاغ';
 const SOLVED_LABEL = 'اتحلت';
 const CLOSED_LABEL = 'اتقفلت';
