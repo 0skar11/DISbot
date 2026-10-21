@@ -7,8 +7,22 @@ import { logger } from '../utils/logger.js';
 // short reply that deletes itself after 5 seconds.
 //   GITHUB_TOKEN   fine-grained token with Issues read/write on REPORTS_REPO
 //   REPORTS_REPO   owner/name of the repo the report issues go to
-// The repo was renamed from 0skar11/- to 0skar11/DISbot; the old name now belongs to another repo.
-const REPORTS_REPO = process.env.REPORTS_REPO || '0skar11/DISbot';
+// The repo was renamed from 0skar11/- to 0skar11/DISbot; the old name now belongs to another repo,
+// so a host still set up with REPORTS_REPO=0skar11/- (the old .env.example) is sent to DISbot too.
+const DEFAULT_REPORTS_REPO = '0skar11/DISbot';
+const OLD_REPORTS_REPO = '0skar11/-';
+
+export function resolveReportsRepo(value) {
+  const repo = String(value || '').trim();
+  if (!repo) return DEFAULT_REPORTS_REPO;
+  if (repo.toLowerCase() === OLD_REPORTS_REPO) {
+    logger.warn(`REPORTS_REPO is still ${OLD_REPORTS_REPO} (the repo's old name): reports go to ${DEFAULT_REPORTS_REPO}. Update REPORTS_REPO on the host.`);
+    return DEFAULT_REPORTS_REPO;
+  }
+  return repo;
+}
+
+const REPORTS_REPO = resolveReportsRepo(process.env.REPORTS_REPO);
 const REPORT_LABEL = 'بلاغ';
 const SOLVED_LABEL = 'اتحلت';
 const CLOSED_LABEL = 'اتقفلت';
@@ -30,6 +44,21 @@ function github() {
       'X-GitHub-Api-Version': '2022-11-28',
     },
   });
+}
+
+// One log line that says why GitHub refused: the HTTP status, the repo, and what to check on the host.
+export function describeGitHubError(error, repo = REPORTS_REPO) {
+  const status = error?.response?.status;
+  const message = error?.response?.data?.message || error?.message || String(error);
+  const hints = {
+    401: 'GITHUB_TOKEN is wrong or expired',
+    403: 'GITHUB_TOKEN lacks Issues: Read and write on this repo (or hit a rate limit)',
+    404: 'the repo was not found or GITHUB_TOKEN has no access to it (check REPORTS_REPO and the token\'s repository list)',
+    410: 'issues are turned off on this repo',
+    422: 'GitHub rejected the issue fields',
+  };
+  const hint = hints[status] || (status ? 'unexpected GitHub response' : 'GitHub could not be reached');
+  return `${status ? `HTTP ${status}` : 'no response'} from ${repo}: ${message} (${hint})`;
 }
 
 function oneLine(text, max) {
@@ -69,7 +98,7 @@ export async function openReportIssue({ reportMessage, reporter, reportedUser, c
     });
     return data.number;
   } catch (error) {
-    logger.error(`Failed to open GitHub issue for report from ${reporter.tag}:`, error.response?.data || error);
+    logger.error(`Failed to open GitHub issue for report from ${reporter.tag}: ${describeGitHubError(error)}`);
     return null;
   }
 }
@@ -110,13 +139,16 @@ export async function checkClosedReports(client) {
   const api = github();
   if (!api) return;
 
-  const { data: issues } = await api.get('/issues', {
+  const issues = await api.get('/issues', {
     params: {
       state: 'closed',
       labels: REPORT_LABEL,
       since: new Date(Date.now() - WATCH_WINDOW_MS).toISOString(),
       per_page: 50,
     },
+  }).then(({ data }) => data, (error) => {
+    logger.error(`Failed to check closed reports on GitHub: ${describeGitHubError(error)}`);
+    return [];
   });
 
   for (const issue of issues) {
