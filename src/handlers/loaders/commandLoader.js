@@ -126,6 +126,19 @@ export async function loadCommands(client) {
     return client.commands;
 }
 
+// Discord requires required options before optional ones. Keep the command's
+// original option order for typed commands (including reply-target shortcuts),
+// and only normalize the separate payload sent to Discord.
+function orderRegistrationOptions(command) {
+    if (!command.options) return { ...command };
+    return {
+        ...command,
+        options: command.options
+            .map(orderRegistrationOptions)
+            .sort((a, b) => Number(Boolean(b.required)) - Number(Boolean(a.required))),
+    };
+}
+
 function collectCommandPayloads(client) {
     const commands = [];
     let totalSubcommands = 0;
@@ -146,7 +159,7 @@ function collectCommandPayloads(client) {
         }
 
         registeredNames.add(commandName);
-        const commandJson = command.data.toJSON();
+        const commandJson = orderRegistrationOptions(command.data.toJSON());
         commands.push(commandJson);
         totalSubcommands += getSubcommandInfo(commandJson).length;
 
