@@ -7,7 +7,7 @@ import {
   ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel, STREAK_CHANNEL_ID,
   publishStreakBoard, STREAK_CHANNEL_NAME, STREAK_BOARD_UPDATE_DELAY_MS,
 } from '../src/services/cc/streakService.js';
-import { ChannelType } from 'discord.js';
+import { ChannelType, PermissionFlagsBits, PermissionsBitField } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../src/services/config/guildConfig.js';
 
 const USER = '200000000000000001';
@@ -118,6 +118,36 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     };
     return { ...base, guild, channel, posted, message };
   }
+
+  test('a populated everyone overwrite keeps the pinned room without editing complete permissions', async () => {
+    const { guild, channel } = await room();
+    channel.permissionOverwrites.cache.set(guild.id, {
+      allow: new PermissionsBitField([
+        PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions,
+      ]),
+    });
+    channel.permissionOverwrites.edit = async () => assert.fail('complete permissions need no update');
+    guild.channels.create = async () => assert.fail('must never create another room');
+    assert.equal(await ensureStreakChannel(guild), channel);
+    assert.equal(isStreakChannel(ROOM), true);
+  });
+
+  test('a valid pinned room with incomplete everyone permissions is opened without replacement', async () => {
+    const { guild, channel } = await room();
+    channel.permissionOverwrites.cache.set(guild.id, {
+      allow: new PermissionsBitField([PermissionFlagsBits.ViewChannel]),
+    });
+    const edits = [];
+    channel.permissionOverwrites.edit = async (...args) => { edits.push(args); };
+    guild.channels.create = async () => assert.fail('must never create another room');
+    assert.equal(await ensureStreakChannel(guild), channel);
+    assert.equal(isStreakChannel(ROOM), true);
+    assert.deepEqual(edits, [[guild.id, {
+      ViewChannel: true, ReadMessageHistory: true, SendMessages: true,
+      AttachFiles: true, EmbedLinks: true, AddReactions: true,
+    }, { reason: 'Streak room: daily pictures' }]]);
+  });
 
   test('a stale saved ID cannot redirect counting away from the active room', async () => {
     const { client, guild, channel } = await room();

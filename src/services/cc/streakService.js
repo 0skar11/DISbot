@@ -14,7 +14,7 @@
 // count); it also holds the live top streak board (edited every few minutes) and the daily reminder. The media role guard doesn't apply in this room. `ستريك` / `streak` shows a
 // member's streak and `توب ستريك` / `top streak` the longest ones.
 
-import { ChannelType } from 'discord.js';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { CC } from '../../config/cc.js';
 import { updateCCState, utcDay } from './ccService.js';
@@ -188,6 +188,11 @@ export async function handleStreakCommand(message, commandName, args = []) {
 }
 
 const STREAK_TOPIC = 'الستريك اليومي: ابعت صورة أو GIF هنا كل يوم عشان الستريك يكمل وتاخد CC (الكلام مابيتحسبش). اكتب `ستريك` تشوف ستريكك.';
+const MEMBER_ALLOW = [
+    PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages,
+    PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions,
+];
+
 /** Members can post pictures and GIFs in the room (it was read-only at first). */
 async function openForPictures(channel, guild) {
     const everyone = channel.permissionOverwrites?.cache?.get(guild.id);
