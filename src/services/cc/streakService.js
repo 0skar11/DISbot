@@ -9,19 +9,18 @@
 // would end that night.
 // The streak lives next to CC in the economy record as `ccStreak: { day, count, best }`.
 //
-// The streak room sits in the games category, right under the games channel: members post their daily
+// The streak room is one fixed channel (STREAK_CHANNEL_ID): members post their daily
 // picture there and the bot replies to every message (updated, already counted today, or text doesn't
 // count); it also holds the live top streak board (edited every few minutes) and the daily reminder. The media role guard doesn't apply in this room. `ستريك` / `streak` shows a
 // member's streak and `توب ستريك` / `top streak` the longest ones.
 
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { CC } from '../../config/cc.js';
 import { updateCCState, utcDay } from './ccService.js';
 import { getEconomyKey, getEconomyPrefix } from '../../utils/database.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { getGuildConfig, updateGuildConfig } from '../config/guildConfig.js';
-import { GAMES_CHANNEL_ID } from '../games/gamesChannel.js';
 import { MEDALS } from '../games/text.js';
 import { logger } from '../../utils/logger.js';
 
@@ -37,11 +36,12 @@ export const STREAK = {
     // At most this many members are mentioned in the reminder.
     reminderMentions: 25,
 };
-export const STREAK_CHANNEL_NAME = '🔥┃streak';
+// The streak room is this one channel, fixed by the owner: the bot never makes another one (it used to make
+// a new room every few restarts and the old one stopped working).
+export const STREAK_CHANNEL_ID = '1562578413217124402';
 export const STREAK_BOARD_REFRESH_MS = 10 * 60 * 1000;
 const STREAK_BOARD_TITLE = '🔥 Top Streak';
 const BOARD_KEY = 'streak';
-const CONFIG_KEY = 'streakChannelId';
 const REMINDER_KEY = 'streakReminderDay';
 const GIF_LINK = /https?:\/\/(?:\S+\.)?(?:tenor\.com|giphy\.com)\/\S+|https?:\/\/\S+\.gif(?:\?\S*)?(?:\s|$)/iu;
 const IMAGE_EXTENSION = /\.(?:png|jpe?g|gif|webp|bmp|heic|heif|avif)$/iu;
@@ -51,12 +51,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // The day each member's streak was last counted, so most messages don't touch the database.
 const counted = new Map();
 let timer = null;
-// The streak room's ID once it is known (ensureStreakChannel).
-let streakChannelId = null;
-
 /** Whether a message is in the streak room. */
 export function isStreakChannel(channelId) {
-    return Boolean(streakChannelId) && channelId === streakChannelId;
+    return channelId === STREAK_CHANNEL_ID;
 }
 
 /** Whether a message has a picture or a GIF: an image file, a GIF link (Tenor, Giphy, .gif) or its embed. */
@@ -198,39 +195,15 @@ async function openForPictures(channel, guild) {
     if (channel.topic !== STREAK_TOPIC) await channel.setTopic?.(STREAK_TOPIC).catch(() => {});
 }
 
-/** Finds or makes the streak room in the games category, right under the games channel. */
+/** The streak room (STREAK_CHANNEL_ID). Returns null, and makes nothing, when the bot can't get it now. */
 export async function ensureStreakChannel(guild) {
     if (!isHomeGuild(guild?.id)) return null;
-    const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
-    const saved = config?.[CONFIG_KEY] && (guild.channels.cache.get(config[CONFIG_KEY]) || await guild.channels.fetch(config[CONFIG_KEY]).catch(() => null));
-    if (saved) {
-        streakChannelId = saved.id;
-        await openForPictures(saved, guild);
-        return saved;
-    }
-
-    const games = guild.channels.cache.get(GAMES_CHANNEL_ID) || await guild.channels.fetch(GAMES_CHANNEL_ID).catch(() => null);
-    const parentId = games?.parentId || null;
-    let channel = guild.channels.cache.find((item) => item.type === ChannelType.GuildText && item.name === STREAK_CHANNEL_NAME && item.parentId === parentId);
+    const channel = guild.channels.cache.get(STREAK_CHANNEL_ID) || await guild.channels.fetch(STREAK_CHANNEL_ID).catch(() => null);
     if (!channel) {
-        const me = guild.members.me;
-        channel = await guild.channels.create({
-            name: STREAK_CHANNEL_NAME,
-            type: ChannelType.GuildText,
-            parent: parentId,
-            topic: STREAK_TOPIC,
-            reason: 'Streak room (report #229)',
-            permissionOverwrites: [
-                { id: guild.id, allow: MEMBER_ALLOW, deny: [PermissionFlagsBits.CreatePublicThreads] },
-                ...(me ? [{ id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions, PermissionFlagsBits.ReadMessageHistory] }] : []),
-            ],
-        });
-        if (games && Number.isInteger(games.position)) await channel.setPosition(games.position + 1).catch(() => {});
-    } else {
-        await openForPictures(channel, guild);
+        logger.warn(`[STREAK] The streak room ${STREAK_CHANNEL_ID} was not found; nothing is created.`);
+        return null;
     }
-    streakChannelId = channel.id;
-    await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: channel.id }).catch(() => {});
+    await openForPictures(channel, guild);
     return channel;
 }
 

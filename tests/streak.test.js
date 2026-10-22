@@ -4,7 +4,7 @@ import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { getEconomyKey } from '../src/utils/database.js';
 import {
   recordStreakMessage, streakBonus, liveStreak, getStreakLeaderboard, handleStreakCommand, resetStreakCache, STREAK,
-  ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel,
+  ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel, STREAK_CHANNEL_ID,
 } from '../src/services/cc/streakService.js';
 
 const USER = '200000000000000001';
@@ -89,7 +89,7 @@ describe('daily streak (report #229)', () => {
 
 describe('streak room: pictures and GIFs only, a reply every time, a daily reminder', () => {
   beforeEach(() => resetStreakCache());
-  const ROOM = '400000000000000099';
+  const ROOM = STREAK_CHANNEL_ID;
 
   async function room() {
     const base = setup();
@@ -100,9 +100,8 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     };
     const guild = { id: HOME_GUILD_ID, client: base.client, channels: { cache: new Map([[ROOM, channel]]), fetch: async () => null } };
     base.client.guilds = { cache: new Map([[HOME_GUILD_ID, guild]]) };
-    // The room's ID is saved in the guild config, as after the first startup.
-    const { updateGuildConfig } = await import('../src/services/config/guildConfig.js');
-    await updateGuildConfig(base.client, HOME_GUILD_ID, { streakChannelId: ROOM });
+    guild.channels.created = [];
+    guild.channels.create = async (options) => { guild.channels.created.push(options); return channel; };
     await ensureStreakChannel(guild);
     const message = (extra = {}) => {
       const replies = [];
@@ -155,5 +154,18 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     assert.match(posted.at(-1).content, /تذكير الستريك/u);
     assert.deepEqual(posted.at(-1).allowedMentions.users, [USER]);
     assert.equal(await sendDailyReminder(guild, evening + 60 * 1000), false, 'once a day');
+  });
+
+  test('the room is the fixed one: found by its ID, never made again, and it works before startup', async () => {
+    assert.equal(STREAK_CHANNEL_ID, '1562578413217124402');
+    const { guild } = await room();
+    assert.equal((await ensureStreakChannel(guild)).id, STREAK_CHANNEL_ID);
+    assert.equal(guild.channels.created.length, 0);
+
+    // The room can't be fetched right now (Discord hiccup, or it was deleted): nothing is created.
+    guild.channels.cache.clear();
+    assert.equal(await ensureStreakChannel(guild), null);
+    assert.equal(guild.channels.created.length, 0);
+    assert.equal(isStreakChannel(STREAK_CHANNEL_ID), true);
   });
 });
