@@ -4,7 +4,7 @@ import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { getEconomyKey } from '../src/utils/database.js';
 import {
   recordStreakMessage, streakBonus, liveStreak, getStreakLeaderboard, handleStreakCommand, resetStreakCache, STREAK,
-  ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel,
+  ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel, STREAK_CHANNEL_ID,
   publishStreakBoard, STREAK_CHANNEL_NAME, STREAK_BOARD_UPDATE_DELAY_MS,
 } from '../src/services/cc/streakService.js';
 import { ChannelType } from 'discord.js';
@@ -92,7 +92,7 @@ describe('daily streak (report #229)', () => {
 
 describe('streak room: pictures and GIFs only, a reply every time, a daily reminder', () => {
   beforeEach(() => resetStreakCache());
-  const ROOM = '400000000000000099';
+  const ROOM = STREAK_CHANNEL_ID;
 
   async function room() {
     const base = setup();
@@ -128,14 +128,33 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     assert.equal(isStreakChannel(ROOM), true);
   });
 
-  test('a missing games anchor reuses the oldest existing streak room in another category', async () => {
-    const { client, guild, channel } = await room();
+  test('a stale saved ID is reconciled to the pinned room, never another existing room', async () => {
+    const { client, guild, channel, message, ccOf } = await room();
     resetStreakCache();
     await updateGuildConfig(client, HOME_GUILD_ID, { streakChannelId: '400000000000000001' });
-    guild.channels.cache.set('400000000000000100', { ...channel, id: '400000000000000100', parentId: null });
-    guild.channels.create = async () => assert.fail('must reuse the existing room');
+    const other = { ...channel, id: '400000000000000100', parentId: null };
+    guild.channels.cache.set(other.id, other);
+    guild.channels.create = async () => assert.fail('must never create a room');
     assert.equal(await ensureStreakChannel(guild), channel);
     assert.equal((await getGuildConfig(client, HOME_GUILD_ID)).streakChannelId, ROOM);
+    const picture = new Map([['1', { contentType: 'image/png' }]]);
+    assert.equal(await handleStreakMessage(message({ channelId: other.id, attachments: picture })), null);
+    assert.equal(ccOf(), 0);
+  });
+
+  test('a missing pinned channel is not replaced and cannot award a streak from another room', async () => {
+    const { client, guild, channel, message, ccOf } = await room();
+    resetStreakCache();
+    guild.channels.cache.clear();
+    let creates = 0;
+    guild.channels.create = async () => { creates += 1; };
+    assert.equal(await ensureStreakChannel(guild), null);
+    assert.equal(creates, 0);
+    assert.equal((await getGuildConfig(client, HOME_GUILD_ID)).streakChannelId, ROOM);
+    const oldRoomMessage = message({ channelId: '400000000000000100', attachments: new Map([['1', { contentType: 'image/png' }]]) });
+    assert.equal(await handleStreakMessage(oldRoomMessage), null);
+    assert.equal(ccOf(), 0);
+    assert.equal(oldRoomMessage.replies.length, 0);
   });
 
   test('a temporary Discord fetch failure cannot create another room', async () => {

@@ -14,14 +14,13 @@
 // count); it also holds the live top streak board (edited every few minutes) and the daily reminder. The media role guard doesn't apply in this room. `ستريك` / `streak` shows a
 // member's streak and `توب ستريك` / `top streak` the longest ones.
 
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { ChannelType } from 'discord.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { CC } from '../../config/cc.js';
 import { updateCCState, utcDay } from './ccService.js';
 import { getEconomyKey, getEconomyPrefix } from '../../utils/database.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { getGuildConfig, updateGuildConfig } from '../config/guildConfig.js';
-import { GAMES_CHANNEL_ID } from '../games/gamesChannel.js';
 import { MEDALS } from '../games/text.js';
 import { logger } from '../../utils/logger.js';
 
@@ -38,6 +37,7 @@ export const STREAK = {
     reminderMentions: 25,
 };
 export const STREAK_CHANNEL_NAME = '🔥┃streak';
+export const STREAK_CHANNEL_ID = '1562578413217124402';
 export const STREAK_BOARD_REFRESH_MS = 10 * 60 * 1000;
 export const STREAK_BOARD_UPDATE_DELAY_MS = 1000;
 const STREAK_BOARD_TITLE = '🔥 Top Streak';
@@ -188,11 +188,6 @@ export async function handleStreakCommand(message, commandName, args = []) {
 }
 
 const STREAK_TOPIC = 'الستريك اليومي: ابعت صورة أو GIF هنا كل يوم عشان الستريك يكمل وتاخد CC (الكلام مابيتحسبش). اكتب `ستريك` تشوف ستريكك.';
-const MEMBER_ALLOW = [
-    PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.SendMessages,
-    PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions,
-];
-
 /** Members can post pictures and GIFs in the room (it was read-only at first). */
 async function openForPictures(channel, guild) {
     const everyone = channel.permissionOverwrites?.cache?.get(guild.id);
@@ -203,59 +198,27 @@ async function openForPictures(channel, guild) {
     if (channel.topic !== STREAK_TOPIC) await channel.setTopic?.(STREAK_TOPIC).catch(() => {});
 }
 
-/** Finds or makes the streak room in the games category, right under the games channel. */
+/** Resolves only the owner's pinned streak room. Never create or redirect to another channel. */
 export async function ensureStreakChannel(guild) {
     if (!isHomeGuild(guild?.id)) return null;
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
-    const resolveRoom = async (id) => {
-        if (!id) return null;
-        const channel = guild.channels.cache.get(id) || await guild.channels.fetch(id).catch((error) => {
-            // A temporary Discord/network failure must not create another room.
-            if (error.code === 10003) return null;
-            throw error;
-        });
-        return channel?.type === ChannelType.GuildText && channel.guild?.id === guild.id ? channel : null;
-    };
-    const rememberRoom = async (channel) => {
-        streakChannelId = channel.id;
-        if (config?.[CONFIG_KEY] !== channel.id) {
-            await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: channel.id })
-                .catch((error) => logger.warn(`[STREAK] Could not save the room: ${error.message}`));
-        }
-        await openForPictures(channel, guild);
-        return channel;
-    };
-    // Keep counting in the active room when a stale config write restores an old/deleted ID.
-    const active = await resolveRoom(streakChannelId);
-    if (active) return rememberRoom(active);
-    const saved = await resolveRoom(config?.[CONFIG_KEY]);
-    if (saved) {
-        return rememberRoom(saved);
+    if (config?.[CONFIG_KEY] !== STREAK_CHANNEL_ID) {
+        await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: STREAK_CHANNEL_ID })
+            .catch((error) => logger.warn(`[STREAK] Could not save the pinned room: ${error.message}`));
     }
-
-    const games = guild.channels.cache.get(GAMES_CHANNEL_ID) || await guild.channels.fetch(GAMES_CHANNEL_ID).catch(() => null);
-    const parentId = games?.parentId || null;
-    const rooms = [...guild.channels.cache.values()]
-        .filter((item) => item.type === ChannelType.GuildText && item.guild?.id === guild.id && item.name === STREAK_CHANNEL_NAME)
-        .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0));
-    // The games channel can be replaced. Reuse the existing room instead of making a root duplicate.
-    let channel = (games && rooms.find((item) => item.parentId === parentId)) || rooms[0];
-    if (!channel) {
-        const me = guild.members.me;
-        channel = await guild.channels.create({
-            name: STREAK_CHANNEL_NAME,
-            type: ChannelType.GuildText,
-            parent: parentId,
-            topic: STREAK_TOPIC,
-            reason: 'Streak room (report #229)',
-            permissionOverwrites: [
-                { id: guild.id, allow: MEMBER_ALLOW, deny: [PermissionFlagsBits.CreatePublicThreads] },
-                ...(me ? [{ id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AddReactions, PermissionFlagsBits.ReadMessageHistory] }] : []),
-            ],
-        });
-        if (games && Number.isInteger(games.position)) await channel.setPosition(games.position + 1).catch(() => {});
+    let channel = guild.channels.cache.get(STREAK_CHANNEL_ID);
+    if (!channel) channel = await guild.channels.fetch(STREAK_CHANNEL_ID).catch((error) => {
+        if (error.code === 10003 || error.code === 50001 || error.code === 50013) return null;
+        throw error;
+    });
+    if (channel?.type !== ChannelType.GuildText || channel.guild?.id !== guild.id) {
+        streakChannelId = null;
+        logger.warn(`[STREAK] Pinned streak channel ${STREAK_CHANNEL_ID} is missing or inaccessible; no replacement will be created.`);
+        return null;
     }
-    return rememberRoom(channel);
+    streakChannelId = STREAK_CHANNEL_ID;
+    await openForPictures(channel, guild);
+    return channel;
 }
 
 // Command replies share the title but are not the periodically edited board.
