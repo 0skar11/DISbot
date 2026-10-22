@@ -39,7 +39,9 @@ export const STREAK = {
 };
 export const STREAK_CHANNEL_NAME = '🔥┃streak';
 export const STREAK_BOARD_REFRESH_MS = 10 * 60 * 1000;
+export const STREAK_BOARD_UPDATE_DELAY_MS = 1000;
 const STREAK_BOARD_TITLE = '🔥 Top Streak';
+const STREAK_BOARD_FOOTER = '🔄 بيتحدث تلقائي • آخر تحديث';
 const BOARD_KEY = 'streak';
 const CONFIG_KEY = 'streakChannelId';
 const REMINDER_KEY = 'streakReminderDay';
@@ -53,6 +55,9 @@ const counted = new Map();
 let timer = null;
 // The streak room's ID once it is known (ensureStreakChannel).
 let streakChannelId = null;
+let boardRefresh = null;
+let boardRefreshRequested = false;
+let boardUpdateTimer = null;
 
 /** Whether a message is in the streak room. */
 export function isStreakChannel(channelId) {
@@ -202,16 +207,39 @@ async function openForPictures(channel, guild) {
 export async function ensureStreakChannel(guild) {
     if (!isHomeGuild(guild?.id)) return null;
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
-    const saved = config?.[CONFIG_KEY] && (guild.channels.cache.get(config[CONFIG_KEY]) || await guild.channels.fetch(config[CONFIG_KEY]).catch(() => null));
+    const resolveRoom = async (id) => {
+        if (!id) return null;
+        const channel = guild.channels.cache.get(id) || await guild.channels.fetch(id).catch((error) => {
+            // A temporary Discord/network failure must not create another room.
+            if (error.code === 10003) return null;
+            throw error;
+        });
+        return channel?.type === ChannelType.GuildText && channel.guild?.id === guild.id ? channel : null;
+    };
+    const rememberRoom = async (channel) => {
+        streakChannelId = channel.id;
+        if (config?.[CONFIG_KEY] !== channel.id) {
+            await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: channel.id })
+                .catch((error) => logger.warn(`[STREAK] Could not save the room: ${error.message}`));
+        }
+        await openForPictures(channel, guild);
+        return channel;
+    };
+    // Keep counting in the active room when a stale config write restores an old/deleted ID.
+    const active = await resolveRoom(streakChannelId);
+    if (active) return rememberRoom(active);
+    const saved = await resolveRoom(config?.[CONFIG_KEY]);
     if (saved) {
-        streakChannelId = saved.id;
-        await openForPictures(saved, guild);
-        return saved;
+        return rememberRoom(saved);
     }
 
     const games = guild.channels.cache.get(GAMES_CHANNEL_ID) || await guild.channels.fetch(GAMES_CHANNEL_ID).catch(() => null);
     const parentId = games?.parentId || null;
-    let channel = guild.channels.cache.find((item) => item.type === ChannelType.GuildText && item.name === STREAK_CHANNEL_NAME && item.parentId === parentId);
+    const rooms = [...guild.channels.cache.values()]
+        .filter((item) => item.type === ChannelType.GuildText && item.guild?.id === guild.id && item.name === STREAK_CHANNEL_NAME)
+        .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : BigInt(a.id) > BigInt(b.id) ? 1 : 0));
+    // The games channel can be replaced. Reuse the existing room instead of making a root duplicate.
+    let channel = (games && rooms.find((item) => item.parentId === parentId)) || rooms[0];
     if (!channel) {
         const me = guild.members.me;
         channel = await guild.channels.create({
@@ -226,23 +254,21 @@ export async function ensureStreakChannel(guild) {
             ],
         });
         if (games && Number.isInteger(games.position)) await channel.setPosition(games.position + 1).catch(() => {});
-    } else {
-        await openForPictures(channel, guild);
     }
-    streakChannelId = channel.id;
-    await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: channel.id }).catch(() => {});
-    return channel;
+    return rememberRoom(channel);
 }
 
-const isStreakBoard = (message) => message.embeds?.[0]?.title?.includes('Top Streak');
+// Command replies share the title but are not the periodically edited board.
+const isStreakBoard = (message) => message.embeds?.[0]?.title === STREAK_BOARD_TITLE
+    && message.embeds?.[0]?.footer?.text === STREAK_BOARD_FOOTER;
 
 /** Edits the live board in the streak room, posting it when it isn't there. */
-export async function publishStreakBoard(guild) {
+async function publishBoard(guild) {
     const channel = await ensureStreakChannel(guild);
     if (!channel?.send) return { status: 'no-channel' };
-    const embed = { ...(await streakTopEmbed(guild.client, guild)), footer: { text: '🔄 بيتحدث تلقائي • آخر تحديث' }, timestamp: new Date().toISOString() };
+    const embed = { ...(await streakTopEmbed(guild.client, guild)), footer: { text: STREAK_BOARD_FOOTER }, timestamp: new Date().toISOString() };
     const payload = { content: '', embeds: [embed], allowedMentions: { parse: [] } };
-    const existing = await findBoardMessage(channel, BOARD_KEY, isStreakBoard).catch(() => null);
+    const existing = await findBoardMessage(channel, BOARD_KEY, isStreakBoard);
     if (existing) {
         await existing.edit(payload);
         return { status: 'updated', channelId: channel.id };
@@ -250,6 +276,32 @@ export async function publishStreakBoard(guild) {
     const sent = await channel.send(payload);
     await rememberBoardMessage(channel, BOARD_KEY, sent.id);
     return { status: 'sent', channelId: channel.id };
+}
+
+/** Serialize refreshes, keeping at most one extra pass when a count arrives during a refresh. */
+export function publishStreakBoard(guild) {
+    if (!isHomeGuild(guild?.id)) return Promise.resolve({ status: 'no-channel' });
+    boardRefreshRequested = true;
+    if (!boardRefresh) {
+        boardRefresh = (async () => {
+            let result;
+            do {
+                boardRefreshRequested = false;
+                result = await publishBoard(guild);
+            } while (boardRefreshRequested);
+            return result;
+        })().finally(() => { boardRefresh = null; });
+    }
+    return boardRefresh;
+}
+
+function scheduleStreakBoardRefresh(guild) {
+    if (boardUpdateTimer) return;
+    boardUpdateTimer = setTimeout(() => {
+        boardUpdateTimer = null;
+        publishStreakBoard(guild).catch((error) => logger.error('Failed to refresh the streak board:', error));
+    }, STREAK_BOARD_UPDATE_DELAY_MS);
+    boardUpdateTimer.unref?.();
 }
 
 // Replies that only say "already counted" or "text doesn't count" go away after this long.
@@ -287,6 +339,7 @@ export async function handleStreakMessage(message) {
         }
         const result = await recordStreakMessage(client, message.guild.id, userId);
         if (result) {
+            scheduleStreakBoardRefresh(message.guild);
             await message.react?.('🔥').catch(() => {});
             await replyInRoom(message, streakReplyText(userId, { result }));
         } else {
@@ -360,4 +413,7 @@ export async function startStreak(client) {
 /** For tests. */
 export function resetStreakCache() {
     counted.clear();
+    streakChannelId = null;
+    if (boardUpdateTimer) clearTimeout(boardUpdateTimer);
+    boardUpdateTimer = null;
 }
