@@ -29,7 +29,7 @@ function fakeChannel(client, messages = []) {
             fetch: async (arg) => {
                 if (typeof arg === 'string') {
                     const found = messages.find((message) => message.id === arg);
-                    if (!found) throw new Error('Unknown Message');
+                    if (!found) throw Object.assign(new Error('Unknown Message'), { code: 10008 });
                     return found;
                 }
                 return new Map(messages.map((message) => [message.id, message]));

@@ -191,6 +191,64 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     assert.equal(hasStreakMedia({ content: 'صباح الخير' }), false);
   });
 
+  for (const [failureAt, code] of [['stored', 50013], ['stored', 'ETIMEDOUT'], ['recent', 'ETIMEDOUT']]) {
+    test(`a ${code} failure fetching the ${failureAt} board does not post a replacement, and the next refresh recovers`, async () => {
+      const { client, guild, channel } = await room();
+      client.user = { id: 'bot' };
+      let board;
+      let boardPosts = 0;
+      let boardEdits = 0;
+      let failure = null;
+      let failedPhase = null;
+      channel.messages = { fetch: async (query) => {
+        const phase = typeof query === 'string' ? 'stored' : 'recent';
+        if (failure && phase === failureAt) {
+          failedPhase = phase;
+          throw failure;
+        }
+        // The saved board is older than the last 100 messages and cannot be found by scanning.
+        return phase === 'stored' ? board : new Map();
+      } };
+      channel.send = async (payload) => {
+        boardPosts += 1;
+        board = { id: 'saved-board', author: client.user, createdTimestamp: 1, embeds: payload.embeds,
+          edit: async (next) => { boardEdits += 1; board.embeds = next.embeds; },
+          delete: async () => assert.fail('the existing board must remain intact') };
+        return board;
+      };
+
+      assert.equal((await publishStreakBoard(guild)).status, 'sent');
+      const original = board.embeds;
+      failure = Object.assign(new Error('Discord lookup failed'), { code });
+      await assert.rejects(publishStreakBoard(guild), (error) => error === failure);
+      assert.equal(failedPhase, failureAt);
+      assert.equal(boardPosts, 1, 'lookup failure must not cause a second board');
+      assert.equal(boardEdits, 0);
+      assert.equal(board.embeds, original);
+      assert.equal((await getGuildConfig(client, HOME_GUILD_ID)).boardMessageIds.streak, board.id);
+
+      failure = null;
+      assert.equal((await publishStreakBoard(guild)).status, 'updated');
+      assert.equal(boardPosts, 1);
+      assert.equal(boardEdits, 1);
+    });
+  }
+
+  test('a confirmed deleted saved board can be replaced', async () => {
+    const { client, guild, channel } = await room();
+    client.user = { id: 'bot' };
+    await updateGuildConfig(client, HOME_GUILD_ID, { boardMessageIds: { streak: 'deleted-board' } });
+    channel.messages = { fetch: async (query) => {
+      if (typeof query === 'string') throw Object.assign(new Error('Unknown Message'), { code: 10008 });
+      return new Map();
+    } };
+    let boardPosts = 0;
+    channel.send = async () => { boardPosts += 1; return { id: 'replacement-board' }; };
+    assert.equal((await publishStreakBoard(guild)).status, 'sent');
+    assert.equal(boardPosts, 1);
+    assert.equal((await getGuildConfig(client, HOME_GUILD_ID)).boardMessageIds.streak, 'replacement-board');
+  });
+
   test('a picture updates the streak, a second one says it is done today, text is told it does not count', async () => {
     const { message, ccOf } = await room();
     assert.equal(isStreakChannel(ROOM), true);

@@ -27,7 +27,12 @@ export async function findBoardMessage(channel, key, isBoardMessage) {
   const isOwnBoard = (message) => message.author?.id === channel.client.user.id && isBoardMessage(message);
 
   const storedId = await readStoredId(channel, key);
-  const stored = storedId ? await channel.messages.fetch(storedId).catch(() => null) : null;
+  const stored = storedId ? await channel.messages.fetch(storedId).catch((error) => {
+    // Only a confirmed deleted message permits falling back to the recent-message scan.
+    // A permission or network failure must not make an existing board look absent.
+    if (error?.code === 10008) return null;
+    throw error;
+  }) : null;
 
   const recentMessages = await channel.messages.fetch({ limit: 100 });
   const boards = [...recentMessages.values()]

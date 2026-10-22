@@ -268,7 +268,7 @@ async function publishBoard(guild) {
     if (!channel?.send) return { status: 'no-channel' };
     const embed = { ...(await streakTopEmbed(guild.client, guild)), footer: { text: STREAK_BOARD_FOOTER }, timestamp: new Date().toISOString() };
     const payload = { content: '', embeds: [embed], allowedMentions: { parse: [] } };
-    const existing = await findBoardMessage(channel, BOARD_KEY, isStreakBoard).catch(() => null);
+    const existing = await findBoardMessage(channel, BOARD_KEY, isStreakBoard);
     if (existing) {
         await existing.edit(payload);
         return { status: 'updated', channelId: channel.id };
