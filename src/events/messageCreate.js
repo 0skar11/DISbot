@@ -146,9 +146,9 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     }
 
     const typedCommand = commandName.toLowerCase();
-    // `purge` wipes the whole channel: owner only, confirmed with a button. `clear`/`مسح`/`م` delete N messages.
+    // `purge` wipes the whole channel: owner only, confirmed with a button (in our server `purge 50 تأكيد` skips the button). `clear`/`مسح`/`م` delete N messages.
     if (typedCommand === 'purge') {
-      await handlePurgeMessage(message);
+      await handlePurgeMessage(message, args);
       return;
     }
     if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args)) return;
