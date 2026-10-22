@@ -2,6 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionsBitField, PermissionFlagsBits } from 'discord.js';
 import { hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
+import mediaRoleReady from '../src/events/mediaRole.js';
 
 const message = (content, attachments = 0) => ({ content, attachments: { size: attachments } });
 
@@ -56,6 +57,24 @@ describe('media lock', () => {
     media.name = 'صور';
     assert.equal(await findMediaRole(guild), media);
     assert.equal(isMediaRole(media, guild.id), true);
+  });
+
+  test('startup discovers the media role without granting it to members', async () => {
+    const media = { id: 'media-id', name: 'media', managed: false, editable: true };
+    let roleFetches = 0;
+    let memberFetches = 0;
+    const roles = new Map([[media.id, media]]);
+    roles.find = (fn) => [...roles.values()].find(fn);
+    const guild = {
+      id: 'g-startup', name: 'test',
+      roles: { fetch: async () => { roleFetches += 1; return roles; } },
+      members: { fetch: async () => { memberFetches += 1; return new Map(); } },
+    };
+
+    await mediaRoleReady.execute({ guilds: { cache: new Map([[guild.id, guild]]) } });
+
+    assert.equal(roleFetches, 1, 'startup should keep discovering the existing media role');
+    assert.equal(memberFetches, 0, 'startup must not fetch members to bulk-grant the media role');
   });
 
   test('gives the media role to every current member once, skipping bots', async () => {
