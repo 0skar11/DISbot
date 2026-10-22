@@ -1,12 +1,10 @@
 import { MessageFlags } from 'discord.js';
-import { logEvent } from '../utils/moderation.js';
 import { logger } from '../utils/logger.js';
 import {
   isPurgeOwner,
   canPurgeChannel,
   isPurgeConfirmationExpired,
-  purgeChannel,
-  sendPurgeResult,
+  runPurge,
 } from '../services/moderation/channelPurgeService.js';
 
 async function denyNonOwner(interaction) {
@@ -19,7 +17,7 @@ const purgeConfirmHandler = {
   name: 'purge_confirm',
   async execute(interaction, client, args = []) {
     if (await denyNonOwner(interaction)) return;
-    const [channelId, expiresAt] = args;
+    const [channelId, expiresAt, limitArg] = args;
     const channel = interaction.channel;
 
     if (channel?.id !== channelId || !canPurgeChannel(channel)) {
@@ -33,19 +31,8 @@ const purgeConfirmHandler = {
 
     await interaction.deferUpdate().catch(() => {});
     try {
-      const deletedCount = await purgeChannel(channel);
-      await sendPurgeResult(channel, deletedCount);
-      await logEvent({
-        client,
-        guild: interaction.guild,
-        event: {
-          action: 'Channel Purged',
-          target: `${channel} (${deletedCount} messages)`,
-          executor: `${interaction.user.tag} (${interaction.user.id})`,
-          reason: `Purged ${deletedCount} messages`,
-          metadata: { channelId: channel.id, messageCount: deletedCount, moderatorId: interaction.user.id },
-        },
-      }).catch(() => {});
+      const limit = Number(limitArg) > 0 ? Number(limitArg) : null;
+      await runPurge(channel, { client, guild: interaction.guild, executor: interaction.user, limit });
     } catch (error) {
       logger.error('Purge confirm error:', error);
       await channel.send('❌ Can\'t Purge (Missing Permission)').catch(() => {});
