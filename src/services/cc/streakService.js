@@ -272,9 +272,6 @@ function scheduleStreakBoardRefresh(guild) {
     boardUpdateTimer.unref?.();
 }
 
-// Replies that only say "already counted" or "text doesn't count" go away after this long.
-const SHORT_REPLY_DELETE_MS = 15_000;
-
 /** The reply to a message in the streak room: counted now, already counted today, or text only. */
 export function streakReplyText(userId, { result = null, current = 0, media = true } = {}) {
     if (!media) return `📸 <@${userId}> الكلام مابيتحسبش في الستريك، ابعت صورة أو GIF.`;
@@ -286,9 +283,8 @@ export function streakReplyText(userId, { result = null, current = 0, media = tr
     return `✅ <@${userId}> ستريكك متحدث النهارده خلاص (**${current}** يوم). ابعت تاني بكرة.`;
 }
 
-async function replyInRoom(message, content, deleteAfterMs = 0) {
-    const sent = await message.reply?.({ content, allowedMentions: { users: [message.author.id], repliedUser: false } }).catch(() => null);
-    if (sent && deleteAfterMs) setTimeout(() => sent.delete().catch(() => {}), deleteAfterMs).unref?.();
+async function replyInRoom(message, content) {
+    await message.reply?.({ content, allowedMentions: { users: [message.author.id], repliedUser: false } }).catch(() => null);
 }
 
 /**
@@ -302,7 +298,7 @@ export async function handleStreakMessage(message) {
         const client = message.client || message.guild.client;
         const userId = message.author?.id;
         if (!hasStreakMedia(message)) {
-            await replyInRoom(message, streakReplyText(userId, { media: false }), SHORT_REPLY_DELETE_MS);
+            await replyInRoom(message, streakReplyText(userId, { media: false }));
             return null;
         }
         const result = await recordStreakMessage(client, message.guild.id, userId);
@@ -312,7 +308,7 @@ export async function handleStreakMessage(message) {
             await replyInRoom(message, streakReplyText(userId, { result }));
         } else {
             const record = await client.db.get(getEconomyKey(message.guild.id, userId), null);
-            await replyInRoom(message, streakReplyText(userId, { current: liveStreak(record?.ccStreak) }), SHORT_REPLY_DELETE_MS);
+            await replyInRoom(message, streakReplyText(userId, { current: liveStreak(record?.ccStreak) }));
         }
         return result;
     } catch (error) {

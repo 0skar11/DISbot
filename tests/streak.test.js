@@ -322,6 +322,28 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     assert.equal(elsewhere.replies.length, 0);
   });
 
+  test('text and already-counted replies stay in the room', async (t) => {
+    const { client, message } = await room();
+    let deletions = 0;
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await recordStreakMessage(client, HOME_GUILD_ID, USER);
+    const text = message({ content: 'ازيكم', reply: async (payload) => {
+      text.replies.push(payload);
+      return { delete: async () => { deletions += 1; } };
+    } });
+    const alreadyCounted = message({ attachments: new Map([['1', { contentType: 'image/png' }]]), reply: async (payload) => {
+      alreadyCounted.replies.push(payload);
+      return { delete: async () => { deletions += 1; } };
+    } });
+
+    await handleStreakMessage(text);
+    await handleStreakMessage(alreadyCounted);
+    t.mock.timers.tick(20_000);
+    assert.equal(text.replies.length, 1);
+    assert.equal(alreadyCounted.replies.length, 1);
+    assert.equal(deletions, 0);
+  });
+
   test('the evening reminder goes once a day and mentions streaks that would end tonight', async () => {
     const { client, guild, posted } = await room();
     await recordStreakMessage(client, HOME_GUILD_ID, USER, NOW - DAY);
