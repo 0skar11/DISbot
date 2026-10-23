@@ -7,6 +7,7 @@ import { buildStorePanel, inventoryEmbed, confirmPurchasePayload, purchaseFailur
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { isInlineConfirmation } from '../../config/store/confirmation.js';
+import { replyWithPrivatePurchase } from '../../services/cc/privatePurchaseReceipt.js';
 
 // The CC store: `متجر` alone sends the store panel (items, buy menu and buttons), `متجر 1` /
 // `متجر رتبة vip` / `متجر 1 3` buys (confirmed with a button), `مخزني` shows the inventory.
@@ -68,19 +69,17 @@ export default {
             return reply({ content: purchaseFailureText({ reason: 'bad_quantity' }) });
         }
         const confirmed = isHomeGuild(interaction.guildId) && interaction.options.getBoolean?.('confirm') === true;
-        // Prefix replies cannot be ephemeral. A forecast (including a luck-box prize) needs the
-        // existing button's private fallback when DMs are closed; custom roles still need their form.
-        const privateProduct = interaction._isPrefixCommand && (item.type === 'forecast' || item.type === 'luckbox');
-        if (confirmed && item.type !== 'custom_role' && !privateProduct) {
+        // Custom roles still need their form; a private result is revealed without buying again.
+        if (confirmed && item.type !== 'custom_role') {
             const member = interaction.member?.roles?.cache ? interaction.member : await interaction.guild.members.fetch(interaction.user.id);
             const { payload, privatePayload } = await purchase(client, member, item.id, quantity);
+            if (privatePayload && interaction._isPrefixCommand) return replyWithPrivatePurchase(interaction, payload, privatePayload);
             await reply(payload);
             if (privatePayload) await interaction.followUp({ ...privatePayload, flags: MessageFlags.Ephemeral });
             return;
         }
         const { cc, inventory } = await getProfile(client, interaction.guildId, interaction.user.id);
         const payload = confirmPurchasePayload(item, quantity, interaction.user.id, cc, mode, { vouchers: inventory?.[voucherFor(item.id)?.id] || 0 });
-        if (confirmed && privateProduct) payload.content = '🔒 المنتج ده ممكن يديك تنبؤ خاص؛ كمّل من الزرار عشان يفضل ليك إنت بس.';
         return reply(payload);
     },
 };

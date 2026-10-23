@@ -212,17 +212,25 @@ test('store without confirmation, insufficient funds and invalid quantities do n
     assert.equal((await getXpBoosts(client, HOME_GUILD_ID, MEMBER)).chat, 0);
 });
 
-test('prefix forecasts and luck boxes retain a private button flow; custom roles retain their form', async () => {
+test('prefix custom roles retain their form without charging', async () => {
     const client = fakeClient();
     await adjustCC(client, HOME_GUILD_ID, MEMBER, 100_000);
-    for (const query of ['bourse_forecast', 'luck_box', 'custom_role']) {
-        const result = await runTyped(client, `!store buy ${query} 1 تأكيد`);
-        assert.match(result.payload.embeds[0].title, /تأكيد/u);
-        assert.ok(result.payload.components.length);
-        assert.equal(result.payloads.length, 1);
-        if (query !== 'custom_role') assert.match(result.payload.content, /تنبؤ خاص/u);
-        assert.equal(await cc(client), 100_000);
-    }
+    const result = await runTyped(client, '!store buy custom_role 1 تأكيد');
+    assert.match(result.payload.embeds[0].title, /تأكيد/u);
+    assert.ok(result.payload.components.length);
+    assert.equal(result.payloads.length, 1);
+    assert.equal(await cc(client), 100_000);
+});
+
+test('the reported `متجر 2 تأكيد` buys and opens the luck box immediately, exactly once', async (t) => {
+    t.mock.method(Math, 'random', () => 0); // A 500 CC prize, without private forecast delivery.
+    const client = fakeClient();
+    await adjustCC(client, HOME_GUILD_ID, MEMBER, 100_000);
+    const result = await runTyped(client, 'متجر 2 تأكيد');
+    assert.match(result.payload.embeds[0].title, /تم الشراء/u);
+    assert.deepEqual(result.payload.components, []);
+    assert.equal(result.payloads.length, 1);
+    assert.equal(await cc(client), 100_000 - ccStoreItems.find((item) => item.id === 'luck_box').price + 500);
 });
 
 test('slash direct forecast still keeps a closed-DM fallback ephemeral', async () => {
@@ -248,6 +256,6 @@ test('the guide documents the home-only shortcut and its private/form exceptions
     const home = JSON.stringify(buildGuideEmbeds({ guildId: HOME_GUILD_ID }));
     const other = JSON.stringify(buildGuideEmbeds({ guildId: OTHER_GUILD }));
     assert.ok(home.includes('متجر 1 3 تأكيد') && home.includes('شراء عربية 2 تأكيد'));
-    assert.ok(home.includes('لحماية الخصوصية') && home.includes('الرتب المميزة'));
+    assert.ok(home.includes('بتظهر ليك بس') && home.includes('5 دقايق') && home.includes('الرتب المميزة'));
     assert.ok(!other.includes('تأكيد`') && other.includes('قبل أي شراء بيجيلك زرار'));
 });
