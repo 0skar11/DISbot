@@ -1,5 +1,7 @@
 /** Command aliases configuration. */
-import { findAsset, isSellAllWord } from '../store/bourse.js';
+import { findAsset, isSellAllWord, normalizeName } from '../store/bourse.js';
+import { isInlineConfirmation } from '../store/confirmation.js';
+import { ccStoreItems } from '../store/ccStoreItems.js';
 
 export const commandAliases = {
   bal: 'cc', balance: 'cc', money: 'cc', cash: 'cc', credits: 'cc', h: 'help', info: 'help',
@@ -161,14 +163,23 @@ export function isStandaloneInvocation(args) {
 export function isBourseNameInvocation(typedCommand, args) {
   const target = commandArgAliases[typedCommand];
   if (target !== 'bourse invest' && target !== 'bourse sell') return false;
+  if (isInlineConfirmation(args[args.length - 1])) args = args.slice(0, -1);
   // `بيع كلو` / `بيع عربية كلو`: sell everything, or all of one asset; `شراء عربية كلو`: buy as many as possible.
   if (isSellAllWord(args[args.length - 1])) {
     const assetWords = args.slice(0, -1);
     if (target === 'bourse sell' && assetWords.length === 0) return true;
     return assetWords.length > 0 && Boolean(findAsset(assetWords.join(' ')));
   }
-  const words = /^\d+$/u.test(args[args.length - 1] || '') ? args.slice(0, -1) : args;
+  const words = args.length > 1 && /^\d+$/u.test(args[args.length - 1] || '') ? args.slice(0, -1) : args;
   return words.length > 0 && Boolean(findAsset(words.join(' ')));
+}
+
+function isStoreConfirmationInvocation(typedCommand, args) {
+  if (commandArgAliases[typedCommand] !== 'store list' || !isInlineConfirmation(args[args.length - 1])) return false;
+  const words = args.slice(0, -1);
+  if (words.length > 1 && /^\d+$/u.test(words[words.length - 1])) words.pop();
+  const query = words.join(' ');
+  return /^\d+$/u.test(query) || ccStoreItems.some((item) => item.id === query.toLowerCase() || normalizeName(item.name) === normalizeName(query));
 }
 
 /**
@@ -184,7 +195,7 @@ export function applyWordAliases(typedCommand, args, prefixed) {
   }
   let commandName = typedCommand;
   let rest = args;
-  if (!prefixed && standaloneOnlyAliases.has(typedCommand) && !isStandaloneInvocation(rest) && !isBourseNameInvocation(typedCommand, rest)) return null;
+  if (!prefixed && standaloneOnlyAliases.has(typedCommand) && !isStandaloneInvocation(rest) && !isBourseNameInvocation(typedCommand, rest) && !isStoreConfirmationInvocation(typedCommand, rest)) return null;
   // `رولي` is a chat word too (`رولي اتمسحت`): without the prefix it runs alone or with one of its words.
   if (!prefixed && MY_ROLE_TYPED.has(typedCommand) && rest.length && !myRoleWords[rest[0].toLowerCase()]) return null;
   const argAlias = commandArgAliases[typedCommand];

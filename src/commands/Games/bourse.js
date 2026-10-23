@@ -8,6 +8,8 @@ import { findAsset, getMarket, getHoldings, hourOf, assetsFor, maxOwnedOf } from
 import { pricesEmbed, holdingsEmbed, confirmInvestPayload, confirmSellPayload, confirmSellAllPayload, bourseFailureText } from '../../services/cc/bourseUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { isInlineConfirmation } from '../../config/store/confirmation.js';
+import { bourseTradePayload, sellAllPayload } from '../../services/cc/bourseTransactions.js';
 
 // The CC bourse: `اسعار` (prices of the hour), `شراء عربية` / `استثمار عربية` / `شراء 3 2` (buy), `بيع عربية` /
 // `بيع 3 2` (sell), `بيع كلو` / `بيع عربية كلو` (sell everything / all of one asset), `شراء عربية كلو` (as many as the balance
@@ -20,6 +22,7 @@ const quantityOption = (option) => option
     .setMinValue(1)
     .setMaxValue(bourseSettings.maxOwnedPerAsset)
     .setRequired(false);
+const confirmationOption = (option) => option.setName('confirm').setDescription('Confirm now without another prompt (home server only)');
 
 const WRONG_CHANNEL_DELETE_MS = 5_000;
 
@@ -41,11 +44,11 @@ export default {
         .setDescription(`The ${CC.name} (${CC.short}) bourse: prices change every hour`)
         .setDMPermission(false)
         .addSubcommand((sub) => sub.setName('prices').setDescription('Prices of the hour'))
-        .addSubcommand((sub) => sub.setName('invest').setDescription('Buy an asset at the price of the hour').addStringOption(assetOption).addIntegerOption(quantityOption))
-        .addSubcommand((sub) => sub.setName('sell').setDescription('Sell an asset at the price of the hour').addStringOption(assetOption).addIntegerOption(quantityOption))
-        .addSubcommand((sub) => sub.setName('buymax').setDescription('Buy as many pieces of an asset as your balance allows').addStringOption(assetOption))
+        .addSubcommand((sub) => sub.setName('invest').setDescription('Buy an asset at the price of the hour').addStringOption(assetOption).addIntegerOption(quantityOption).addBooleanOption(confirmationOption))
+        .addSubcommand((sub) => sub.setName('sell').setDescription('Sell an asset at the price of the hour').addStringOption(assetOption).addIntegerOption(quantityOption).addBooleanOption(confirmationOption))
+        .addSubcommand((sub) => sub.setName('buymax').setDescription('Buy as many pieces of an asset as your balance allows').addStringOption(assetOption).addBooleanOption(confirmationOption))
         .addSubcommand((sub) => sub.setName('sellall').setDescription('Sell everything you own, or all of one asset')
-            .addStringOption((option) => option.setName('asset').setDescription('Only this asset (default: everything)')))
+            .addStringOption((option) => option.setName('asset').setDescription('Only this asset (default: everything)')).addBooleanOption(confirmationOption))
         .addSubcommand((sub) => sub.setName('holdings').setDescription('What you (or another member) own and what it is worth')
             .addUserOption((option) => option.setName('user').setDescription('Whose holdings to see (default: yours)'))),
 
@@ -53,14 +56,17 @@ export default {
     // words (`بيع سبيكة دهب 2`) is kept together as the asset.
     normalizePrefixArgs(args) {
         const [sub, ...rest] = args;
+        const confirmed = ['invest', 'sell', 'buymax', 'sellall'].includes(sub) && isInlineConfirmation(rest[rest.length - 1]);
+        if (confirmed) rest.pop();
+        const flag = confirmed ? ['true'] : [];
         if (!args.length || ((sub === 'invest' || sub === 'sell') && !rest.length)) return ['prices'];
         // `بيع كلو` sells everything, `بيع عربية كلو` all of one asset.
-        if (sub === 'sell' && isSellAllWord(rest[rest.length - 1])) return ['sellall', ...(rest.length > 1 ? [rest.slice(0, -1).join(' ')] : [])];
+        if (sub === 'sell' && isSellAllWord(rest[rest.length - 1])) return ['sellall', ...(rest.length > 1 ? [rest.slice(0, -1).join(' ')] : confirmed ? [''] : []), ...flag];
         // `شراء عربية كلو`: as many pieces as the balance allows.
-        if (sub === 'invest' && rest.length > 1 && isSellAllWord(rest[rest.length - 1])) return ['buymax', rest.slice(0, -1).join(' ')];
-        if (sub !== 'invest' && sub !== 'sell') return args;
+        if (sub === 'invest' && rest.length > 1 && isSellAllWord(rest[rest.length - 1])) return ['buymax', rest.slice(0, -1).join(' '), ...flag];
+        if (sub !== 'invest' && sub !== 'sell') return confirmed ? [sub, rest.join(' '), ...flag] : args;
         const quantity = rest.length > 1 && /^\d+$/u.test(rest[rest.length - 1]) ? [rest.pop()] : [];
-        return [sub, rest.join(' '), ...quantity];
+        return [sub, rest.join(' '), ...(quantity.length ? quantity : confirmed ? ['1'] : []), ...flag];
     },
 
     async execute(interaction, config, client) {
@@ -69,6 +75,7 @@ export default {
         if (!isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
         const sub = interaction.options.getSubcommand();
         const { guildId, user } = interaction;
+        const confirmed = isHomeGuild(guildId) && interaction.options.getBoolean?.('confirm') === true;
 
         if (sub === 'prices') {
             const balance = isHomeGuild(guildId) ? (await getProfile(client, guildId, user.id)).cc : null;
@@ -93,9 +100,11 @@ export default {
                 const row = rows.find((entry) => entry.asset.id === one.id);
                 if (!row) return reply({ content: bourseFailureText({ reason: 'not_owned', asset: one, owned: 0 }) });
                 const { price } = quotes.find((entry) => entry.asset.id === one.id);
+                if (confirmed) return reply(await bourseTradePayload(client, guildId, user, 'sell', one.id, row.qty, price));
                 return reply(confirmSellPayload(one, row.qty, price, user.id, { owned: row.qty, paid: row.paid }));
             }
             if (!rows.length) return reply({ content: '💼 معندكش حاجة تبيعها. اكتب `اسعار` وشوف تشتري إيه 📈' });
+            if (confirmed) return reply(await sellAllPayload(client, guildId, user, hourOf()));
             return reply(confirmSellAllPayload(rows, user.id, hourOf()));
         }
 
@@ -111,13 +120,14 @@ export default {
             if (room <= 0) return reply({ content: bourseFailureText({ reason: 'max_owned', asset: one, owned }) });
             const quantity = Math.min(room, Math.floor(cc / price));
             if (quantity <= 0) return reply({ content: bourseFailureText({ reason: 'no_cc', balance: cc }) });
+            if (confirmed) return reply(await bourseTradePayload(client, guildId, user, 'buy', one.id, quantity, price));
             return reply(confirmInvestPayload(one, quantity, price, user.id, cc, { note: `🧺 أقصى عدد تقدر تشتريه دلوقتي: **${quantity}**` }));
         }
 
         const asset = findAsset(interaction.options.getString('asset'), assetsFor(guildId));
         if (!asset) return reply({ content: bourseFailureText({ reason: 'not_found' }) });
-        const quantity = interaction.options.getInteger('quantity') || 1;
-        if (quantity < 1 || quantity > bourseSettings.maxOwnedPerAsset) return reply({ content: bourseFailureText({ reason: 'bad_quantity' }) });
+        const quantity = interaction.options.getInteger('quantity') ?? 1;
+        if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > bourseSettings.maxOwnedPerAsset) return reply({ content: bourseFailureText({ reason: 'bad_quantity' }) });
 
         const { rows, quotes } = await getHoldings(client, guildId, user.id);
         const held = rows.find((row) => row.asset.id === asset.id);
@@ -127,10 +137,12 @@ export default {
         if (sub === 'invest') {
             if (owned + quantity > maxOwnedOf(asset)) return reply({ content: bourseFailureText({ reason: 'max_owned', asset, owned }) });
             const { cc } = await getProfile(client, guildId, user.id);
+            if (confirmed) return reply(await bourseTradePayload(client, guildId, user, 'buy', asset.id, quantity, price));
             return reply(confirmInvestPayload(asset, quantity, price, user.id, cc));
         }
 
         if (owned < quantity) return reply({ content: bourseFailureText({ reason: 'not_owned', asset, owned }) });
+        if (confirmed) return reply(await bourseTradePayload(client, guildId, user, 'sell', asset.id, quantity, price));
         return reply(confirmSellPayload(asset, quantity, price, user.id, { owned, paid: held.paid }));
     },
 };
