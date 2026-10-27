@@ -3,6 +3,7 @@ import { COMPANY, COMPANY_DAY_MS, companyDaily, companyUpgradeCost } from '../..
 import { getEconomyKey } from '../../utils/database/keys.js';
 import { Mutex } from '../../utils/mutex.js';
 import { readCC, updatePersistentCCState } from './ccService.js';
+import { companyNameIssue } from './companyNames.js';
 
 const monthOf = (time) => new Date(time).toISOString().slice(0, 7);
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -61,8 +62,9 @@ export function settleCompany(saved, now = Date.now()) {
 }
 
 function snapshot(record, now) {
+    if (record?.ccCompany && record?.ccCompanyArchive) throw new Error('Conflicting company state');
     const company = record?.ccCompany ? settleCompany(record.ccCompany, now) : null;
-    return { company, balance: readCC(record || {}).cc, version: company?.version || 0 };
+    return { company, archived: !!record?.ccCompanyArchive, balance: readCC(record || {}).cc, version: company?.version || 0 };
 }
 
 export async function getCompany(client, guildId, userId, { now = Date.now() } = {}) {
@@ -80,11 +82,13 @@ export async function companyAction(client, guildId, userId, action, {
     if (!integer(now)) return blocked('invalid');
     if (!integer(expiresAt) || expiresAt <= now || expiresAt > now + COMPANY.quoteMs) return blocked('expired');
     return updatePersistentCCState(client, guildId, userId, (state, record) => {
+        if (record.ccCompanyArchive) return blocked('archived');
         let company = record.ccCompany ? settleCompany(record.ccCompany, now) : null;
         if (!integer(version) || version !== (company?.version || 0)) return blocked('stale');
         if (action === 'create') {
             if (company) return blocked('owned');
-            if (!validCompanyName(name)) return blocked('name');
+            const issue = companyNameIssue(name);
+            if (issue) return blocked(issue);
             if (cost !== COMPANY.createCost) return blocked('stale');
             if (state.cc < cost) return blocked('no_cc');
             state.cc -= cost;
@@ -97,6 +101,7 @@ export async function companyAction(client, guildId, userId, action, {
             company.rate = companyDaily(company);
         } else {
             if (!company) return blocked('missing');
+            if (companyNameIssue(company.name)) return blocked('forbidden_name');
             if (action === 'upgrade') {
                 const price = companyUpgradeCost(company, kind);
                 if (price === null) return blocked('max');
@@ -136,15 +141,20 @@ export async function companyLeaderboard(client, guildId, { now = Date.now() } =
         const rows = records.filter(({ record }) => record?.ccCompany).map(({ userId, record }) => ({
             userId, company: settleCompany(record.ccCompany, now),
         }));
+        // Removed companies remain eligible for their already-earned historical months,
+        // while never appearing as active companies or earning during their archive.
+        const historical = [...rows, ...records.filter(({ record }) => record?.ccCompanyArchive).map(({ userId, record }) => ({
+            userId, company: validateCompany(record.ccCompanyArchive.company),
+        }))];
         const currentMonth = monthOf(now);
         const seasonKey = `guild:${guildId}:company-seasons`;
         const seasons = structuredClone(await client.db.getStrict(seasonKey, {}));
         if (!seasons || typeof seasons !== 'object' || Array.isArray(seasons)) throw new Error('Invalid company seasons');
         let changed = false;
-        const months = new Set(rows.flatMap(({ company }) => Object.keys(company.monthlyNet)).filter((month) => month < currentMonth));
+        const months = new Set(historical.flatMap(({ company }) => Object.keys(company.monthlyNet)).filter((month) => month < currentMonth));
         for (const month of [...months].sort()) {
             if (seasons[month]) continue;
-            const winners = [...rows].sort((a, b) => (b.company.monthlyNet[month] || 0) - (a.company.monthlyNet[month] || 0) || a.userId.localeCompare(b.userId));
+            const winners = [...historical].sort((a, b) => (b.company.monthlyNet[month] || 0) - (a.company.monthlyNet[month] || 0) || a.userId.localeCompare(b.userId));
             const winner = winners[0];
             if (!(winner?.company.monthlyNet[month] > 0)) continue;
             seasons[month] = { userId: winner.userId, name: winner.company.name, profit: winner.company.monthlyNet[month], title: 'ملك المطاعم' };
