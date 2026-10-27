@@ -4,6 +4,7 @@ import { isInlineConfirmation } from '../store/confirmation.js';
 import { ccStoreItems } from '../store/ccStoreItems.js';
 
 export const commandAliases = {
+  شركة: 'company', شركه: 'company',
   bal: 'cc', balance: 'cc', money: 'cc', cash: 'cc', credits: 'cc', h: 'help', info: 'help',
   رصيد: 'cc', رصيدي: 'cc', رصيدى: 'cc', فلوس: 'cc', كريدت: 'cc',
   شرح: 'guide', الشرح: 'guide',
@@ -95,6 +96,7 @@ export const twoWordCommandAliases = {
 
 /** Words that run a command with fixed leading arguments: `روليت` = `game roulette`, `اسئلة 5` = `game trivia 5`. */
 export const commandArgAliases = {
+  شركات: 'company leaderboard',
   روليت: 'game roulette', roulette: 'game roulette',
   كراسي: 'game chairs', chairs: 'game chairs',
   مافيا: 'game mafia', mafia: 'game mafia',
@@ -188,6 +190,10 @@ function isStoreConfirmationInvocation(typedCommand, args) {
  * part of a normal sentence, i.e. it is not a command.
  */
 export function applyWordAliases(typedCommand, args, prefixed) {
+  // Avoid interpreting everyday chat as a company command; explicit company subcommands
+  // and the bare word are supported without a prefix.
+  if (!prefixed && ['شركة', 'شركه'].includes(typedCommand) && args.length
+      && !['إنشاء', 'انشاء', 'تطوير', 'خزنة', 'خزنه', 'سحب', 'ترتيب'].includes(args[0])) return null;
   const twoWordCommand = twoWordCommandAliases[`${typedCommand} ${(args[0] || '').toLowerCase()}`];
   if (twoWordCommand) {
     const [twoWordName, ...twoWordArgs] = twoWordCommand.split(' ');
