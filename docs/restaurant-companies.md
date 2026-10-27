@@ -44,3 +44,14 @@ Quotes are owner/guild/channel bound, expire after five minutes and are kept in 
 Run `node --test tests/companies.test.js tests/companyCommands.test.js`, then `npm test`. Tests use cloned in-memory fake persistent records and mocked SQL; they never connect to Neon or purchase anything with member money. Live read-only smoke: `شركة`, `شركة تطوير` (without confirming), `شركات`. A successful real purchase/withdrawal must be initiated by its owner; do not fabricate test CC or companies on production.
 
 Deploy to the active NEW Railway service only. Keep Wispbyte, HeavenCloud and the old Railway instance stopped. Additive rollback: deploy the preceding release; preserve `ccCompany` and the season archive for re-enabling later. Never clear Neon or re-import member records.
+
+## Names and reversible moderation
+
+Names referring to child sexual abuse are rejected both before a creation quote and again inside the locked mutation. Policy normalization covers Arabic accents, tatweel, common letter variants, formatting/invisible marks and punctuation, plus obvious English spacing and leetspeak variants. This is a targeted rule, not a guarantee that every offensive phrase in every language is detected. Ordinary family/children's restaurant names remain permitted. Saved-data validation stays structural so previously accepted names can still be moderated; blocked names are replaced by a generic label in new panels/rankings.
+
+Server managers (`ManageGuild`), the guild owner and configured bot owners may use:
+
+- `شركة إيقاف @member` or `/company archive member`: preview a reversible removal, then confirm. Only the targeted company is archived. Its wallet, investment, earned treasury, historical profit and all unrelated fields are preserved; no refund, deduction or role change occurs.
+- `شركة استرجاع @member safe name` or `/company restore member name`: restore the archive with a safe name. Treasury/development/history remain, but payout and upgrade timers restart at 24h, with no earnings for suspended downtime.
+
+Permission is fetched again at confirmation and rechecked under the target member's existing CC mutex. Quotes bind manager, member, guild, version and expiry; duplicate/stale requests cannot apply twice. Archived owners cannot create a replacement, withdraw or upgrade. Archives do not appear in current value/monthly rankings or earn additional profit; legitimately earned historical monthly totals remain eligible when finalizing ended seasons. Slash creation/moderation previews are private; normal prefix replies retain their existing visibility. Old Discord messages are not deleted or edited by this storage operation.

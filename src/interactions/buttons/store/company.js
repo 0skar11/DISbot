@@ -2,6 +2,7 @@ import { MessageFlags } from 'discord.js';
 import { isHomeGuild } from '../../../config/homeGuild.js';
 import { isGamesBotsChannel } from '../../../services/cc/gamesBotChannel.js';
 import { companyAction } from '../../../services/cc/companyService.js';
+import { moderateCompany } from '../../../services/cc/companyModeration.js';
 import { COMPANY_BUTTON_PREFIX, companyPanel, quoteCompanyAction, companyFailureText, getCompanyQuote, deleteCompanyQuote } from '../../../services/cc/companyUi.js';
 
 const privateReply = (interaction, content) => interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
@@ -20,9 +21,16 @@ export default {
                 deleteCompanyQuote(args[0]);
                 return interaction.editReply({ content: '✖️ اتلغت العملية.', embeds: [], components: [], allowedMentions: { parse: [] } });
             }
-            const result = await companyAction(client, interaction.guildId, interaction.user.id, quote.action, quote);
+            const moderation = quote.action === 'archive' || quote.action === 'restore';
+            const result = moderation
+                ? await moderateCompany(client, interaction.guildId, interaction.user.id, quote.targetId, quote.action, quote)
+                : await companyAction(client, interaction.guildId, interaction.user.id, quote.action, quote);
             deleteCompanyQuote(args[0]);
             if (!result.ok) return interaction.editReply({ content: companyFailureText(result), embeds: [], components: [], allowedMentions: { parse: [] } });
+            if (moderation) return interaction.editReply({ content: quote.action === 'archive'
+                ? `✅ شركة <@${quote.targetId}> اتوقفت واتشالت من الترتيب. البيانات محفوظة؛ مفيش رد أو خصم CC.`
+                : `✅ شركة <@${quote.targetId}> رجعت باسم مناسب. مفيش أرباح عن فترة الإيقاف، ولا رد أو خصم CC.`,
+            embeds: [], components: [], allowedMentions: { parse: [] } });
             let receipt;
             try {
                 receipt = await companyPanel(client, interaction.guildId, interaction.user.id, { notice: '✅ العملية اتحفظت بنجاح.' });

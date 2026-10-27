@@ -193,7 +193,7 @@ export function applyWordAliases(typedCommand, args, prefixed) {
   // Avoid interpreting everyday chat as a company command; explicit company subcommands
   // and the bare word are supported without a prefix.
   if (!prefixed && ['شركة', 'شركه'].includes(typedCommand) && args.length
-      && !['إنشاء', 'انشاء', 'تطوير', 'خزنة', 'خزنه', 'سحب', 'ترتيب'].includes(args[0])) return null;
+      && !['إنشاء', 'انشاء', 'تطوير', 'خزنة', 'خزنه', 'سحب', 'ترتيب', 'إيقاف', 'ايقاف', 'استرجاع'].includes(args[0])) return null;
   const twoWordCommand = twoWordCommandAliases[`${typedCommand} ${(args[0] || '').toLowerCase()}`];
   if (twoWordCommand) {
     const [twoWordName, ...twoWordArgs] = twoWordCommand.split(' ');
