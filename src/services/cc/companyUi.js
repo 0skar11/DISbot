@@ -37,9 +37,9 @@ export function companyConfirmation(guildId, userId, details, { now = Date.now()
     const quote = { ...details, guildId, userId, expiresAt: now + COMPANY.quoteMs };
     quotes.set(id, quote);
     let text;
-    if (details.action === 'create') text = `هتنشئ مطعم **${safe(details.name)}** مقابل **${formatCC(details.cost)}** من رصيدك.\nأول ربح بعد 24 ساعة، وأول تطوير بعد 24 ساعة.`;
-    else if (details.action === 'upgrade') text = `هتطوّر **${COMPANY_UPGRADES[details.kind]}** مقابل **${formatCC(details.cost)}**.\nمن الخزنة: **${formatCC(Math.min(details.treasury, details.cost))}**، ومن رصيدك: **${formatCC(Math.max(0, details.cost - details.treasury))}**.\nالتطوير يأثر على دورة الربح اللي تبدأ بعد الدفعة الجاية. بين كل تطوير والتاني 24 ساعة.`;
-    else text = `هتسحب **${formatCC(details.amount)}** من خزنة شركتك لرصيدك. ده نقل للربح الموجود، مش ربح إضافي.`;
+    if (details.action === 'create') text = `هتنشئ مطعم **${safe(details.name)}** مقابل ${formatCC(details.cost)} من رصيدك.\nأول ربح بعد 24 ساعة، وأول تطوير بعد 24 ساعة.`;
+    else if (details.action === 'upgrade') text = `هتطوّر **${COMPANY_UPGRADES[details.kind]}** مقابل ${formatCC(details.cost)}.\nمن الخزنة: ${formatCC(Math.min(details.treasury, details.cost))}، ومن رصيدك: ${formatCC(Math.max(0, details.cost - details.treasury))}.\nالتطوير يأثر على دورة الربح اللي تبدأ بعد الدفعة الجاية. بين كل تطوير والتاني 24 ساعة.`;
+    else text = `هتسحب ${formatCC(details.amount)} من خزنة شركتك لرصيدك. ده نقل للربح الموجود، مش ربح إضافي.`;
     return payload([ccEmbed('✅ تأكيد عملية الشركة', `${text}\n\nالتأكيد صالح 5 دقايق.`)], [row(
         button(`confirm:${id}`, 'تأكيد العملية', ButtonStyle.Success), button(`cancel:${id}`, 'إلغاء'),
     )]);
@@ -51,12 +51,12 @@ export function deleteCompanyQuote(id) { quotes.delete(id); }
 export async function companyPanel(client, guildId, userId, { now = Date.now(), notice = '' } = {}) {
     const { company, balance } = await getCompany(client, guildId, userId, { now });
     if (!company) return payload([ccEmbed('🏢 شركتك', [
-        `ابدأ مطعم باسمك مقابل **${formatCC(COMPANY.createCost)}**.`,
+        `ابدأ مطعم باسمك مقابل ${formatCC(COMPANY.createCost)}.`,
         '`شركة إنشاء اسم الشركة` ← يعرض التكلفة وبعدين تأكد بزرار.',
         'شركة واحدة لكل شخص؛ 5 فروع و5 مستويات للجودة والتسويق.',
         'الأرباح كل 24 ساعة في خزنة الشركة. مفيش ديون أو خصم تشغيل من رصيدك.',
         '`شركات` ← ترتيب القيمة والشهر والكؤوس.',
-        `💰 رصيدك: **${formatCC(balance)}**`,
+        `💰 رصيدك: ${formatCC(balance)}`,
     ].join('\n\n'))]);
     const daily = company.rate;
     const next = companyDaily(company);
@@ -65,10 +65,10 @@ export async function companyPanel(client, guildId, userId, { now = Date.now(), 
     const embed = ccEmbed(`🏢 ${safe(company.name)}`, [
         notice,
         `🍽️ الفروع **${company.branches}/5** • الجودة **${company.quality}/5** • التسويق **${company.marketing}/5**`,
-        `📊 الدورة الحالية: مبيعات **${formatCC(daily.revenue)}** − تشغيل **${formatCC(daily.expenses)}** = صافي **${formatCC(daily.profit)}**`,
-        `⏰ الدفعة الجاية ${relative(company.nextPayoutAt)}؛ صافي الدورة اللي بعدها **${formatCC(next.profit)}**.`,
-        `💼 الخزنة: **${formatCC(company.treasury)}** • رصيدك: **${formatCC(balance)}**`,
-        `💎 قيمة الشركة: **${formatCC(companyValue(company))}** (الاستثمار + الخزنة؛ مش سعر بيع).`,
+        `📊 الدورة الحالية: مبيعات ${formatCC(daily.revenue)} − تشغيل ${formatCC(daily.expenses)} = صافي ${formatCC(daily.profit)}`,
+        `⏰ الدفعة الجاية ${relative(company.nextPayoutAt)}؛ صافي الدورة اللي بعدها ${formatCC(next.profit)}.`,
+        `💼 الخزنة: ${formatCC(company.treasury)} • رصيدك: ${formatCC(balance)}`,
+        `💎 قيمة الشركة: ${formatCC(companyValue(company))} (الاستثمار + الخزنة؛ مش سعر بيع).`,
         `🔧 ${company.upgradeAt > now ? `التطوير الجاي ${relative(company.upgradeAt)}` : 'التطوير متاح دلوقتي'}. التسويق بيستفيد بحد أقصى عدد الفروع.`,
         `💵 التطويرات: ${Object.entries(COMPANY_UPGRADES).map(([kind, name]) => `${name}: ${companyUpgradeCost(company, kind) === null ? 'مكتمل' : formatCC(companyUpgradeCost(company, kind))}`).join(' • ')}`,
         `🏆 كؤوسك: **${cups.length}**${cups.length ? ` • ملك المطاعم ${cups[0][0]}` : ''}`,
