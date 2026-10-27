@@ -273,6 +273,30 @@ export async function updateCCState(client, guildId, userId, change) {
     return updateRecord(client, guildId, userId, (state, record) => change(state, record));
 }
 
+/** Opt-in fail-closed path for companies. Company + wallet share a single durable row write and
+ * the same member mutex as games, purchases, transfers and other CC operations (one bot replica). */
+export async function updatePersistentCCState(client, guildId, userId, change) {
+    if (!client?.db?.getStrict || client.db.isAvailable?.() === false || client.db.isDegraded?.()) {
+        throw new Error('Persistent database unavailable');
+    }
+    return Mutex.runExclusive(`cc:${guildId}:${userId}`, async () => {
+        const raw = await client.db.getStrict(getEconomyKey(guildId, userId), {});
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+            || (raw.cc !== undefined && (!Number.isSafeInteger(raw.cc) || raw.cc < 0))) {
+            throw new Error('Invalid persistent CC record');
+        }
+        const record = normalizeEconomyData(raw, DEFAULT_ECONOMY_DATA);
+        const state = readCC(record);
+        const result = change(state, record);
+        if (result?.skipSave) return { ...result, balance: state.cc };
+        record.cc = state.cc;
+        record.ccStats = state.stats;
+        record.ccInventory = state.inventory;
+        await saveRecord(client, guildId, userId, record);
+        return { ...result, balance: state.cc };
+    });
+}
+
 /** Everyone in the guild with CC, richest first. */
 export async function getLeaderboard(client, guildId) {
     const prefix = getEconomyPrefix(guildId);
