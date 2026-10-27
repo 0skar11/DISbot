@@ -9,6 +9,7 @@ import { INVITE_REWARDS } from '../../config/inviteRewards.js';
 import { GAMES_BOTS_CHANNEL_ID } from '../../config/games.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { STREAK } from './streakService.js';
+import { COMPANY } from '../../config/store/companies.js';
 
 const n = (value) => Number(value || 0).toLocaleString('en-US');
 
@@ -67,6 +68,15 @@ export function buildGuideEmbeds({ boostLine = ccBoostLine(), guildId = null } =
             `🧾 البيع عليه رسوم **${bourseSettings.sellFeePercent}%**، وأقصى حاجة **${bourseSettings.maxOwnedPerAsset} قطعة** من كل حاجة.`,
             ...(isHomeGuild(guildId) ? ['🏰 **القصر**: بيبدأ بحوالي 50,000، سعره عشوائي تماماً ومالوش سقف (ممكن يوصل 500,000 وأكتر)، وأقصاك **5** بس.'] : []),
         ].join('\n'), { color: 'info' }),
+        ...(isHomeGuild(guildId) ? [ccEmbed('🏢 شركات المطاعم', [
+            `\`شركة إنشاء اسم الشركة\` ← مطعم باسمك مقابل **${n(COMPANY.createCost)} CC** بعد تأكيد التكلفة.`,
+            '`شركة` / `شركة خزنة` ← الأرباح، المصاريف، الخزنة وميعاد الدفعة.',
+            '`شركة تطوير` ← طوّر الفروع أو الجودة أو التسويق؛ حد أقصى 5 لكل نوع وتطوير واحد كل 24 ساعة.',
+            'التطوير بيتدفع من الخزنة الأول والباقي من رصيدك. تأثيره يبدأ في الدورة اللي بعد الدفعة الجاية، من غير أرباح بأثر رجعي.',
+            '`شركة سحب 5000` ← تنقل أرباحك لرصيدك بعد التأكيد. مفيش ديون أو خصم تشغيل تلقائي من رصيدك.',
+            '`شركات` ← ترتيب القيمة وصافي أرباح الشهر UTC وكأس ملك المطاعم؛ مفيش مكافأة CC للموسم.',
+            'كل 24 ساعة من إنشاء الشركة، صافي الربح يضاف للخزنة. الريستارت مش بيكرر الأرباح؛ الأوقات والملكية محفوظة.',
+        ].join('\n\n'))] : []),
         ccEmbed('🔁 التحويل', [
             '`تحويل @صاحبك 100` ← تبعتله 100',
             `أول ${transfer.cheapPerWeek} تحويلات في الأسبوع عليهم ضريبة **${transfer.taxPercent}%**، وبعدها الضريبة بتزيد (لحد ${transfer.maxTaxPercent}%).`,

@@ -20,6 +20,7 @@ import gameCommand from '../src/commands/Games/game.js';
 import soloCommand from '../src/commands/Games/solo.js';
 import storeCommand from '../src/commands/Games/store.js';
 import bourseCommand from '../src/commands/Games/bourse.js';
+import companyCommand from '../src/commands/Games/company.js';
 
 // These tests check the normal reward rules; a running CC event (CC.boost) is tested on its own.
 CC.boost = { multiplier: 1, until: null };
@@ -269,6 +270,7 @@ describe('game words', () => {
             solo: soloCommand.data.toJSON().options.map((o) => o.name),
             store: storeCommand.data.toJSON().options.map((o) => o.name),
             bourse: bourseCommand.data.toJSON().options.map((o) => o.name),
+            company: companyCommand.data.toJSON().options.map((o) => o.name),
         };
         for (const [word, target] of Object.entries(commandArgAliases)) {
             const [command, sub] = target.split(' ');
