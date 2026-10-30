@@ -4,8 +4,24 @@ import { isGamesBotsChannel } from '../../../services/cc/gamesBotChannel.js';
 import { companyAction } from '../../../services/cc/companyService.js';
 import { moderateCompany } from '../../../services/cc/companyModeration.js';
 import { COMPANY_BUTTON_PREFIX, companyPanel, quoteCompanyAction, companyFailureText, getCompanyQuote, deleteCompanyQuote } from '../../../services/cc/companyUi.js';
+import { isCommandEnabledInConfig } from '../../../services/commandAccessService.js';
+import { getGuildConfigKey } from '../../../utils/database/keys.js';
+import { unwrapReplitData } from '../../../utils/database/guildConfigStorage.js';
 
 const privateReply = (interaction, content) => interaction.reply({ content, flags: MessageFlags.Ephemeral, allowedMentions: { parse: [] } });
+const heldReply = () => ({ content: '⏸️ أوامر الشركة متوقفة مؤقتًا. افتح لوحة جديدة بعد ما الإدارة تفعّلها.', embeds: [], components: [], allowedMentions: { parse: [] } });
+
+async function buttonEnabled(client, guildId, action) {
+    if (!client?.db?.getStrict || client.db.isAvailable?.() === false || client.db.isDegraded?.()) {
+        throw new Error('Persistent company configuration unavailable');
+    }
+    // Old buttons are another command entrypoint. Read its current hold authoritatively;
+    // the normal config reader can return defaults after an error and reopen access.
+    const config = unwrapReplitData(await client.db.getStrict(getGuildConfigKey(guildId), {}));
+    if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid company configuration');
+    const subcommand = action === 'refresh' ? 'view' : action;
+    return isCommandEnabledInConfig(config, `company ${subcommand}`, 'Games');
+}
 
 export default {
     name: COMPANY_BUTTON_PREFIX,
@@ -20,6 +36,10 @@ export default {
             if (action === 'cancel') {
                 deleteCompanyQuote(args[0]);
                 return interaction.editReply({ content: '✖️ اتلغت العملية.', embeds: [], components: [], allowedMentions: { parse: [] } });
+            }
+            if (!await buttonEnabled(client, interaction.guildId, quote.action)) {
+                deleteCompanyQuote(args[0]);
+                return interaction.editReply(heldReply());
             }
             const moderation = quote.action === 'archive' || quote.action === 'restore';
             const result = moderation
@@ -44,6 +64,7 @@ export default {
         const ownerId = args[args.length - 1];
         if (ownerId !== interaction.user.id) return privateReply(interaction, '❌ لوحة الشركة دي مش ليك.');
         await interaction.deferUpdate();
+        if (!await buttonEnabled(client, interaction.guildId, action)) return interaction.editReply(heldReply());
         if (action === 'refresh') return interaction.editReply(await companyPanel(client, interaction.guildId, ownerId));
         if (action === 'upgrade') return interaction.editReply(await quoteCompanyAction(client, interaction.guildId, ownerId, { action: 'upgrade', kind: args[0] }));
         if (action === 'withdraw') return interaction.editReply(await quoteCompanyAction(client, interaction.guildId, ownerId, { action: 'withdraw', amount: 'all' }));

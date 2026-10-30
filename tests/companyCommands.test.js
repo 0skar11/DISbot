@@ -11,7 +11,7 @@ import { companyPanel, companiesPanel, quoteCompanyAction, getCompanyQuote, comp
 import { applyWordAliases, resolveCommandAlias } from '../src/config/commands/commandAliases.js';
 import { createMockInteraction } from '../src/utils/messageAdapter.js';
 import { parseTypedCommand } from '../src/utils/prefixParser.js';
-import { getEconomyKey } from '../src/utils/database/keys.js';
+import { getEconomyKey, getGuildConfigKey } from '../src/utils/database/keys.js';
 import { buildGuideEmbeds } from '../src/services/cc/guideUi.js';
 import { pgDb } from '../src/utils/postgresDatabase.js';
 import { db } from '../src/utils/database/wrapper.js';
@@ -131,6 +131,55 @@ test('expired quotes and independent duplicate quotes cannot charge twice', asyn
     assert.equal(client.records.get(KEY).cc, 900_000);
 });
 
+test('old confirmations cannot spend while company, its category or its subcommand is disabled', async () => {
+    for (const config of [
+        { disabledCommands: { company: true } },
+        { disabledCategories: { games: true } },
+        { disabledCommands: { 'company create': true } },
+    ]) {
+        const client = fakeClient();
+        const preview = await runTyped(client, 'شركة إنشاء مطعم عائلي');
+        const id = quoteId(preview);
+        client.records.set(getGuildConfigKey(GUILD), config);
+        const press = interactionFor();
+        await button.execute(press, client, ['confirm', id]);
+        assert.equal(client.records.get(KEY).cc, 1_000_000);
+        assert.equal(client.records.get(KEY).ccCompany, undefined);
+        assert.match(press.outputs[0].content, /متوقفة/);
+        assert.equal(getCompanyQuote(id), undefined);
+    }
+});
+
+test('company buttons respect subcommand holds, fail closed on config errors, and still allow cancellation', async () => {
+    const client = fakeClient();
+    const now = Date.now() - 2 * COMPANY_DAY_MS;
+    await companyAction(client, GUILD, USER, 'create', { name: 'مطعم عائلي', cost: COMPANY.createCost, version: 0, now, expiresAt: now + COMPANY.quoteMs });
+    const before = structuredClone(client.records.get(KEY));
+    client.records.set(getGuildConfigKey(GUILD), { disabledCommands: { 'company upgrade': true } });
+    const held = interactionFor();
+    await button.execute(held, client, ['upgrade', 'quality', USER]);
+    assert.match(held.outputs[0].content, /متوقفة/);
+    const readable = interactionFor();
+    await button.execute(readable, client, ['refresh', USER]);
+    assert.ok(readable.outputs[0].embeds.length);
+    assert.deepEqual(client.records.get(KEY), before);
+
+    const other = fakeClient();
+    const preview = await runTyped(other, 'شركة إنشاء مطعم عائلي');
+    const id = quoteId(preview);
+    const getStrict = other.db.getStrict;
+    other.db.getStrict = async (key, ...rest) => {
+        if (key === getGuildConfigKey(GUILD)) throw new Error('config read failed');
+        return getStrict(key, ...rest);
+    };
+    await assert.rejects(button.execute(interactionFor(), other, ['confirm', id]), /config read failed/);
+    assert.equal(other.records.get(KEY).cc, 1_000_000);
+    const cancelled = interactionFor();
+    await button.execute(cancelled, other, ['cancel', id]);
+    assert.match(cancelled.outputs[0].content, /اتلغت/);
+    assert.equal(getCompanyQuote(id), undefined);
+});
+
 test('wrong guild/channel commands do not touch storage', async () => {
     const client = { db: { getStrict: async () => { throw new Error('must not query'); } } };
     assert.match((await runTyped(client, 'شركة', { guildId: '100000000000000250' })).content, /مش متاحة/);
@@ -153,6 +202,21 @@ test('company panel and upgrade/withdraw prompts disclose current and next-cycle
     const withdraw = await quoteCompanyAction(client, GUILD, USER, { action: 'withdraw', amount: 'all' }, { now: when });
     assert.equal(getCompanyQuote(quoteId(withdraw)).amount, 400);
     assert.equal(client.records.get(KEY).cc, 900_000);
+});
+
+test('typed withdrawals reject partial numbers instead of silently quoting a different amount', async () => {
+    const client = fakeClient();
+    const now = Date.now() - 3 * COMPANY_DAY_MS;
+    await companyAction(client, GUILD, USER, 'create', { name: 'مطعم عائلي', cost: COMPANY.createCost, version: 0, now, expiresAt: now + COMPANY.quoteMs });
+    const before = structuredClone(client.records.get(KEY));
+    for (const value of ['1.5', '1e3', '12CC', '5000abc', '1,000', '-1', '9007199254740992']) {
+        const output = await runTyped(client, `شركة سحب ${value}`);
+        assert.match(output.content, /مبلغ صحيح/, value);
+        assert.deepEqual(output.components, [], value);
+    }
+    const valid = await runTyped(client, 'شركة سحب ١٢');
+    assert.equal(getCompanyQuote(quoteId(valid)).amount, 12);
+    assert.deepEqual(client.records.get(KEY), before);
 });
 
 test('leaderboard sends no mentions and guide only exposes companies in home server', async () => {
@@ -185,4 +249,20 @@ test('strict storage distinguishes missing rows, returns full economy JSON, and 
     const wrapper = new db.constructor(); wrapper.useFallback = true; wrapper.db = persistent;
     await assert.rejects(wrapper.getStrict(KEY), /Persistent/);
     await assert.rejects(wrapper.getEconomyRowsStrict(GUILD), /Persistent/);
+});
+
+test('strict guild access reads return stored configuration and propagate database errors', async () => {
+    const persistent = new pgDb.constructor(); persistent.isConnected = true;
+    const config = { disabledCommands: { company: true } };
+    persistent.pool = { query: async (sql, values) => {
+        assert.match(sql, /SELECT config/);
+        assert.deepEqual(values, [GUILD]);
+        return { rows: [{ config }] };
+    } };
+    assert.deepEqual(await persistent.getStrict(getGuildConfigKey(GUILD), {}), config);
+    persistent.pool = { query: async () => ({ rows: [] }) };
+    assert.deepEqual(await persistent.getStrict(getGuildConfigKey(GUILD), {}), {});
+    persistent.pool = { query: async () => { throw new Error('config read failed'); } };
+    await assert.rejects(persistent.getStrict(getGuildConfigKey(GUILD), {}), /config read failed/);
+    assert.deepEqual(await persistent.get(getGuildConfigKey(GUILD), {}), {}, 'legacy reads retain existing fallback behavior');
 });

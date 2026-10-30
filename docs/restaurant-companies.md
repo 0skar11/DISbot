@@ -6,7 +6,7 @@ Home guild only (`1155236281706627173`), in the existing games channel or its th
 
 - `شركة إنشاء اسم الشركة`: quote a new restaurant, then confirm its cost with the owner-only button.
 - `شركة`, `شركة خزنة`, `شركة تطوير`: company panel, treasury, upgrade choices and payout/cooldown times.
-- `شركة سحب 5000`: quote a treasury withdrawal and confirm it. The panel also offers withdrawal of the available treasury.
+- `شركة سحب 5000`: quote a treasury withdrawal and confirm it. Amounts must be whole CC; partial numbers such as `1.5` or `5000abc` are rejected rather than truncated. Arabic digits are supported. The panel also offers withdrawal of the available treasury.
 - `شركات`: top ten company values, current monthly operating profit and recent monthly cups.
 - Slash equivalents: `/company view|create|upgrade|treasury|withdraw|leaderboard`.
 
@@ -39,6 +39,8 @@ New opt-in strict reads bypass the legacy read-error-to-default behavior. Compan
 
 Quotes are owner/guild/channel bound, expire after five minutes and are kept in a bounded 1,000-entry process map. Quotes expire on restart; ownership, money and cooldown do not. Clicking stale/replayed quotes never repeats a charge. All costs are displayed before confirmation, and balances/cooldowns are checked again under the lock. Names disallow mentions/control characters and output disables mention parsing.
 
+Company buttons also recheck the current base command, Games category and matching subcommand setting. Disabling any of them blocks old confirmations and controls, including moderation confirmations. A failed strict configuration read stops the action. Cancelling an existing quote remains available without a configuration read or financial mutation.
+
 ## Validation and launch
 
 Run `node --test tests/companies.test.js tests/companyCommands.test.js`, then `npm test`. Tests use cloned in-memory fake persistent records and mocked SQL; they never connect to Neon or purchase anything with member money. Live read-only smoke: `شركة`, `شركة تطوير` (without confirming), `شركات`. A successful real purchase/withdrawal must be initiated by its owner; do not fabricate test CC or companies on production.
@@ -47,7 +49,7 @@ Deploy to the active NEW Railway service only. Keep Wispbyte, HeavenCloud and th
 
 ## Names and reversible moderation
 
-Names referring to child sexual abuse are rejected both before a creation quote and again inside the locked mutation. Policy normalization covers Arabic accents, tatweel, common letter variants, formatting/invisible marks and punctuation, plus obvious English spacing and leetspeak variants. This is a targeted rule, not a guarantee that every offensive phrase in every language is detected. Ordinary family/children's restaurant names remain permitted. Saved-data validation stays structural so previously accepted names can still be moderated; blocked names are replaced by a generic label in new panels/rankings.
+Company names use the server's shared insult/banned-word rules plus explicit adult/child sexual-content terms, both before a creation/restoration quote and again inside the locked mutation. The name policy applies to every member, including Trusted users, managers, guild owners and bot owners. Ordinary chat exemptions and punishments remain unchanged. Policy normalization covers Arabic accents, tatweel, common letter variants, formatting/invisible marks and punctuation, plus obvious English spacing and leetspeak variants. Split word chunks are checked without treating innocent substrings such as `Essex` as explicit words. This is a targeted rule, not a guarantee that every offensive phrase in every language is detected. Ordinary family/children's restaurant names remain permitted. Saved-data validation stays structural so previously accepted names can still be moderated; blocked names are replaced by a generic label in new panels/rankings.
 
 Server managers (`ManageGuild`), the guild owner and configured bot owners may use:
 

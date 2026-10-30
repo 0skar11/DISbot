@@ -374,7 +374,7 @@ class PostgreSQLDatabase {
     async getStrict(key, defaultValue = null) {
         if (!this.isAvailable()) throw new Error('Persistent database unavailable');
         const parsed = parseKey(canonicalizeKey(key));
-        if (parsed.type === 'economy') return this.getStructuredData(parsed, defaultValue, true);
+        if (parsed.type === 'economy' || parsed.type === 'guild_config') return this.getStructuredData(parsed, defaultValue, true);
         if (parsed.type === 'temp' || isTempBackedType(parsed.type)) {
             const result = await this.pool.query(
                 `SELECT value FROM ${pgConfig.tables.temp_data} WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,

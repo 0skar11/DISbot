@@ -53,15 +53,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // The day each member's streak was last counted, so most messages don't touch the database.
 const counted = new Map();
 let timer = null;
-// The streak room's ID once it is known (ensureStreakChannel).
-let streakChannelId = null;
 let boardRefresh = null;
 let boardRefreshRequested = false;
 let boardUpdateTimer = null;
 
 /** Whether a message is in the streak room. */
 export function isStreakChannel(channelId) {
-    return Boolean(streakChannelId) && channelId === streakChannelId;
+    return channelId === STREAK_CHANNEL_ID;
 }
 
 /** Whether a message has a picture or a GIF: an image file, a GIF link (Tenor, Giphy, .gif) or its embed. */
@@ -217,11 +215,9 @@ export async function ensureStreakChannel(guild) {
         throw error;
     });
     if (channel?.type !== ChannelType.GuildText || channel.guild?.id !== guild.id) {
-        streakChannelId = null;
         logger.warn(`[STREAK] Pinned streak channel ${STREAK_CHANNEL_ID} is missing or inaccessible; no replacement will be created.`);
         return null;
     }
-    streakChannelId = STREAK_CHANNEL_ID;
     await openForPictures(channel, guild);
     return channel;
 }
@@ -377,7 +373,6 @@ export async function startStreak(client) {
 /** For tests. */
 export function resetStreakCache() {
     counted.clear();
-    streakChannelId = null;
     if (boardUpdateTimer) clearTimeout(boardUpdateTimer);
     boardUpdateTimer = null;
 }

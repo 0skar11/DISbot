@@ -2,7 +2,7 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { GAMES_BOTS_CHANNEL_ID } from '../../config/games.js';
 import { isGamesBotsChannel } from '../../services/cc/gamesBotChannel.js';
-import { companyPanel, companiesPanel, quoteCompanyAction, quoteCompanyModeration } from '../../services/cc/companyUi.js';
+import { companyPanel, companiesPanel, quoteCompanyAction, quoteCompanyModeration, companyFailureText } from '../../services/cc/companyUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 const words = { إنشاء: 'create', انشاء: 'create', تطوير: 'upgrade', خزنة: 'treasury', خزنه: 'treasury', سحب: 'withdraw', ترتيب: 'leaderboard', إيقاف: 'archive', ايقاف: 'archive', استرجاع: 'restore' };
@@ -44,7 +44,14 @@ export default {
             interaction.options.getUser('member').id, sub, sub === 'restore' ? interaction.options.getString('name') : undefined));
         if (sub === 'leaderboard') return reply(await companiesPanel(client, guildId));
         if (sub === 'create') return reply(await quoteCompanyAction(client, guildId, user.id, { action: 'create', name: interaction.options.getString('name') }));
-        if (sub === 'withdraw') return reply(await quoteCompanyAction(client, guildId, user.id, { action: 'withdraw', amount: interaction.options.getInteger('amount') }));
+        if (sub === 'withdraw') {
+            // The shared prefix adapter intentionally accepts numeric prefixes in other
+            // commands. A company withdrawal must quote exactly the member's whole amount.
+            if (interaction._isPrefixCommand && !/^\d+$/u.test(String(interaction.options.get('amount')))) {
+                return reply({ content: companyFailureText({ reason: 'amount' }), components: [] });
+            }
+            return reply(await quoteCompanyAction(client, guildId, user.id, { action: 'withdraw', amount: interaction.options.getInteger('amount') }));
+        }
         return reply(await companyPanel(client, guildId, user.id));
     },
 };
