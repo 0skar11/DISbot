@@ -76,6 +76,16 @@ class DatabaseWrapper {
         return this.db.get(key, defaultValue);
     }
 
+    async getStrict(key, defaultValue = null) {
+        if (!this.isAvailable() || !this.db.getStrict) throw new Error('Persistent database unavailable');
+        return this.db.getStrict(key, defaultValue);
+    }
+
+    async getEconomyRowsStrict(guildId) {
+        if (!this.isAvailable() || !this.db.getEconomyRowsStrict) throw new Error('Persistent database unavailable');
+        return this.db.getEconomyRowsStrict(guildId);
+    }
+
     async delete(key) {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Deleting from memory: ${key}`);

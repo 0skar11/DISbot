@@ -9,12 +9,12 @@
 // would end that night.
 // The streak lives next to CC in the economy record as `ccStreak: { day, count, best }`.
 //
-// The streak room is one fixed channel (STREAK_CHANNEL_ID): members post their daily
+// The streak room sits in the games category, right under the games channel: members post their daily
 // picture there and the bot replies to every message (updated, already counted today, or text doesn't
 // count); it also holds the live top streak board (edited every few minutes) and the daily reminder. The media role guard doesn't apply in this room. `ستريك` / `streak` shows a
 // member's streak and `توب ستريك` / `top streak` the longest ones.
 
-import { PermissionFlagsBits } from 'discord.js';
+import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { CC } from '../../config/cc.js';
 import { updateCCState, utcDay } from './ccService.js';
@@ -36,12 +36,14 @@ export const STREAK = {
     // At most this many members are mentioned in the reminder.
     reminderMentions: 25,
 };
-// The streak room is this one channel, fixed by the owner: the bot never makes another one (it used to make
-// a new room every few restarts and the old one stopped working).
+export const STREAK_CHANNEL_NAME = '🔥┃streak';
 export const STREAK_CHANNEL_ID = '1562578413217124402';
 export const STREAK_BOARD_REFRESH_MS = 10 * 60 * 1000;
+export const STREAK_BOARD_UPDATE_DELAY_MS = 1000;
 const STREAK_BOARD_TITLE = '🔥 Top Streak';
+const STREAK_BOARD_FOOTER = '🔄 بيتحدث تلقائي • آخر تحديث';
 const BOARD_KEY = 'streak';
+const CONFIG_KEY = 'streakChannelId';
 const REMINDER_KEY = 'streakReminderDay';
 const GIF_LINK = /https?:\/\/(?:\S+\.)?(?:tenor\.com|giphy\.com)\/\S+|https?:\/\/\S+\.gif(?:\?\S*)?(?:\s|$)/iu;
 const IMAGE_EXTENSION = /\.(?:png|jpe?g|gif|webp|bmp|heic|heif|avif)$/iu;
@@ -51,6 +53,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // The day each member's streak was last counted, so most messages don't touch the database.
 const counted = new Map();
 let timer = null;
+let boardRefresh = null;
+let boardRefreshRequested = false;
+let boardUpdateTimer = null;
+
 /** Whether a message is in the streak room. */
 export function isStreakChannel(channelId) {
     return channelId === STREAK_CHANNEL_ID;
@@ -195,27 +201,38 @@ async function openForPictures(channel, guild) {
     if (channel.topic !== STREAK_TOPIC) await channel.setTopic?.(STREAK_TOPIC).catch(() => {});
 }
 
-/** The streak room (STREAK_CHANNEL_ID). Returns null, and makes nothing, when the bot can't get it now. */
+/** Resolves only the owner's pinned streak room. Never create or redirect to another channel. */
 export async function ensureStreakChannel(guild) {
     if (!isHomeGuild(guild?.id)) return null;
-    const channel = guild.channels.cache.get(STREAK_CHANNEL_ID) || await guild.channels.fetch(STREAK_CHANNEL_ID).catch(() => null);
-    if (!channel) {
-        logger.warn(`[STREAK] The streak room ${STREAK_CHANNEL_ID} was not found; nothing is created.`);
+    const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
+    if (config?.[CONFIG_KEY] !== STREAK_CHANNEL_ID) {
+        await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: STREAK_CHANNEL_ID })
+            .catch((error) => logger.warn(`[STREAK] Could not save the pinned room: ${error.message}`));
+    }
+    let channel = guild.channels.cache.get(STREAK_CHANNEL_ID);
+    if (!channel) channel = await guild.channels.fetch(STREAK_CHANNEL_ID).catch((error) => {
+        if (error.code === 10003 || error.code === 50001 || error.code === 50013) return null;
+        throw error;
+    });
+    if (channel?.type !== ChannelType.GuildText || channel.guild?.id !== guild.id) {
+        logger.warn(`[STREAK] Pinned streak channel ${STREAK_CHANNEL_ID} is missing or inaccessible; no replacement will be created.`);
         return null;
     }
     await openForPictures(channel, guild);
     return channel;
 }
 
-const isStreakBoard = (message) => message.embeds?.[0]?.title?.includes('Top Streak');
+// Command replies share the title but are not the periodically edited board.
+const isStreakBoard = (message) => message.embeds?.[0]?.title === STREAK_BOARD_TITLE
+    && message.embeds?.[0]?.footer?.text === STREAK_BOARD_FOOTER;
 
 /** Edits the live board in the streak room, posting it when it isn't there. */
-export async function publishStreakBoard(guild) {
+async function publishBoard(guild) {
     const channel = await ensureStreakChannel(guild);
     if (!channel?.send) return { status: 'no-channel' };
-    const embed = { ...(await streakTopEmbed(guild.client, guild)), footer: { text: '🔄 بيتحدث تلقائي • آخر تحديث' }, timestamp: new Date().toISOString() };
+    const embed = { ...(await streakTopEmbed(guild.client, guild)), footer: { text: STREAK_BOARD_FOOTER }, timestamp: new Date().toISOString() };
     const payload = { content: '', embeds: [embed], allowedMentions: { parse: [] } };
-    const existing = await findBoardMessage(channel, BOARD_KEY, isStreakBoard).catch(() => null);
+    const existing = await findBoardMessage(channel, BOARD_KEY, isStreakBoard);
     if (existing) {
         await existing.edit(payload);
         return { status: 'updated', channelId: channel.id };
@@ -225,8 +242,31 @@ export async function publishStreakBoard(guild) {
     return { status: 'sent', channelId: channel.id };
 }
 
-// Replies that only say "already counted" or "text doesn't count" go away after this long.
-const SHORT_REPLY_DELETE_MS = 15_000;
+/** Serialize refreshes, keeping at most one extra pass when a count arrives during a refresh. */
+export function publishStreakBoard(guild) {
+    if (!isHomeGuild(guild?.id)) return Promise.resolve({ status: 'no-channel' });
+    boardRefreshRequested = true;
+    if (!boardRefresh) {
+        boardRefresh = (async () => {
+            let result;
+            do {
+                boardRefreshRequested = false;
+                result = await publishBoard(guild);
+            } while (boardRefreshRequested);
+            return result;
+        })().finally(() => { boardRefresh = null; });
+    }
+    return boardRefresh;
+}
+
+function scheduleStreakBoardRefresh(guild) {
+    if (boardUpdateTimer) return;
+    boardUpdateTimer = setTimeout(() => {
+        boardUpdateTimer = null;
+        publishStreakBoard(guild).catch((error) => logger.error('Failed to refresh the streak board:', error));
+    }, STREAK_BOARD_UPDATE_DELAY_MS);
+    boardUpdateTimer.unref?.();
+}
 
 /** The reply to a message in the streak room: counted now, already counted today, or text only. */
 export function streakReplyText(userId, { result = null, current = 0, media = true } = {}) {
@@ -239,9 +279,8 @@ export function streakReplyText(userId, { result = null, current = 0, media = tr
     return `✅ <@${userId}> ستريكك متحدث النهارده خلاص (**${current}** يوم). ابعت تاني بكرة.`;
 }
 
-async function replyInRoom(message, content, deleteAfterMs = 0) {
-    const sent = await message.reply?.({ content, allowedMentions: { users: [message.author.id], repliedUser: false } }).catch(() => null);
-    if (sent && deleteAfterMs) setTimeout(() => sent.delete().catch(() => {}), deleteAfterMs).unref?.();
+async function replyInRoom(message, content) {
+    await message.reply?.({ content, allowedMentions: { users: [message.author.id], repliedUser: false } }).catch(() => null);
 }
 
 /**
@@ -255,16 +294,17 @@ export async function handleStreakMessage(message) {
         const client = message.client || message.guild.client;
         const userId = message.author?.id;
         if (!hasStreakMedia(message)) {
-            await replyInRoom(message, streakReplyText(userId, { media: false }), SHORT_REPLY_DELETE_MS);
+            await replyInRoom(message, streakReplyText(userId, { media: false }));
             return null;
         }
         const result = await recordStreakMessage(client, message.guild.id, userId);
         if (result) {
+            scheduleStreakBoardRefresh(message.guild);
             await message.react?.('🔥').catch(() => {});
             await replyInRoom(message, streakReplyText(userId, { result }));
         } else {
             const record = await client.db.get(getEconomyKey(message.guild.id, userId), null);
-            await replyInRoom(message, streakReplyText(userId, { current: liveStreak(record?.ccStreak) }), SHORT_REPLY_DELETE_MS);
+            await replyInRoom(message, streakReplyText(userId, { current: liveStreak(record?.ccStreak) }));
         }
         return result;
     } catch (error) {
@@ -333,4 +373,6 @@ export async function startStreak(client) {
 /** For tests. */
 export function resetStreakCache() {
     counted.clear();
+    if (boardUpdateTimer) clearTimeout(boardUpdateTimer);
+    boardUpdateTimer = null;
 }

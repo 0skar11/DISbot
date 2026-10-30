@@ -369,6 +369,30 @@ class PostgreSQLDatabase {
         return defaultValue;
     }
 
+    // Financial extensions must distinguish a missing row from a failed read. Unlike get(),
+    // this intentionally propagates database errors and never falls back to memory or legacy data.
+    async getStrict(key, defaultValue = null) {
+        if (!this.isAvailable()) throw new Error('Persistent database unavailable');
+        const parsed = parseKey(canonicalizeKey(key));
+        if (parsed.type === 'economy' || parsed.type === 'guild_config') return this.getStructuredData(parsed, defaultValue, true);
+        if (parsed.type === 'temp' || isTempBackedType(parsed.type)) {
+            const result = await this.pool.query(
+                `SELECT value FROM ${pgConfig.tables.temp_data} WHERE key = $1 AND (expires_at IS NULL OR expires_at > NOW())`,
+                [parsed.fullKey],
+            );
+            return result.rows.length ? result.rows[0].value : defaultValue;
+        }
+        throw new Error('Unsupported strict database key');
+    }
+
+    async getEconomyRowsStrict(guildId) {
+        if (!this.isAvailable()) throw new Error('Persistent database unavailable');
+        const result = await this.pool.query(
+            `SELECT user_id, data FROM ${pgConfig.tables.economy} WHERE guild_id = $1`, [guildId],
+        );
+        return result.rows.map((row) => ({ userId: row.user_id, record: row.data || {} }));
+    }
+
     async get(key, defaultValue = null) {
         try {
             if (!this.isAvailable()) {
@@ -612,7 +636,7 @@ class PostgreSQLDatabase {
         }
     }
 
-    async getStructuredData(parsedKey, defaultValue) {
+    async getStructuredData(parsedKey, defaultValue, strict = false) {
         try {
             switch (parsedKey.type) {
                 case 'guild_config':
@@ -717,6 +741,7 @@ class PostgreSQLDatabase {
                     return defaultValue;
             }
         } catch (error) {
+            if (strict) throw error;
             logger.error(`Error getting structured data for ${parsedKey.fullKey}:`, error);
             return defaultValue;
         }
