@@ -4,14 +4,19 @@ import { PermissionFlagsBits, MessageFlags } from 'discord.js';
 import { HOME_GUILD_ID as GUILD } from '../src/config/homeGuild.js';
 import { GAMES_BOTS_CHANNEL_ID as CHANNEL } from '../src/config/games.js';
 import { COMPANY, COMPANY_DAY_MS as DAY } from '../src/config/store/companies.js';
-import { getEconomyKey } from '../src/utils/database/keys.js';
+import { getEconomyKey, getGuildConfigKey } from '../src/utils/database/keys.js';
 import { companyAction, companyLeaderboard, getCompany, validateCompany } from '../src/services/cc/companyService.js';
 import { canModerateCompanies, moderateCompany } from '../src/services/cc/companyModeration.js';
 import { companyNameIssue, forbiddenCompanyName, normalizeCompanyName } from '../src/services/cc/companyNames.js';
-import { companyPanel, companiesPanel, quoteCompanyAction, quoteCompanyModeration, getCompanyQuote } from '../src/services/cc/companyUi.js';
+import { companyPanel, companiesPanel, quoteCompanyAction, quoteCompanyModeration, getCompanyQuote, companyConfirmation } from '../src/services/cc/companyUi.js';
 import buttons from '../src/interactions/buttons/store/company.js';
 import command from '../src/commands/Games/company.js';
 import { applyWordAliases } from '../src/config/commands/commandAliases.js';
+import { botConfig } from '../src/config/bot.js';
+import { createMockInteraction } from '../src/utils/messageAdapter.js';
+import { parseTypedCommand } from '../src/utils/prefixParser.js';
+import { checkText } from '../src/services/moderation/chatFilterRules.js';
+import { checkText as chatRule } from '../src/services/moderation/chatFilterService.js';
 
 const OWNER = '200000000000000261';
 const ACTOR = '200000000000000262';
@@ -57,6 +62,96 @@ test('blocked-name normalization catches spacing, accents, presentation forms an
     for (const name of names) assert.equal(forbiddenCompanyName(name), true);
     assert.equal(normalizeCompanyName('أ . طـْفَا ل'), 'اطفال');
     for (const name of ['مطعم أطفال', 'مطعم العائلة', 'Kids Restaurant', 'جنسن للمأكولات']) assert.equal(companyNameIssue(name), null);
+});
+
+test('company names share server word rules and reject explicit adult names without substring false positives', () => {
+    assert.equal(chatRule, checkText, 'chat and company use one pure rule implementation');
+    const blockedNames = ['مطعم الدعارة', 'دار د ع ا ر ة', 'دار د.ع.ا.ر.ة', 'ﺩﻋﺎﺭﺓ', 'دَعاَرة',
+        'مؤسسة سكس', 's3x restaurant', 'p0rn cafe', 'b r o t h e l', 'مطعم شرموطه', 'شركة الحفره', 'a3ars cafe',
+        'دع اره', 'دع.اره', 'دعا-ره', 'pro stitution', 'por n', 'مطعم دع.اره', 'مطعم الدع.اره',
+        'my s e x', 'my p0r n cafe', 'مطعم شر موطه', 'مطعم شر.موطه', 'kha wal cafe', 'kh awal cafe', 'شركة الح فره'];
+    for (const name of blockedNames) assert.equal(companyNameIssue(name), 'forbidden_name', name);
+    for (const name of ['Essex Restaurant', 'Middlesex Meals', 'Sussex Diner', 'مطعم أطفال', 'مطعم العائلة', 'Kids Restaurant',
+        'جنسن للمأكولات', 'خوله للمأكولات', 'ابن العم', 'ابن ال عم', 'مطعم ابن الحلال', 'Nick Restaurant', 'نيكول للمأكولات']) {
+        assert.equal(companyNameIssue(name), null, name);
+    }
+    assert.equal(companyNameIssue('a'.repeat(33)), 'name');
+    assert.equal(companyNameIssue('a'.repeat(32)), null);
+    assert.equal(companyNameIssue('شر موطه '.repeat(1000)), 'name', 'oversized input is rejected before bounded policy work');
+});
+
+test('ordinary, Trusted and privileged owners get identical name rejection in prefix, slash and old confirmations', async () => {
+    const originalOwners = botConfig.commands.owners;
+    try {
+        for (const role of ['member', 'trusted', 'manager', 'guild-owner', 'bot-owner']) {
+            const client = fixture();
+            client.records.set(getGuildConfigKey(GUILD), { antiNukeTrustedUsers: role === 'trusted' ? [OWNER] : [] });
+            botConfig.commands.owners = role === 'bot-owner' ? [OWNER] : [];
+            const guild = { id: GUILD, ownerId: role === 'guild-owner' ? OWNER : OTHER };
+            const member = { id: OWNER, roles: { cache: new Map(role === 'trusted' ? [['trusted-role', { name: 'Trusted' }]] : []) },
+                permissions: { has: () => role === 'manager' } };
+            const before = structuredClone(client.records.get(key));
+            for (const prefix of [false, true]) {
+                const outputs = [];
+                let interaction;
+                if (prefix) {
+                    const parsed = parseTypedCommand('شركة إنشاء مطعم الدعارة', '!');
+                    const args = command.normalizePrefixArgs(applyWordAliases(parsed.commandName, parsed.args, parsed.prefixed).args);
+                    interaction = createMockInteraction({ id: OWNER, author: { id: OWNER, bot: false }, member, guild,
+                        channel: { id: CHANNEL, send: async (p) => { outputs.push(p); return { id: 'reply' }; } } }, command.data, args);
+                } else {
+                    interaction = { id: OWNER, user: { id: OWNER }, member, guild, guildId: GUILD, channel: { id: CHANNEL }, channelId: CHANNEL,
+                        deferred: false, replied: false, options: { getSubcommand: () => 'create', getString: () => 'مطعم الدعارة' },
+                        deferReply: async function () { this.deferred = true; },
+                        editReply: async (p) => outputs.push(p), reply: async (p) => outputs.push(p) };
+                }
+                await command.execute(interaction, {}, client);
+                assert.match(outputs[0].content, /ممنوع/, `${role}/${prefix ? 'prefix' : 'slash'}`);
+                assert.deepEqual(outputs[0].components, []);
+            }
+            const oldQuote = companyConfirmation(GUILD, OWNER, { action: 'create', name: 'مطعم الدعارة', cost: COMPANY.createCost, version: 0 });
+            const click = clickInteraction(OWNER);
+            await buttons.execute(click, client, ['confirm', quoteId(oldQuote)]);
+            assert.match(click.outputs[0].content, /ممنوع/, role);
+            assert.deepEqual(client.records.get(key), before, role);
+        }
+    } finally { botConfig.commands.owners = originalOwners; }
+});
+
+test('manager, guild owner and bot owner cannot restore an adult forbidden name even from an old quote', async () => {
+    const originalOwners = botConfig.commands.owners;
+    try {
+        for (const role of ['manager', 'guild-owner', 'bot-owner']) {
+            botConfig.commands.owners = [];
+            const client = fixture(); await create(client);
+            await moderateCompany(client, GUILD, ACTOR, OWNER, 'archive', options(START, { version: 1 }));
+            if (role === 'guild-owner') client.guilds.fetch = async () => ({ ownerId: ACTOR });
+            if (role === 'bot-owner') botConfig.commands.owners = [ACTOR];
+            const before = structuredClone(client.records.get(key));
+            const preview = await quoteCompanyModeration(client, GUILD, ACTOR, OWNER, 'restore', 'مطعم الدعارة');
+            assert.match(preview.content, /ممنوع/, role);
+            const oldQuote = companyConfirmation(GUILD, ACTOR, { action: 'restore', targetId: OWNER, name: 'مطعم الدعارة', version: 2 });
+            const click = clickInteraction();
+            await buttons.execute(click, client, ['confirm', quoteId(oldQuote)]);
+            assert.match(click.outputs[0].content, /ممنوع/, role);
+            assert.deepEqual(client.records.get(key), before, role);
+        }
+    } finally { botConfig.commands.owners = originalOwners; }
+});
+
+test('company holds also block old moderation confirmations without preventing owner cancellation', async () => {
+    const client = fixture(); await create(client);
+    const preview = await quoteCompanyModeration(client, GUILD, ACTOR, OWNER, 'archive', undefined);
+    client.records.set(getGuildConfigKey(GUILD), { disabledCommands: { 'company archive': true } });
+    const before = structuredClone(client.records.get(key));
+    const click = clickInteraction();
+    await buttons.execute(click, client, ['confirm', quoteId(preview)]);
+    assert.match(click.outputs[0].content, /متوقفة/);
+    assert.deepEqual(client.records.get(key), before);
+    const next = await quoteCompanyModeration(client, GUILD, ACTOR, OWNER, 'archive', undefined);
+    await buttons.execute(click, client, ['cancel', quoteId(next)]);
+    assert.match(click.outputs.at(-1).content, /اتلغت/);
+    assert.deepEqual(client.records.get(key), before);
 });
 
 test('creation checks the policy before quoting and again under the monetary lock', async () => {
