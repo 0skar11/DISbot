@@ -14,6 +14,12 @@ const USER = '200000000000000001';
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 16, 12);
 
+test('fixed streak room is recognized before startup without creating any channel', () => {
+  resetStreakCache();
+  assert.equal(isStreakChannel(STREAK_CHANNEL_ID), true);
+  assert.equal(isStreakChannel('400000000000000001'), false);
+});
+
 function setup() {
   const store = new Map();
   const client = {

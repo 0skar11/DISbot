@@ -14,6 +14,7 @@ import { publishSavedIdeasBoard } from "../services/savedIdeasBoardService.js";
 import { publishHoneypotNotice } from "../services/security/honeypotNotice.js";
 import { publishProofGuide } from "../services/moderation/proofMergeService.js";
 import { startCCTopBoard } from "../services/games/ccTopBoard.js";
+import { startServersBoard } from "../services/serversBoard.js";
 import { startStreak } from "../services/cc/streakService.js";
 import { startStoreChannel } from "../services/cc/storeChannel.js";
 import { startInviteRewards } from "../services/inviteRewardService.js";
@@ -69,6 +70,12 @@ export default {
         startupLog(`Top CC board: ${ccTopBoard.status} (channel ${ccTopBoard.channelId})`);
       } catch (error) {
         logger.error("Failed to start the Top CC board:", error);
+      }
+      try {
+        const serversBoard = await startServersBoard(client);
+        startupLog(`Servers board: ${serversBoard.status} (channel ${serversBoard.channelId})`);
+      } catch (error) {
+        logger.error("Failed to start the servers board:", error);
       }
       try {
         // The streak room under the games channel and its live board (our server only).
