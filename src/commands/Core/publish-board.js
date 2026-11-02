@@ -13,7 +13,8 @@ export default {
     .addSubcommand((sub) => sub.setName('moderation-commands').setDescription('Post the Arabic moderation commands list'))
     .addSubcommand((sub) => sub.setName('admin-permissions').setDescription('Refresh the staff permission board (edit only)'))
     .addSubcommand((sub) => sub.setName('trusted').setDescription('Post or refresh the Anti-Nuke trusted list'))
-    .addSubcommand((sub) => sub.setName('rules').setDescription('Post (with @everyone) or refresh the server rules')),
+    .addSubcommand((sub) => sub.setName('rules').setDescription('Post (with @everyone) or refresh the server rules'))
+    .addSubcommand((sub) => sub.setName('tickets').setDescription('Put the tickets panel back to its original look (our server only)')),
 
   async execute(interaction) {
     if (!interaction.inGuild()) return interaction.reply({ content: '❌ هذا الأمر يعمل داخل السيرفر فقط.', ephemeral: true });
