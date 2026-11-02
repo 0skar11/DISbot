@@ -199,11 +199,44 @@ export function ticketControls(type, { claimedBy = null } = {}) {
     return [new ActionRowBuilder().addComponents(...buttons)];
 }
 
+const CATEGORY_CHANNEL_LIMIT = 50;
+const openingNow = new Set(); // guildId:userId:type while a ticket is being made
+
+/**
+ * The category new tickets go in. The saved one is used while it exists; when the server was reshaped and it
+ * is gone, the panel room's category or one named like ours is used instead. A full category (Discord allows
+ * 50 rooms) or none at all gives null, and the ticket is made without a category rather than failing.
+ */
+export function resolveTicketCategory(guild, state) {
+    const isCategory = (channel) => channel?.type === ChannelType.GuildCategory;
+    const cache = guild.channels.cache;
+    const saved = state.categoryId && cache.get(state.categoryId);
+    const category = (isCategory(saved) && saved)
+        || (state.panelChannelId && isCategory(cache.get(state.panelChannelId)?.parent) && cache.get(state.panelChannelId).parent)
+        || cache.find((channel) => isCategory(channel) && channel.name === TICKET_NAMES.category)
+        || null;
+    if (!category) return null;
+    const size = [...cache.values()].filter((channel) => channel.parentId === category.id).length;
+    return size >= CATEGORY_CHANNEL_LIMIT ? null : category;
+}
+
 /**
  * Opens a ticket of `type` for `member`. Returns `{ ok: true, channel }` or `{ ok: false, reason, channelId? }`
  * with reason one of: not_home, bad_type, not_ready, has_open, cooldown, create_failed.
  */
-export async function openTicket(member, type, { now = Date.now() } = {}) {
+export async function openTicket(member, type, options = {}) {
+    // Taken before the first await, so two quick clicks cannot both pass the checks and open two tickets.
+    const key = `${member.guild?.id}:${member.id}:${type}`;
+    if (openingNow.has(key)) return { ok: false, reason: 'cooldown' };
+    openingNow.add(key);
+    try {
+        return await openTicketNow(member, type, options);
+    } finally {
+        openingNow.delete(key);
+    }
+}
+
+async function openTicketNow(member, type, { now = Date.now() } = {}) {
     const { guild } = member;
     if (!isHomeGuild(guild.id)) return { ok: false, reason: 'not_home' };
     const section = SECTIONS[type];
@@ -217,8 +250,9 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
     if (mine) return { ok: false, reason: 'has_open', channelId: mine[0] };
     const cooldownKey = `${guild.id}:${member.id}`;
     if (now - (lastOpen.get(cooldownKey) ?? -Infinity) < OPEN_COOLDOWN_MS) return { ok: false, reason: 'cooldown' };
-    lastOpen.set(cooldownKey, now);
 
+    const category = resolveTicketCategory(guild, state);
+    if (category && category.id !== state.categoryId) state.categoryId = category.id;
     state.counter += 1;
     const number = String(state.counter).padStart(4, '0');
     const team = await sectionTeam(guild, type);
@@ -227,7 +261,7 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
     const channel = await guild.channels.create({
         name: `${section.channelEmoji}・${section.label.split(' ')[0]}-${number}`,
         type: ChannelType.GuildText,
-        parent: state.categoryId,
+        parent: category?.id,
         topic: `${section.title} ・ ${member.user?.tag || member.id} (${member.id})`,
         reason: `Ticket ${number} (${type}) by ${member.id}`,
         permissionOverwrites: [
@@ -237,10 +271,12 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
             ...(me ? [{ id: me.id, type: OverwriteType.Member, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles] }] : []),
         ],
     }).catch((error) => {
-        logger.warn(`[TICKETS] Could not open a ticket for ${member.id}: ${error.message}`);
+        logger.warn(`[TICKETS] Could not open a ticket for ${member.id}: ${error.message} (code ${error.code ?? 'none'}, category ${category?.id ?? 'none'})`);
         return null;
     });
+    // A failed attempt does not start the cooldown, so the member can try again at once.
     if (!channel) return { ok: false, reason: 'create_failed' };
+    lastOpen.set(cooldownKey, now);
 
     state.open[channel.id] = { type, ownerId: member.id, number, claimedBy: null, createdAt: now };
     await writeState(guild.client, guild.id, state);

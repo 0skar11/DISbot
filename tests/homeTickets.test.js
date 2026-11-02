@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { PermissionFlagsBits } from 'discord.js';
+import { PermissionFlagsBits, ChannelType } from 'discord.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { ROLE_DEFINITIONS } from '../src/services/staffRoleHierarchyService.js';
 import {
@@ -121,5 +121,43 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal(await setupHomeTickets(guild), null);
     assert.equal((await openTicket(member(MEMBER), 'problem')).reason, 'not_home');
     assert.equal(created.length, 0);
+  });
+
+  test('the saved category was deleted: the panel room category is used, or none, and the ticket still opens', async () => {
+    const { guild, created, member } = setup();
+    await setupHomeTickets(guild);
+    const [category, panel] = created;
+    guild.channels.cache.delete(category.id);
+
+    const none = await openTicket(member('200000000000000011'), 'problem', { now: 10_000_000 });
+    assert.equal(none.ok, true);
+    assert.equal(none.channel.options.parent, undefined);
+
+    const moved = { id: '700000000000000001', type: ChannelType.GuildCategory, name: 'new tickets', parentId: null };
+    guild.channels.cache.set(moved.id, moved);
+    panel.parent = moved;
+    const next = await openTicket(member('200000000000000012'), 'problem', { now: 20_000_000 });
+    assert.equal(next.channel.options.parent, moved.id);
+  });
+
+  test('two quick clicks open only one ticket', async () => {
+    const { guild, created, member } = setup();
+    await setupHomeTickets(guild);
+    const before = created.length;
+    const m = member('200000000000000014');
+    const results = await Promise.all([openTicket(m, 'problem', { now: 40_000_000 }), openTicket(m, 'problem', { now: 40_000_000 })]);
+    assert.equal(results.filter((r) => r.ok).length, 1);
+    assert.equal(created.length, before + 1);
+  });
+
+  test('a failed attempt does not start the cooldown', async () => {
+    const { guild, member } = setup();
+    await setupHomeTickets(guild);
+    const create = guild.channels.create;
+    guild.channels.create = async () => { throw Object.assign(new Error('Missing Permissions'), { code: 50013 }); };
+    const m = member('200000000000000013');
+    assert.equal((await openTicket(m, 'problem', { now: 30_000_000 })).reason, 'create_failed');
+    guild.channels.create = create;
+    assert.equal((await openTicket(m, 'problem', { now: 30_000_001 })).ok, true);
   });
 });

@@ -22,6 +22,7 @@ import { ensureTraderRole } from "../services/cc/traderRoleService.js";
 import { startCustomRoles } from "../services/cc/customRoleService.js";
 import { startVoteKickSweeps } from "../services/voice/voteKickService.js";
 import { isHomeGuild } from "../config/homeGuild.js";
+import { isAutomationPaused } from "../config/automation.js";
 
 export default {
   name: Events.ClientReady,
@@ -33,6 +34,13 @@ export default {
       startupLog(`Ready! Logged in as ${client.user.tag}`);
       startupLog(`Serving ${client.guilds.cache.size} guild(s)`);
       startupLog(`Loaded ${client.commands.size} commands`);
+
+      // The owner is reshaping the server: nothing is posted, made, refreshed or synced on its own until resumed.
+      if (isAutomationPaused()) {
+        startupLog("Automation is paused (AUTOMATION_PAUSED): no boards, timers, rooms, roles or syncs at startup");
+        if (client.config?.features?.music) initRiffyAfterReady(client);
+        return;
+      }
 
       // A failure here must not stop the rest of the startup work.
       try {
