@@ -140,6 +140,16 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal(next.channel.options.parent, moved.id);
   });
 
+  test('two quick clicks open only one ticket', async () => {
+    const { guild, created, member } = setup();
+    await setupHomeTickets(guild);
+    const before = created.length;
+    const m = member('200000000000000014');
+    const results = await Promise.all([openTicket(m, 'problem', { now: 40_000_000 }), openTicket(m, 'problem', { now: 40_000_000 })]);
+    assert.equal(results.filter((r) => r.ok).length, 1);
+    assert.equal(created.length, before + 1);
+  });
+
   test('a failed attempt does not start the cooldown', async () => {
     const { guild, member } = setup();
     await setupHomeTickets(guild);

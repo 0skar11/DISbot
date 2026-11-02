@@ -200,6 +200,7 @@ export function ticketControls(type, { claimedBy = null } = {}) {
 }
 
 const CATEGORY_CHANNEL_LIMIT = 50;
+const openingNow = new Set(); // guildId:userId:type while a ticket is being made
 
 /**
  * The category new tickets go in. The saved one is used while it exists; when the server was reshaped and it
@@ -223,7 +224,19 @@ export function resolveTicketCategory(guild, state) {
  * Opens a ticket of `type` for `member`. Returns `{ ok: true, channel }` or `{ ok: false, reason, channelId? }`
  * with reason one of: not_home, bad_type, not_ready, has_open, cooldown, create_failed.
  */
-export async function openTicket(member, type, { now = Date.now() } = {}) {
+export async function openTicket(member, type, options = {}) {
+    // Taken before the first await, so two quick clicks cannot both pass the checks and open two tickets.
+    const key = `${member.guild?.id}:${member.id}:${type}`;
+    if (openingNow.has(key)) return { ok: false, reason: 'cooldown' };
+    openingNow.add(key);
+    try {
+        return await openTicketNow(member, type, options);
+    } finally {
+        openingNow.delete(key);
+    }
+}
+
+async function openTicketNow(member, type, { now = Date.now() } = {}) {
     const { guild } = member;
     if (!isHomeGuild(guild.id)) return { ok: false, reason: 'not_home' };
     const section = SECTIONS[type];
