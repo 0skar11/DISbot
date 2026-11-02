@@ -1,67 +1,25 @@
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
-import { updateGuildConfig } from './config/guildConfig.js';
+import { ChannelType } from 'discord.js';
+import { getGuildConfig } from './config/guildConfig.js';
 import { logger } from '../utils/logger.js';
 
 export const AUDIT_LOG_CATEGORY_ID = '1547320311626731562';
 
-const LOG_CHANNELS = {
-  moderation: 'moderation',
-  timeout: 'timeout',
-  ban: 'ban',
-  message: 'message-deleted',
-  voice: 'voice',
-  roles: 'roles',
-  join: 'join',
-  leave: 'leave',
-  invites: 'invites',
-};
-
+// Startup only checks explicitly configured rooms. Deleted rooms must stay deleted,
+// and renamed or moved rooms keep their saved IDs without any server/config edits.
 export async function ensureAuditLogChannels(client) {
   for (const guild of client.guilds.cache.values()) {
     try {
-      const category = guild.channels.cache.get(AUDIT_LOG_CATEGORY_ID)
-        || await guild.channels.fetch(AUDIT_LOG_CATEGORY_ID).catch(() => null);
-      if (!category || category.type !== ChannelType.GuildCategory) {
-        logger.warn(`Audit log category ${AUDIT_LOG_CATEGORY_ID} was not found in ${guild.name}.`);
-        continue;
-      }
-
-      const botMember = guild.members.me;
-      const channels = {};
-      for (const [key, name] of Object.entries(LOG_CHANNELS)) {
-        let channel = guild.channels.cache.find(
-          candidate => candidate.parentId === category.id && candidate.name === name && candidate.type === ChannelType.GuildText,
-        );
-
-        if (!channel) {
-          channel = await guild.channels.create({
-            name,
-            type: ChannelType.GuildText,
-            parent: category.id,
-            reason: 'Create dedicated log channel',
-            permissionOverwrites: [
-              {
-                id: guild.id,
-                deny: [PermissionFlagsBits.ViewChannel],
-              },
-              ...(botMember ? [{
-                id: botMember.id,
-                allow: [
-                  PermissionFlagsBits.ViewChannel,
-                  PermissionFlagsBits.SendMessages,
-                  PermissionFlagsBits.EmbedLinks,
-                ],
-              }] : []),
-            ],
-          });
+      const config = await getGuildConfig(client, guild.id);
+      for (const [key, channelId] of Object.entries(config.auditChannels || {})) {
+        if (!channelId) continue;
+        const channel = guild.channels.cache.get(channelId)
+          || await guild.channels.fetch(channelId).catch(() => null);
+        if (!channel || channel.type !== ChannelType.GuildText) {
+          logger.warn(`Configured audit log channel ${key} (${channelId}) is unavailable in ${guild.name}.`);
         }
-        channels[key] = channel.id;
       }
-
-      await updateGuildConfig(client, guild.id, { auditChannels: channels });
-      logger.info(`Dedicated log channels are ready in ${guild.name}.`);
     } catch (error) {
-      logger.error(`Failed to prepare log channels in ${guild.name}:`, error);
+      logger.error(`Failed to check log channels in ${guild.name}:`, error);
     }
   }
 }
