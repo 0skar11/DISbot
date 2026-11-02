@@ -14,8 +14,10 @@ describe('chat filter (reports #146, #147, #151)', () => {
     kosomak: ['كسمك', 'كس امك', 'كـسـمـك', 'ك س م ك', 'ك.س.م.ك', 'كسسسمك', 'يا كسمك', 'كس اختك', 'ksmk', 'kosomak', 'kos omak', 'k$mk', 'KOSOMK', 'كسومك'],
     ibnAl: ['ابن الكلب', 'يا ابن الوسخه', 'ابن ال***', 'يابن الجزمه', 'ebn el kalb', 'إبن الكلب'],
     insult: ['يا شرموط', 'متناك', 'انت خول', 'يا عرص', 'معرص', 'طيزك', 'يا منيوك', 'ya khawal', 'sharmota', 'خوووول'],
-    banned: ['تعالوا الحفره', 'الحفرة احسن', 'el7ofra'],
   };
+  test('الحفرة is allowed (report #250)', () => {
+    for (const text of ['تعالوا الحفره', 'الحفرة احسن', 'el7ofra']) assert.equal(checkText(text), null, text);
+  });
   for (const [rule, texts] of Object.entries(cases)) {
     test(`catches ${rule}`, () => {
       for (const text of texts) assert.equal(checkText(text), rule, text);
@@ -59,9 +61,8 @@ describe('chat filter (reports #146, #147, #151)', () => {
     assert.ok(!calls.some(([kind]) => kind === 'timeout'));
 
     ({ calls, message } = filterMessage('الحفره'));
-    await handleChatFilter(message);
-    assert.deepEqual(calls[0], ['delete']);
-    assert.ok(!calls.some(([kind]) => kind === 'timeout'));
+    assert.equal(await handleChatFilter(message), false);
+    assert.equal(calls.length, 0);
 
     ({ calls, message } = filterMessage('كسمك', { authorId: '1159601661392715906' }));
     assert.equal(await handleChatFilter(message), false);

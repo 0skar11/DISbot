@@ -40,8 +40,8 @@ export const INSULTS = [
 ];
 const INSULTS_LATIN = ['sharmot', 'sharmota', 'metnak', 'mitnak', 'metnaka', 'manyok', 'manyak', 'khawal', 'a3ars', '3ars', 'm3ars', 'zobr', 'zeby', 'teez', 'tez', 'labwa', 'a7ba'];
 
-// Deleted with no punishment.
-export const BANNED_WORDS = [/(?<!\p{L})ال\s?حفره(?!\p{L})/u, /(?<![a-z])[ae]l\s?7ofr?a(?![a-z])/u];
+// Deleted with no punishment. Empty: "الحفرة" is allowed again (report #250).
+export const BANNED_WORDS = [];
 
 const RULES = {
     kosomak: { label: 'شتيمة (كسمك)', timeoutMs: HOUR },
