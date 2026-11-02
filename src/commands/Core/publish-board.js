@@ -3,6 +3,7 @@ import { publishStaffPermissionBoard } from '../../services/staffRoleHierarchySe
 import { publishArabicModerationCommands } from '../../services/moderationCommandsBoardService.js';
 import { publishTrustedBoard } from '../../services/trustedBoardService.js';
 import { publishRulesBoard } from '../../services/rulesBoardService.js';
+import { setupHomeTickets } from '../../services/tickets/homeTickets.js';
 
 // One command with subcommands keeps the bot under Discord's 100 global command limit.
 export default {
@@ -31,6 +32,11 @@ export default {
         const result = await publishTrustedBoard(interaction.client, { allowSend: true });
         const verb = result.status === 'sent' ? 'إرسال' : 'تحديث';
         return interaction.reply({ content: `✅ تم ${verb} قائمة الـ Trusted في الروم <#${result.channelId}>.`, ephemeral: true });
+      } else if (interaction.options.getSubcommand() === 'tickets') {
+        // Edits the saved panel message back to panelPayload(); makes the rooms only if they are missing.
+        const result = await setupHomeTickets(interaction.guild);
+        if (!result) return interaction.reply({ content: '❌ مش متاح في السيرفر ده.', ephemeral: true });
+        return interaction.reply({ content: `✅ بانل التكتات رجعت زي ما كانت في <#${result.panelChannelId}>.`, ephemeral: true });
       } else if (interaction.options.getSubcommand() === 'rules') {
         const result = await publishRulesBoard(interaction.client);
         const content = {
