@@ -73,7 +73,10 @@ async function writeState(client, guildId, state) {
     await client.db.set(stateKey(guildId), state);
 }
 
-function panelPayload() {
+function panelPayload(guild) {
+    // A deleted verified role would show as @deleted-role: say it in plain words instead.
+    const panelLine = (type, section) => (type === 'verify' && guild && !guild.roles.cache.has(VERIFIED_ROLE_ID)
+        ? section.panelLine.replace(`<@&${VERIFIED_ROLE_ID}>`, 'رول 🎀 بنت موثقة') : section.panelLine);
     const row = new ActionRowBuilder().addComponents(
         ...Object.entries(SECTIONS).map(([type, section]) => new ButtonBuilder()
             .setCustomId(`${TICKET_BUTTON_PREFIX}:open:${type}`)
@@ -88,7 +91,7 @@ function panelPayload() {
             description: [
                 'اختار القسم اللي محتاجه، والبوت هيفتحلك روم خاصة بيك:',
                 '',
-                ...Object.values(SECTIONS).map((section) => section.panelLine),
+                ...Object.entries(SECTIONS).map(([type, section]) => panelLine(type, section)),
                 '',
                 '• تكت واحد مفتوح لكل قسم.',
                 '• متفتحش تكت من غير سبب.',
@@ -100,7 +103,9 @@ function panelPayload() {
     };
 }
 
-const isPanel = (message) => message.embeds?.[0]?.footer?.text === 'تكتات السيرفر';
+// The old generic ticket system's panel (a create_ticket button) counts too, so it is edited back instead of left next to a new one.
+const isPanel = (message) => message.embeds?.[0]?.footer?.text === 'تكتات السيرفر'
+    || message.components?.[0]?.components?.[0]?.customId === 'create_ticket';
 
 /** The roles that see problem tickets: the staff roles and the trusted roles. */
 async function staffRoleIds(guild) {
@@ -180,9 +185,9 @@ export async function setupHomeTickets(guild) {
     await writeState(client, guild.id, state);
 
     const board = await findBoardMessage(panel, PANEL_KEY, isPanel).catch(() => null);
-    if (board) await board.edit(panelPayload()).catch(() => {});
+    if (board) await board.edit(panelPayload(guild)).catch(() => {});
     else {
-        const sent = await panel.send(panelPayload());
+        const sent = await panel.send(panelPayload(guild));
         await rememberBoardMessage(panel, PANEL_KEY, sent.id);
     }
     return { categoryId: category.id, panelChannelId: panel.id, logChannelId: log.id };
