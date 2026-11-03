@@ -11,6 +11,7 @@
 - [Features Overview](#features-overview)
 - [Quick Setup](#quick-setup)
 - [Manual Installation Steps](#manual-installation-steps)
+- [Optional FreeLLMAPI Backend](#optional-freellmapi-backend)
 - [Support Server](https://discord.gg/QnWNz2dKCE)
 - [Required Bot Intents](#bot-intents)
 - [Contributing](CONTRIBUTING.md)
@@ -224,6 +225,15 @@ Notes:
 - Each server has **isolated** data: config, economy, tickets, leveling, dashboards, warnings, etc. (all keys are scoped as `guild:{guildId}:...`)
 - In the [Discord Developer Portal](https://discord.com/developers/applications), ensure your bot is not restricted to a single guild if you plan to invite it elsewhere
 - Generate an OAuth2 invite URL from the [Discord Developer Portal](https://discord.com/developers/applications) (OAuth2 → URL Generator, scopes: `bot` and `applications.commands`)
+
+<a name="optional-freellmapi-backend"></a>
+### Optional FreeLLMAPI Backend
+
+DISbot supports an optional self-hosted FreeLLMAPI router as an OpenAI-compatible backend.
+
+- Default router URL: `http://localhost:3001/v1`
+- This integration is optional and disabled unless `FREELLMAPI_ENABLED=true`
+- Setup guide: [docs/free-llmapi.md](docs/free-llmapi.md)
 
 4. **Setup PostgreSQL Database** (Optional but recommended)
    ```bash
