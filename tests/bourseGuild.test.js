@@ -124,4 +124,23 @@ describe('bourse-only server', () => {
     await handlers.get('messageUpdate')(track(), track());
     assert.deepEqual(calls, []);
   });
+
+  test('anti-nuke, anti-raid and audit-log listeners never run there, whatever shape their arguments have', async () => {
+    const { Guild } = await import('discord.js');
+    const handlers = new Map();
+    await loadEvents({ on: (name, fn) => handlers.set(name, fn), once: (name, fn) => handlers.set(name, fn) });
+    const touched = [];
+    const spy = (base) => new Proxy(base, { get: (target, key) => { if (!(key in target)) touched.push(String(key)); return target[key]; } });
+    const guild = Object.assign(Object.create(Guild.prototype), { id: BOURSE_GUILD_ID });
+    await handlers.get('guildAuditLogEntryCreate')(spy({ action: 1 }), guild);
+    const withGuild = () => spy({ guild: { id: BOURSE_GUILD_ID } });
+    await handlers.get('roleDelete')(withGuild());
+    await handlers.get('channelDelete')(withGuild());
+    await handlers.get('guildBanAdd')(withGuild());
+    await handlers.get('guildMemberRemove')(withGuild());
+    await handlers.get('guildMemberUpdate')(withGuild(), withGuild());
+    await handlers.get('messageDeleteBulk')(new Map(), withGuild());
+    // The loader only looks for the guild on the arguments; no listener reads anything else.
+    assert.deepEqual(touched.filter((key) => key !== 'guild' && key !== 'guildId'), []);
+  });
 });
