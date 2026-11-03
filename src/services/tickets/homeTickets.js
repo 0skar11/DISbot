@@ -17,6 +17,7 @@ import {
 } from 'discord.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { isServerOwner } from '../../config/serverOwners.js';
+import { isChannelRoleCreationPaused } from '../../config/automation.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { filterStaffRoles } from '../staffRoleHierarchyService.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
@@ -132,7 +133,12 @@ async function canHandle(member, type, state) {
     return team.some((roleId) => member.roles?.cache?.has(roleId));
 }
 
-/** Makes the category, the panel and log rooms, the two roles, and posts or edits the panel. */
+/**
+ * Makes the category, the panel and log rooms, the two roles, and posts or edits the panel.
+ * While channel/role creation is paused (report #258) and any of them is missing, nothing is made or
+ * touched and `{ paused: true }` is returned; an existing panel can still be edited back (`/publish-board
+ * tickets`) even while paused, since that creates nothing new.
+ */
 export async function setupHomeTickets(guild) {
     if (!isHomeGuild(guild?.id)) return null;
     const { client } = guild;
@@ -142,8 +148,11 @@ export async function setupHomeTickets(guild) {
 
     let category = state.categoryId && guild.channels.cache.get(state.categoryId);
     if (!category) {
-        category = guild.channels.cache.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === TICKET_NAMES.category)
-            || await guild.channels.create({ name: TICKET_NAMES.category, type: ChannelType.GuildCategory, reason: 'Tickets' });
+        category = guild.channels.cache.find((channel) => channel.type === ChannelType.GuildCategory && channel.name === TICKET_NAMES.category) || null;
+        if (!category) {
+            if (isChannelRoleCreationPaused()) return { paused: true };
+            category = await guild.channels.create({ name: TICKET_NAMES.category, type: ChannelType.GuildCategory, reason: 'Tickets' });
+        }
     }
     state.categoryId = category.id;
 
@@ -152,6 +161,7 @@ export async function setupHomeTickets(guild) {
 
     let panel = (state.panelChannelId && guild.channels.cache.get(state.panelChannelId)) || inCategory(TICKET_NAMES.panel);
     if (!panel) {
+        if (isChannelRoleCreationPaused()) return { paused: true };
         panel = await guild.channels.create({
             name: TICKET_NAMES.panel,
             type: ChannelType.GuildText,
@@ -169,6 +179,7 @@ export async function setupHomeTickets(guild) {
     const staffIds = [...new Set([...(await staffRoleIds(guild)), ...Object.values(SECTION_ROLE_IDS).filter((id) => guild.roles.cache.has(id))])];
     let log = (state.logChannelId && guild.channels.cache.get(state.logChannelId)) || inCategory(TICKET_NAMES.log);
     if (!log) {
+        if (isChannelRoleCreationPaused()) return { paused: true };
         log = await guild.channels.create({
             name: TICKET_NAMES.log,
             type: ChannelType.GuildText,
@@ -227,7 +238,7 @@ export function resolveTicketCategory(guild, state) {
 
 /**
  * Opens a ticket of `type` for `member`. Returns `{ ok: true, channel }` or `{ ok: false, reason, channelId? }`
- * with reason one of: not_home, bad_type, not_ready, has_open, cooldown, create_failed.
+ * with reason one of: not_home, bad_type, not_ready, has_open, cooldown, paused, create_failed.
  */
 export async function openTicket(member, type, options = {}) {
     // Taken before the first await, so two quick clicks cannot both pass the checks and open two tickets.
@@ -255,6 +266,8 @@ async function openTicketNow(member, type, { now = Date.now() } = {}) {
     if (mine) return { ok: false, reason: 'has_open', channelId: mine[0] };
     const cooldownKey = `${guild.id}:${member.id}`;
     if (now - (lastOpen.get(cooldownKey) ?? -Infinity) < OPEN_COOLDOWN_MS) return { ok: false, reason: 'cooldown' };
+    // Report #258: no new room while channel/role creation is paused (even a ticket room).
+    if (isChannelRoleCreationPaused()) return { ok: false, reason: 'paused' };
 
     const category = resolveTicketCategory(guild, state);
     if (category && category.id !== state.categoryId) state.categoryId = category.id;
@@ -377,6 +390,7 @@ export const TICKET_FAILURE_TEXT = {
     not_ready: '⏳ التكتات لسه بتتجهز، جرب كمان دقيقة.',
     has_open: 'ℹ️ عندك تكت مفتوح في القسم ده أصلاً.',
     cooldown: '⏳ استنى دقيقة قبل ما تفتح تكت تاني.',
+    paused: '⏸️ فتح التكتات موقوف مؤقتاً، جرب كمان شوية.',
     create_failed: '❌ مقدرتش أفتح التكت، بلّغ الإدارة.',
     not_ticket: 'ℹ️ التكت ده اتقفل خلاص.',
     not_team: '❌ الزرار ده للإدارة المسؤولة عن التكت ده بس.',

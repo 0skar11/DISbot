@@ -1,4 +1,6 @@
-import { test, describe, beforeEach } from 'node:test';
+import {
+  test, describe, beforeEach, before, after,
+} from 'node:test';
 import assert from 'node:assert/strict';
 import { ccStoreItems, luckBoxPrizes, traderRoleSettings, customRoleSettings, CUSTOM_ROLE_VOUCHER, voucherFor } from '../src/config/store/ccStoreItems.js';
 import { bourseAssets } from '../src/config/store/bourse.js';
@@ -415,6 +417,11 @@ describe('trader role', () => {
 });
 
 describe('custom roles', () => {
+    // Most of these tests buy a role, so channel/role creation (report #258) is unpaused here; its own
+    // behaviour is covered in a test below.
+    before(() => { process.env.NO_NEW_CHANNELS_OR_ROLES = 'false'; });
+    after(() => { delete process.env.NO_NEW_CHANNELS_OR_ROLES; });
+
     test('names that look like staff, links and taken names are refused', () => {
         assert.deepEqual(validateRoleName('  🔥 الأساطير  '), { ok: true, name: '🔥 الأساطير' });
         assert.equal(validateRoleName('').reason, 'empty');
@@ -511,6 +518,21 @@ describe('custom roles', () => {
         assert.equal((await sweepGuildCustomRoles(client, guild, { now: due + 3 * DAY })).ended, 1);
         assert.equal(cache.size, 0);
         assert.deepEqual(await listCustomRoles(client, GUILD_ID), []);
+    });
+
+    test('channel/role creation paused (report #258): no new role, and no CC is spent', async () => {
+        process.env.NO_NEW_CHANNELS_OR_ROLES = 'true';
+        try {
+            const client = fakeClient();
+            client.store.set(`guild:${GUILD_ID}:economy:${MEMBER}`, { cc: 35_000 });
+            const guild = { id: GUILD_ID, name: 'CHAOS', features: [], roles: { cache: new Map(), create: async () => { throw new Error('should not be called'); } }, members: { fetch: async (id) => ({ id, roles: { add: async () => {} } }) } };
+            const member = { id: MEMBER, user: { tag: 'm' }, guild, roles: { add: async () => {} } };
+            const item = byId('friends_role');
+            assert.equal((await buyCustomRole(client, member, item, { name: 'Legends', color: 'ذهبي' })).reason, 'paused');
+            assert.equal((await getProfile(client, GUILD_ID, MEMBER)).cc, 35_000);
+        } finally {
+            process.env.NO_NEW_CHANNELS_OR_ROLES = 'false';
+        }
     });
 
     test('a luck box voucher pays the first month of a custom role instead of CC, and comes back if it fails', async () => {

@@ -113,15 +113,16 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     return { ...base, guild, posted, message };
   }
 
-  test('pictures and GIF links count, text does not', () => {
+  test('pictures, GIF links and stickers count, text does not (report #257)', () => {
     const image = { attachments: new Map([['1', { contentType: 'image/png', name: 'a.png' }]]) };
     assert.equal(hasStreakMedia(image), true);
     assert.equal(hasStreakMedia({ content: 'https://tenor.com/view/happy-123' }), true);
     assert.equal(hasStreakMedia({ embeds: [{ data: { type: 'gifv' } }] }), true);
+    assert.equal(hasStreakMedia({ stickers: new Map([['1', {}]]) }), true);
     assert.equal(hasStreakMedia({ content: 'صباح الخير' }), false);
   });
 
-  test('a picture updates the streak, a second one says it is done today, text is told it does not count', async () => {
+  test('a picture updates the streak, a second one says it is done today, text (report #257) gets no reply at all', async () => {
     const { message, ccOf } = await room();
     assert.equal(isStreakChannel(ROOM), true);
     const picture = () => message({ attachments: new Map([['1', { contentType: 'image/gif', name: 'x.gif' }]]) });
@@ -135,9 +136,13 @@ describe('streak room: pictures and GIFs only, a reply every time, a daily remin
     assert.equal(await handleStreakMessage(again), null);
     assert.match(again.replies[0].content, /متحدث النهارده خلاص \(\*\*1\*\* يوم\)/u);
 
+    const sticker = message({ stickers: new Map([['1', {}]]) });
+    assert.equal(await handleStreakMessage(sticker), null); // already counted today
+    assert.match(sticker.replies[0].content, /متحدث النهارده خلاص/u);
+
     const text = message({ content: 'ازيكم' });
-    await handleStreakMessage(text);
-    assert.match(text.replies[0].content, /الكلام مابيتحسبش/u);
+    assert.equal(await handleStreakMessage(text), null);
+    assert.equal(text.replies.length, 0);
     assert.equal(ccOf(), STREAK.base);
 
     const elsewhere = message({ channelId: '400000000000000001', attachments: picture().attachments });

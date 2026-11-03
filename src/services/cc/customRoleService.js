@@ -24,6 +24,7 @@ import { logger } from '../../utils/logger.js';
 import { spendCC, grantCC, getProfile, updateCCState } from './ccService.js';
 import { getTraderRole } from './traderRoleService.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { isChannelRoleCreationPaused } from '../../config/automation.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -126,8 +127,8 @@ export function canUseRoleIcons(guild) {
 /**
  * Buys a custom role: checks the name and colour, takes the first month from the buyer's CC, creates the
  * role and gives it to the buyer. Returns `{ ok: true, role, record, iconSkipped, balance }` or
- * `{ ok: false, reason }` with reason one of: has_role, bad_color, no_cc (with `balance`), create_failed,
- * or a name reason from validateRoleName.
+ * `{ ok: false, reason }` with reason one of: has_role, bad_color, paused, no_cc (with `balance`),
+ * create_failed, or a name reason from validateRoleName.
  */
 export async function buyCustomRole(client, member, item, { name, color, iconUrl = null }, { now = Date.now(), settings = customRoleSettings } = {}) {
     const { guild } = member;
@@ -137,6 +138,9 @@ export async function buyCustomRole(client, member, item, { name, color, iconUrl
     if (!checkedName.ok) return checkedName;
     const checkedColor = parseRoleColor(color);
     if (!checkedColor.ok) return { ok: false, reason: 'bad_color' };
+    // Report #258: this always makes a new role, so it is blocked (before any CC is spent) while
+    // channel/role creation is paused — our server only, other servers keep working as before.
+    if (isHomeGuild(guild.id) && isChannelRoleCreationPaused()) return { ok: false, reason: 'paused' };
 
     // A free month won in the luck box (report #179) pays the first month instead of CC.
     const voucherId = voucherFor(item.id)?.id;

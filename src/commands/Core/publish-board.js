@@ -37,6 +37,7 @@ export default {
         // Edits the saved panel message back to panelPayload(); makes the rooms only if they are missing.
         const result = await setupHomeTickets(interaction.guild);
         if (!result) return interaction.reply({ content: '❌ مش متاح في السيرفر ده.', ephemeral: true });
+        if (result.paused) return interaction.reply({ content: '⏸️ روم أو أكتر من روومات التكتات مش موجودة، ومافيش رومات هتتعمل عشان إنشاء الرومات/الرولات موقوف دلوقتي (وقف ان البوت يصنع رولات او رومات خالص). استخدم الأمر تاني بعد ما تثبت.', ephemeral: true });
         return interaction.reply({ content: `✅ بانل التكتات رجعت زي ما كانت في <#${result.panelChannelId}>.`, ephemeral: true });
       } else if (interaction.options.getSubcommand() === 'rules') {
         const result = await publishRulesBoard(interaction.client);

@@ -17,6 +17,8 @@ import { logTicketEvent } from '../utils/ticket/ticketLogging.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { ensureTypedServiceError, wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
 import { PRIORITY_MAP } from '../utils/helpers.js';
+import { isHomeGuild } from '../config/homeGuild.js';
+import { isChannelRoleCreationPaused } from '../config/automation.js';
 const TICKET_DELETE_DELAY_MS = 3000;
 const TICKET_DELETE_DELAY_SECONDS = Math.floor(TICKET_DELETE_DELAY_MS / 1000);
 const TICKET_SERVICE = 'ticketService';
@@ -81,9 +83,20 @@ export const getUserTicketCount = wrapServiceBoundary(async function getUserTick
 
 export async function createTicket(guild, member, categoryId, reason = 'No reason provided', priority = 'none') {
   try {
+    // Report #258: this always makes a new room, so it is blocked while channel/role creation is
+    // paused — our server only, other servers keep working as before.
+    if (isHomeGuild(guild.id) && isChannelRoleCreationPaused()) {
+      ticketUserError(
+        `Ticket creation paused for ${member.id}`,
+        'Ticket creation is paused right now. Please try again later.',
+        ErrorTypes.VALIDATION,
+        { guildId: guild.id, userId: member.id, operation: 'createTicket' }
+      );
+    }
+
     const config = await getGuildConfig(guild.client, guild.id);
     const ticketConfig = config.tickets || {};
-    
+
     const maxTicketsPerUser = config.maxTicketsPerUser ?? 3;
     const currentTicketCount = await getUserTicketCount(guild.id, member.id);
     
