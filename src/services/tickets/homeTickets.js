@@ -21,6 +21,7 @@ import { getGuildConfig } from '../config/guildConfig.js';
 import { filterStaffRoles } from '../staffRoleHierarchyService.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { logger } from '../../utils/logger.js';
+import { managedGuilds } from '../../config/bourseGuild.js';
 
 export const TICKET_BUTTON_PREFIX = 'hticket';
 export const TICKET_NAMES = {
@@ -386,7 +387,7 @@ export const TICKET_FAILURE_TEXT = {
 
 /** Startup: sets up the tickets in our server. */
 export async function startHomeTickets(client) {
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
         if (!isHomeGuild(guild.id)) continue;
         return { status: 'ready', ...(await setupHomeTickets(guild)) };
     }

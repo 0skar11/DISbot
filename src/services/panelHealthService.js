@@ -7,6 +7,7 @@ import {
     getReactionRolePanelStatus,
 } from '../utils/panelStatus.js';
 import { getAllReactionRoleMessages } from './reactionRoleService.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 async function persistVerificationMessageId(client, guildId, config, messageId) {
     if (!messageId || config.verification?.messageId === messageId) return;
@@ -34,7 +35,7 @@ export async function reconcileTicketPanels(client) {
         errors: 0,
     };
 
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
         summary.scannedGuilds += 1;
 
         try {
@@ -79,7 +80,7 @@ export async function reconcileVerificationPanels(client) {
         errors: 0,
     };
 
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
         summary.scannedGuilds += 1;
 
         try {
@@ -125,7 +126,7 @@ export async function reconcileReactionRolePanelHealth(client) {
         errors: 0,
     };
 
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
         summary.scannedGuilds += 1;
 
         try {

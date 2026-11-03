@@ -16,6 +16,7 @@ import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage
 import { typedCommandName } from '../games/gamesChannel.js';
 import { buildStorePanel, isStorePanelFooter } from './storeUi.js';
 import { logger } from '../../utils/logger.js';
+import { managedGuilds } from '../../config/bourseGuild.js';
 
 export const STORE_COMMAND_NAMES = new Set(['store', 'bourse', 'cc', 'cctop', 'guide', 'myrole']);
 export const STORE_ONLY_NOTICE = '🛒 الروم ده لأوامر المتجر بس. اكتب `متجر` عشان تشوف المنتجات.';
@@ -211,7 +212,7 @@ async function countMessagesUnderPanel(channel, panel) {
 /** Creates the store room when needed and makes sure the panel is there. Failures are logged, never thrown. */
 export async function startStoreChannel(client) {
     const results = [];
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
         try {
             const channel = await ensureStoreChannel(client, guild);
             if (!channel) continue;

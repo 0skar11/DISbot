@@ -22,6 +22,14 @@ import { isBlockedStoreSlashCommand, STORE_ONLY_NOTICE } from '../services/cc/st
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
 import { blockDangerCommand } from '../services/moderation/dangerList.js';
+import { isBourseGuild, isBourseGuildCommand, BOURSE_GUILD_BUTTONS, BOURSE_GUILD_NOTICE } from '../config/bourseGuild.js';
+
+/** The bourse-only server: whether this interaction is something it may run (bourse commands and buttons only). */
+function isAllowedInBourseGuild(interaction) {
+  if (interaction.isChatInputCommand()) return isBourseGuildCommand(interaction.commandName);
+  if (interaction.isButton()) return BOURSE_GUILD_BUTTONS.has(interaction.customId.split(':')[0]);
+  return false;
+}
 
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
@@ -60,6 +68,12 @@ export default {
       try {
         InteractionHelper.patchInteractionResponses(interaction);
         ResponseCoordinator.attach(interaction);
+
+        if (isBourseGuild(interaction.guildId) && !isAllowedInBourseGuild(interaction)) {
+          if (interaction.isAutocomplete()) await interaction.respond([]).catch(() => {});
+          else if (interaction.isRepliable()) await interaction.reply({ content: BOURSE_GUILD_NOTICE, flags: MessageFlags.Ephemeral }).catch(() => {});
+          return;
+        }
 
         if (interaction.isChatInputCommand()) {
           try {

@@ -3,6 +3,19 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from '../../utils/logger.js';
+import { isBourseGuild } from '../../config/bourseGuild.js';
+
+// The bourse-only server gets none of the bot's other events (logging, roles, anti-raid, welcome...).
+// messageCreate and interactionCreate are let through: they run only the bourse there (see their files).
+const BOURSE_GUILD_EVENTS = new Set(['messageCreate', 'interactionCreate']);
+
+function eventGuildId(args) {
+    for (const arg of args.slice(0, 2)) {
+        const id = arg?.guild?.id ?? arg?.guildId;
+        if (id) return id;
+    }
+    return null;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -25,6 +38,7 @@ export default async function loadEvents(client) {
 
             const safeExecute = async (...args) => {
                 try {
+                    if (!BOURSE_GUILD_EVENTS.has(event.name) && isBourseGuild(eventGuildId(args))) return;
                     await event.execute(...args, client);
                 } catch (error) {
                     logger.error(`Error executing event ${event.name}:`, error);

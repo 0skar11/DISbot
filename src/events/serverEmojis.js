@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { logger, startupLog } from '../utils/logger.js';
 import { ensureServerEmojis, ensurePeepoEmojis, ensureAnimatedEmojis } from '../services/serverEmojiService.js';
 import { ensureWelcomeEmoji } from '../services/welcomeEmojiService.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export default {
   name: Events.ClientReady,
@@ -10,7 +11,7 @@ export default {
   async execute(client) {
     // The welcome message's waving emoji, uploaded once as the bot's own emoji.
     startupLog(`Welcome emoji: ${await ensureWelcomeEmoji(client)}`);
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
       try {
         const { skipped, added, failed } = await ensureServerEmojis(guild);
         if (skipped) logger.warn(`Server emojis skipped for ${guild.name}: bot needs Manage Expressions.`);
