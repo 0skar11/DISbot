@@ -3,6 +3,7 @@
 import { logger } from '../utils/logger.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { getReactionRoleKey, getReactionRolesPrefix } from '../utils/database/keys.js';
+import { managedGuilds, isBourseGuild } from '../config/bourseGuild.js';
 
 const MAX_ROLES_PER_MESSAGE = 25;
 
@@ -425,8 +426,8 @@ export async function reconcileReactionRoleMessages(client, guildId = null) {
 
     try {
         const targetGuildIds = guildId
-            ? [guildId]
-            : Array.from(client.guilds.cache.keys());
+            ? [guildId].filter((id) => !isBourseGuild(id))
+            : managedGuilds(client).map((guild) => guild.id);
 
         for (const targetGuildId of targetGuildIds) {
             summary.scannedGuilds += 1;

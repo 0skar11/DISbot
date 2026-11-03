@@ -4,6 +4,7 @@ import { getGuildConfig } from './config/guildConfig.js';
 import { getGuildBirthdays, setBirthday as dbSetBirthday, deleteBirthday as dbDeleteBirthday, getMonthName, getBirthdayTrackingKey } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
 import { TitanBotError, ErrorTypes } from '../utils/errorHandler.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export function validateBirthday(month, day) {
   
@@ -280,7 +281,8 @@ export async function checkBirthdays(client) {
     logger.debug(`🎂 Running daily birthday check for UTC: ${currentMonth}/${currentDay}.`);
   }
 
-  for (const [guildId, guild] of client.guilds.cache) {
+  for (const guild of managedGuilds(client)) {
+    const guildId = guild.id;
     try {
       const config = await getGuildConfig(client, guildId);
       const { birthdayChannelId, birthdayRoleId } = config;

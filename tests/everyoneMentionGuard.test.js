@@ -51,3 +51,22 @@ describe('@everyone guard: roles are removed from members who are not trusted (r
     assert.deepEqual(removed, []);
   });
 });
+
+describe('@everyone guard: الحفرة lets anyone mention @everyone', () => {
+  test('a normal member\'s @everyone / @here is left alone and keeps their roles', async () => {
+    let touched = false;
+    const message = {
+      content: '@everyone شوفوا ده',
+      mentions: { everyone: true },
+      author: { id: '200000000000000001', bot: false },
+      client: { user: { id: 'bot' } },
+      guild: { id: '1472405236000751778' },
+      member: { roles: { cache: new Map(), remove: async () => { touched = true; } } },
+      delete: async () => { touched = true; },
+      channel: { send: async () => { touched = true; } },
+    };
+    assert.equal(await handleEveryoneMention(message), false);
+    assert.equal(touched, false);
+  });
+});
+

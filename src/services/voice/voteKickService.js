@@ -13,6 +13,7 @@ import { isHomeGuild } from '../../config/homeGuild.js';
 import { isServerOwner } from '../../config/serverOwners.js';
 import { getVoteKickBlocksKey } from '../../utils/database/keys.js';
 import { logger } from '../../utils/logger.js';
+import { managedGuilds } from '../../config/bourseGuild.js';
 
 export const VOTE_KICK = {
     durationMs: 60_000,
@@ -242,7 +243,7 @@ export async function handleVoteKickVoiceState(client, oldState, newState, now =
 /** Checks the blocks every minute in our server. */
 export function startVoteKickSweeps(client) {
     const run = async () => {
-        for (const guild of client.guilds.cache.values()) {
+        for (const guild of managedGuilds(client)) {
             await sweepVoteKickBlocks(client, guild).catch((error) => logger.error(`[VOTE_KICK] Sweep failed in ${guild.id}`, error));
         }
     };

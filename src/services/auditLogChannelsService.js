@@ -1,6 +1,7 @@
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { updateGuildConfig } from './config/guildConfig.js';
 import { logger } from '../utils/logger.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export const AUDIT_LOG_CATEGORY_ID = '1547320311626731562';
 
@@ -17,7 +18,7 @@ const LOG_CHANNELS = {
 };
 
 export async function ensureAuditLogChannels(client) {
-  for (const guild of client.guilds.cache.values()) {
+  for (const guild of managedGuilds(client)) {
     try {
       const category = guild.channels.cache.get(AUDIT_LOG_CATEGORY_ID)
         || await guild.channels.fetch(AUDIT_LOG_CATEGORY_ID).catch(() => null);

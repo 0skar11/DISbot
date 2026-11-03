@@ -83,7 +83,8 @@ describe('our server only', () => {
         assert.deepEqual(storeCatalog(undefined, { guildId: OTHER }).map((item) => item.id), ccStoreDemoItems.map((item) => item.id));
         assert.deepEqual(storeCatalog(undefined, { guildId: HOME_GUILD_ID }).map((item) => item.id), ccStoreItems.map((item) => item.id));
         const client = fakeClient();
-        client.store.set(`guild:${OTHER}:economy:${MEMBER}`, { cc: 50_000 });
+        // CC is shared by every server: it is saved under the home server's keys.
+        client.store.set(`guild:${HOME_GUILD_ID}:economy:${MEMBER}`, { cc: 50_000 });
         const member = { ...fakeMember(), guild: { id: OTHER, roles: { cache: new Map() } } };
         assert.equal((await buyItem(client, member, 'luck_box', 1, { settings: OPEN })).reason, 'not_found');
         const demo = await buyItem(client, member, 'demo_box', 1, { settings: OPEN });
@@ -93,14 +94,17 @@ describe('our server only', () => {
 });
 
 describe('our server only: shared code', () => {
-    test('another server\'s bourse keeps no move drawn in advance; ours does', async () => {
+    test('the bourse is one market for every server, saved under ours; another server never saves one of its own', async () => {
         const client = fakeClient();
         await getMarket(client, '100000000000000099');
-        await getMarket(client, HOME_GUILD_ID);
-        const other = client.store.get('guild:100000000000000099:bourse');
-        const ours = client.store.get(`guild:${HOME_GUILD_ID}:bourse`);
-        assert.ok(Object.values(other.assets).every((entry) => !('roll' in entry)));
-        assert.ok(Object.values(ours.assets).every((entry) => typeof entry.roll === 'number'));
+        assert.equal(client.store.has('guild:100000000000000099:bourse'), false);
+        const shared = client.store.get(`guild:${HOME_GUILD_ID}:bourse`);
+        assert.ok(Object.values(shared.assets).every((entry) => typeof entry.roll === 'number'));
+        // The palace is in the shared market but only our server shows it.
+        const palace = bourseAssets.find((asset) => asset.homeOnly);
+        assert.ok(shared.assets[palace.id]);
+        const { quotes } = await getMarket(client, '100000000000000099');
+        assert.ok(!quotes.some((entry) => entry.asset.id === palace.id));
     });
 
     test('an XP boost does nothing in another server', async () => {
@@ -229,7 +233,7 @@ describe('luck box', () => {
     test('a luck box in another server is only previewed and gives nothing', async () => {
         const client = fakeClient();
         const other = '100000000000000099';
-        client.store.set(`guild:${other}:economy:${MEMBER}`, { cc: 2000 });
+        client.store.set(`guild:${HOME_GUILD_ID}:economy:${MEMBER}`, { cc: 2000 });
         const member = { ...fakeMember(), guild: { id: other, roles: { cache: new Map(), fetch: async () => null } } };
         await buyItem(client, member, 'luck_box', 1, { settings: OPEN, rng: () => 0.7805 });
         const profile = await getProfile(client, other, MEMBER);
@@ -326,7 +330,7 @@ describe('bourse forecast', () => {
         const { forecastMarket } = await import('../src/services/cc/bourseService.js');
         const client = fakeClient();
         await forecastMarket(client, '100000000000000099', { now: Date.UTC(2026, 8, 29, 20, 10) });
-        const stored = client.store.get('guild:100000000000000099:bourse');
+        const stored = client.store.get(`guild:${HOME_GUILD_ID}:bourse`);
         assert.ok(Object.values(stored.assets).every((entry) => !('locked' in entry)));
     });
 

@@ -14,6 +14,7 @@ import { getEconomyKey, getEconomyPrefix } from '../../utils/database.js';
 import { normalizeEconomyData } from '../../utils/schemas.js';
 import { DEFAULT_ECONOMY_DATA } from '../../utils/constants.js';
 import { Mutex } from '../../utils/mutex.js';
+import { economyScope } from '../../config/sharedEconomy.js';
 import { logger } from '../../utils/logger.js';
 
 const EMPTY_STATS = { earned: 0, spent: 0, gamesPlayed: 0, podiums: 0, groupWins: 0, soloWins: 0, sent: 0, received: 0 };
@@ -50,18 +51,18 @@ export function readCC(record = {}) {
 async function loadRecord(client, guildId, userId) {
     if (!client?.db?.get) throw new Error('Database not available');
     // Unlike getEconomyData this throws on a read error, so a failed read is never written back as an empty record.
-    const raw = await client.db.get(getEconomyKey(guildId, userId), {});
+    const raw = await client.db.get(getEconomyKey(economyScope(guildId), userId), {});
     return normalizeEconomyData(raw, DEFAULT_ECONOMY_DATA);
 }
 
 async function saveRecord(client, guildId, userId, record) {
-    const saved = await client.db.set(getEconomyKey(guildId, userId), record);
+    const saved = await client.db.set(getEconomyKey(economyScope(guildId), userId), record);
     if (saved === false) throw new Error('Failed to save CC');
 }
 
 /** Loads the member's record, lets `change` edit it and saves it, one change per member at a time. */
 async function updateRecord(client, guildId, userId, change) {
-    return Mutex.runExclusive(`cc:${guildId}:${userId}`, async () => {
+    return Mutex.runExclusive(`cc:${economyScope(guildId)}:${userId}`, async () => {
         const record = await loadRecord(client, guildId, userId);
         const state = readCC(record);
         const result = change(state, record);
@@ -275,7 +276,7 @@ export async function updateCCState(client, guildId, userId, change) {
 
 /** Everyone in the guild with CC, richest first. */
 export async function getLeaderboard(client, guildId) {
-    const prefix = getEconomyPrefix(guildId);
+    const prefix = getEconomyPrefix(economyScope(guildId));
     const keys = await client.db.list(prefix);
     const rows = [];
     for (const key of Array.isArray(keys) ? keys : []) {

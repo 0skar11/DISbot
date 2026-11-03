@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionsBitField, PermissionFlagsBits } from 'discord.js';
-import { hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
+import { isOpenMediaRoom, handleMediaMessage, hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
 
 const message = (content, attachments = 0) => ({ content, attachments: { size: attachments } });
 
@@ -81,5 +81,35 @@ describe('media lock', () => {
     members.set('late', member('late'));
     assert.deepEqual(await grantMediaRoleToAllMembers(guild), { skipped: true, granted: 0, failed: 0 });
     assert.equal(members.get('late').ids.has(media.id), false);
+  });
+});
+
+describe('الحفرة is open for media', async () => {
+  const room = (guildName, name, parentName = null) => ({
+    guild: { id: '100000000000000009', name: guildName },
+    channel: { name, parent: parentName ? { name: parentName } : null },
+  });
+
+  test('found by the server name or the room name, either spelling, diacritics and decorations aside', () => {
+    assert.equal(isOpenMediaRoom(room('اَلْحُفْرَة', 'chat')), true);
+    assert.equal(isOpenMediaRoom(room('الحفره', 'chat')), true);
+    assert.equal(isOpenMediaRoom(room('CHAOS Club', '🕳️・الحفرة')), true);
+    assert.equal(isOpenMediaRoom(room('CHAOS Club', 'thread', 'الحفره')), true);
+    assert.equal(isOpenMediaRoom({ guild: { id: '1472405236000751778', name: 'renamed' }, channel: { name: 'chat' } }), true);
+    assert.equal(isOpenMediaRoom(room('CHAOS Club', 'general')), false);
+  });
+
+  test('a member without the media role keeps their picture and link there', async () => {
+    let deleted = false;
+    const message = {
+      ...room('اَلْحُفْرَة', 'chat'),
+      content: 'https://tenor.com/view/cat-gif-123',
+      attachments: new Map(),
+      author: { id: '200000000000000001' },
+      member: { roles: { cache: [] }, permissions: { has: () => false } },
+      delete: async () => { deleted = true; },
+    };
+    assert.equal(await handleMediaMessage(message), false);
+    assert.equal(deleted, false);
   });
 });

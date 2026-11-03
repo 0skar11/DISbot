@@ -21,6 +21,7 @@ import { Mutex } from '../../utils/mutex.js';
 import { logger } from '../../utils/logger.js';
 import { updateCCState, readCC } from './ccService.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { economyScope } from '../../config/sharedEconomy.js';
 
 export const HOUR_MS = 60 * 60 * 1000;
 
@@ -206,12 +207,13 @@ function stripRolls(market) {
  * Runs `change(market)` on the guild's market, moved to the current hour, one change per guild at a
  * time. The market is saved when anything changed.
  */
-async function withMarket(client, guildId, change, { now = Date.now(), rng = Math.random, assets = assetsFor(guildId) } = {}) {
+async function withMarket(client, guildId, change, { now = Date.now(), rng = Math.random, assets = bourseAssets } = {}) {
     if (!client?.db?.get) throw new Error('Database not available');
-    return Mutex.runExclusive(`bourse:${guildId}`, async () => {
-        const key = getBourseKey(guildId);
+    // One market for every server (sharedEconomy.js): it holds every asset, each server shows its own (`assetsFor`).
+    return Mutex.runExclusive(`bourse:${economyScope(guildId)}`, async () => {
+        const key = getBourseKey(economyScope(guildId));
         const raw = await client.db.get(key, null);
-        const preRoll = isHomeGuild(guildId);
+        const preRoll = isHomeGuild(economyScope(guildId));
         const market = normalizeMarket(raw, { assets, hour: hourOf(now), rng });
         if (!preRoll) stripRolls(market);
         const before = JSON.stringify(market);
@@ -371,7 +373,7 @@ export async function sell(client, guildId, userId, assetQuery, quantity = 1, { 
 export async function getHoldings(client, guildId, userId, options = {}) {
     const assets = options.assets || assetsFor(guildId);
     const { quotes } = await getMarket(client, guildId, options);
-    const record = await client.db.get(getEconomyKey(guildId, userId), {});
+    const record = await client.db.get(getEconomyKey(economyScope(guildId), userId), {});
     const holdings = readHoldings(record || {});
 
     const rows = [];
@@ -409,7 +411,7 @@ export function holdingsSellValue(holdings, prices) {
 export async function getWealthLeaderboard(client, guildId, options = {}) {
     const { quotes } = await getMarket(client, guildId, options);
     const prices = new Map(quotes.map(({ asset, price }) => [asset.id, price]));
-    const prefix = getEconomyPrefix(guildId);
+    const prefix = getEconomyPrefix(economyScope(guildId));
     const keys = await client.db.list(prefix);
     const rows = [];
     for (const key of Array.isArray(keys) ? keys : []) {

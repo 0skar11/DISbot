@@ -1,5 +1,6 @@
 import { logger } from '../../utils/logger.js';
 import { getLevelingConfig, getUserLevelData, listLevelUserIds, saveLevelingConfig } from './leveling.js';
+import { managedGuilds, isBourseGuild } from '../../config/bourseGuild.js';
 
 // Roles a level sync never takes away, even if one ends up in roleRewards: the owner wants `media`
 // to stay on members exactly as it is when their level role changes.
@@ -94,8 +95,8 @@ export async function reconcileLevelRoles(client, guildId = null) {
     };
 
     const guilds = guildId
-        ? [client.guilds.cache.get(guildId)].filter(Boolean)
-        : [...client.guilds.cache.values()];
+        ? [client.guilds.cache.get(guildId)].filter((guild) => guild && !isBourseGuild(guild.id))
+        : managedGuilds(client);
 
     for (const guild of guilds) {
         summary.scannedGuilds += 1;
