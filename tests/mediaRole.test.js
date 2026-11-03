@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionsBitField, PermissionFlagsBits } from 'discord.js';
-import { hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
+import { isOpenMediaRoom, handleMediaMessage, hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
 
 const message = (content, attachments = 0) => ({ content, attachments: { size: attachments } });
 
@@ -83,3 +83,37 @@ describe('media lock', () => {
     assert.equal(members.get('late').ids.has(media.id), false);
   });
 });
+
+describe('الحفرة is open for media (our server only)', async () => {
+  const { HOME_GUILD_ID } = await import('../src/config/homeGuild.js');
+  const room = (guildId, name, parentName = null) => ({
+    guild: { id: guildId },
+    channel: { name, parent: parentName ? { name: parentName } : null },
+  });
+
+  test('the room is found by name, threads included, in our server only', () => {
+    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, '🕳️・الحفرة')), true);
+    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'thread', 'الحفرة')), true);
+    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'general')), false);
+    assert.equal(isOpenMediaRoom(room('100000000000000009', 'الحفرة')), false);
+  });
+
+  test('a member without the media role keeps their picture and link there', async () => {
+    const make = (channelName) => {
+      let deleted = false;
+      return {
+        ...room(HOME_GUILD_ID, channelName),
+        content: 'https://tenor.com/view/cat-gif-123',
+        attachments: new Map(),
+        author: { id: '200000000000000001' },
+        member: { roles: { cache: [] }, permissions: { has: () => false } },
+        delete: async () => { deleted = true; },
+        get deleted() { return deleted; },
+      };
+    };
+    const inPit = make('الحفرة');
+    assert.equal(await handleMediaMessage(inPit), false);
+    assert.equal(inPit.deleted, false);
+  });
+});
+

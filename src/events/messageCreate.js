@@ -34,6 +34,7 @@ import { handleAfkMessage } from '../services/afkService.js';
 import { handleSalam } from '../services/chat/salamReply.js';
 import { handleQr } from '../services/chat/qrReply.js';
 import { handleMentionGroupCommand } from '../services/mentionGroup.js';
+import { handleResetCcCommand, RESET_CC_WORD } from '../services/cc/ccResetService.js';
 import { handleStreakCommand, handleStreakMessage, isStreakChannel } from '../services/cc/streakService.js';
 import { handleDangerCommand, handleDangerMessage, punishDanger, blockDangerCommand, DANGER_COMMAND_WORD } from '../services/moderation/dangerList.js';
 
@@ -159,6 +160,8 @@ async function handlePrefixCommand(message, client, gamesOnly = false, bourseOnl
       await handlePurgeMessage(message, args);
       return;
     }
+    // `resetcc` (owner only, our server only): sets everyone's CC to 0 after a Confirm button.
+    if (typedCommand === RESET_CC_WORD && await handleResetCcCommand(message)) return;
     if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args)) return;
     if (typedCommand === 'مسح' && args[0] === 'تحذيرات') {
       await handleClearWarningsShortcut(message, args.slice(1));
