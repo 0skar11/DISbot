@@ -1,5 +1,6 @@
 import { isServerOwner } from '../config/serverOwners.js';
 import { isHomeGuild } from '../config/homeGuild.js';
+import { isBourseGuild } from '../config/bourseGuild.js';
 import { canLiftHardBan } from './moderation/hardBanService.js';
 import { logger } from '../utils/logger.js';
 
@@ -34,6 +35,8 @@ export async function stripRoles(message) {
 
 /** Returns true when the message was deleted for mentioning @everyone / @here. */
 export async function handleEveryoneMention(message) {
+  // الحفرة (1472405236000751778): anyone may mention @everyone / @here there.
+  if (isBourseGuild(message.guild?.id)) return false;
   if (!message.mentions?.everyone && !EVERYONE_MENTION.test(message.content || '')) return false;
   if (await canMentionEveryone(message)) return false;
 
