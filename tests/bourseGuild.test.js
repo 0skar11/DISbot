@@ -109,4 +109,19 @@ describe('bourse-only server', () => {
     const ok = await run(extra);
     assert.ok(ok.embeds?.length, 'prices embed in the extra room');
   });
+
+  test('a GIF or link from a member without the media role is left alone there (create and edit)', async () => {
+    const calls = [];
+    const track = (extra) => new Proxy({
+      guild: { id: BOURSE_GUILD_ID, name: 'اَلْحُفْرَة' }, guildId: BOURSE_GUILD_ID, channelId: '1', partial: false,
+      content: 'https://tenor.com/view/cat-gif-123', attachments: new Map(), author: { id: '200000000000000001', bot: false },
+      channel: { id: '1', send: async () => calls.push('send') }, member: { roles: { cache: [] }, permissions: { has: () => false } },
+      delete: async () => calls.push('delete'), ...extra,
+    }, {});
+    await messageCreate.execute(track(), { commands: new Collection() });
+    const handlers = new Map();
+    await loadEvents({ on: (name, fn) => handlers.set(name, fn), once: () => {} });
+    await handlers.get('messageUpdate')(track(), track());
+    assert.deepEqual(calls, []);
+  });
 });

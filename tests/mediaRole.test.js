@@ -84,38 +84,32 @@ describe('media lock', () => {
   });
 });
 
-describe('الحفرة is open for media (our server only)', async () => {
-  const { HOME_GUILD_ID } = await import('../src/config/homeGuild.js');
-  const room = (guildId, name, parentName = null) => ({
-    guild: { id: guildId },
+describe('الحفرة is open for media', async () => {
+  const room = (guildName, name, parentName = null) => ({
+    guild: { id: '100000000000000009', name: guildName },
     channel: { name, parent: parentName ? { name: parentName } : null },
   });
 
-  test('the room is found by name, threads included, in our server only', () => {
-    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, '🕳️・الحفرة')), true);
-    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'thread', 'الحفرة')), true);
-    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, '・الحفره')), true);
-    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'ال\u0640حُفْرَة 🕳️')), true);
-    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'general')), false);
-    assert.equal(isOpenMediaRoom(room('100000000000000009', 'الحفرة')), false);
+  test('found by the server name or the room name, either spelling, diacritics and decorations aside', () => {
+    assert.equal(isOpenMediaRoom(room('اَلْحُفْرَة', 'chat')), true);
+    assert.equal(isOpenMediaRoom(room('الحفره', 'chat')), true);
+    assert.equal(isOpenMediaRoom(room('CHAOS Club', '🕳️・الحفرة')), true);
+    assert.equal(isOpenMediaRoom(room('CHAOS Club', 'thread', 'الحفره')), true);
+    assert.equal(isOpenMediaRoom({ guild: { id: '1472405236000751778', name: 'renamed' }, channel: { name: 'chat' } }), true);
+    assert.equal(isOpenMediaRoom(room('CHAOS Club', 'general')), false);
   });
 
   test('a member without the media role keeps their picture and link there', async () => {
-    const make = (channelName) => {
-      let deleted = false;
-      return {
-        ...room(HOME_GUILD_ID, channelName),
-        content: 'https://tenor.com/view/cat-gif-123',
-        attachments: new Map(),
-        author: { id: '200000000000000001' },
-        member: { roles: { cache: [] }, permissions: { has: () => false } },
-        delete: async () => { deleted = true; },
-        get deleted() { return deleted; },
-      };
+    let deleted = false;
+    const message = {
+      ...room('اَلْحُفْرَة', 'chat'),
+      content: 'https://tenor.com/view/cat-gif-123',
+      attachments: new Map(),
+      author: { id: '200000000000000001' },
+      member: { roles: { cache: [] }, permissions: { has: () => false } },
+      delete: async () => { deleted = true; },
     };
-    const inPit = make('الحفرة');
-    assert.equal(await handleMediaMessage(inPit), false);
-    assert.equal(inPit.deleted, false);
+    assert.equal(await handleMediaMessage(message), false);
+    assert.equal(deleted, false);
   });
 });
-
