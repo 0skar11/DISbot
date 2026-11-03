@@ -9,6 +9,9 @@ import { adjustCC, getProfile } from '../src/services/cc/ccService.js';
 import { changeArrow, pricesEmbed } from '../src/services/cc/bourseUi.js';
 import { applyWordAliases } from '../src/config/commands/commandAliases.js';
 
+import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
+
+// The bourse and CC are shared by every server: they are saved under the home server's keys.
 const GUILD = '100000000000000009';
 const A = '200000000000000001';
 const B = '200000000000000002';
@@ -202,7 +205,7 @@ describe('bourse trading', () => {
         assert.equal((await getProfile(client, GUILD, A)).cc, 5000 - car.price * 2);
 
         // The purchase counts as demand for the next hour.
-        const saved = client.store.get(`guild:${GUILD}:bourse`);
+        const saved = client.store.get(`guild:${HOME_GUILD_ID}:bourse`);
         assert.equal(saved.assets.car.flow[A], 2);
 
         assert.equal((await sell(client, GUILD, A, 'car', 3, options)).reason, 'not_owned');
@@ -212,7 +215,7 @@ describe('bourse trading', () => {
         assert.deepEqual([sold.ok, sold.fee, sold.received, sold.paid, sold.profit, sold.owned], [true, fee, car.price - fee, car.price, -fee, 1]);
         assert.equal((await getProfile(client, GUILD, A)).cc, 5000 - car.price - fee);
         assert.deepEqual([sold.before, sold.balance], [5000 - car.price * 2, 5000 - car.price - fee]);
-        assert.equal(client.store.get(`guild:${GUILD}:bourse`).assets.car.flow[A], 1);
+        assert.equal(client.store.get(`guild:${HOME_GUILD_ID}:bourse`).assets.car.flow[A], 1);
 
         const holdings = await getHoldings(client, GUILD, A, options);
         assert.equal(holdings.rows.length, 1);
@@ -272,7 +275,7 @@ describe('bourse messages', () => {
 describe('bourse balance', () => {
     test('buying takes exactly the price from the balance', async () => {
         const client = fakeClient();
-        client.store.set(`guild:${GUILD}:economy:${A}`, { wallet: 999, bank: 5, cc: 710 });
+        client.store.set(`guild:${HOME_GUILD_ID}:economy:${A}`, { wallet: 999, bank: 5, cc: 710 });
         const result = await invest(client, GUILD, A, 'gold', 1, { now: NOW, rng: () => 0.5 });
         assert.deepEqual([result.price, result.before, result.balance], [600, 710, 110]);
         assert.equal((await getProfile(client, GUILD, A)).cc, 110);

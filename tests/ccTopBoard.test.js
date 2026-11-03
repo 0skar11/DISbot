@@ -5,11 +5,14 @@ import { buildCCTopBoard, isCCTopBoard, publishCCTopBoard, CC_TOP_BOARD_FOOTER }
 import { ccTopEmbed } from '../src/commands/Games/cctop.js';
 import { getEconomyKey } from '../src/utils/database.js';
 
+import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
+
+// CC is shared by every server, so the balances are saved under the home server's keys.
 const GUILD_ID = '100000000000000001';
 const BOT_ID = '999999999999999999';
 
 function fakeClient(balances = {}) {
-    const store = new Map(Object.entries(balances).map(([userId, cc]) => [getEconomyKey(GUILD_ID, userId), { cc }]));
+    const store = new Map(Object.entries(balances).map(([userId, cc]) => [getEconomyKey(HOME_GUILD_ID, userId), { cc }]));
     const db = {
         get: async (key, fallback) => (store.has(key) ? store.get(key) : fallback),
         set: async (key, value) => { store.set(key, value); return true; },
