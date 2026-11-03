@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>عبير | متجر العطور</title>
+<meta name="description" content="متجر عطور فاخرة: عطور رجالية ونسائية وعود ومسك، توصيل لجميع المحافظات.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap bar">
+    <a href="#" class="logo">عبير<span>.</span></a>
+    <nav>
+      <a href="#products">المنتجات</a>
+      <a href="#why">لماذا عبير</a>
+      <a href="#contact">تواصل معنا</a>
+    </nav>
+    <button class="cart-btn" id="openCart" aria-label="سلة المشتريات">
+      🛍️ <span id="cartCount">0</span>
+    </button>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap hero-in">
+    <div>
+      <p class="eyebrow">تشكيلة جديدة</p>
+      <h1>عطرك يحكي عنك<br>قبل ما تتكلم</h1>
+      <p class="lead">عطور فاخرة أصلية بأسعار مناسبة، مع توصيل سريع لباب البيت وإمكانية الدفع عند الاستلام.</p>
+      <a class="btn" href="#products">تسوّق الآن</a>
+    </div>
+    <svg class="hero-bottle" viewBox="0 0 120 160" aria-hidden="true">
+      <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f4d58d"/><stop offset="1" stop-color="#b8860b"/></linearGradient></defs>
+      <rect x="46" y="8" width="28" height="22" rx="4" fill="#2b2b2b"/>
+      <rect x="52" y="30" width="16" height="12" fill="#c9a24a"/>
+      <rect x="18" y="42" width="84" height="108" rx="16" fill="url(#hg)"/>
+      <rect x="30" y="64" width="60" height="50" rx="6" fill="#fff" fill-opacity=".85"/>
+      <text x="60" y="95" text-anchor="middle" font-size="16" font-weight="800" fill="#7a5a10" font-family="Tajawal">عبير</text>
+    </svg>
+  </div>
+</section>
+
+<main class="wrap" id="products">
+  <div class="head">
+    <h2>منتجاتنا</h2>
+    <div class="tools">
+      <input id="search" type="search" placeholder="ابحث عن عطر...">
+      <div class="chips" id="chips"></div>
+    </div>
+  </div>
+  <div class="grid" id="grid"></div>
+  <p class="empty" id="empty" hidden>لا توجد نتائج مطابقة.</p>
+</main>
+
+<section class="why" id="why">
+  <div class="wrap feats">
+    <div><b>✔ أصلي 100%</b><span>منتجات مضمونة ومن مصادر موثوقة</span></div>
+    <div><b>🚚 توصيل سريع</b><span>لجميع المحافظات خلال 2–4 أيام</span></div>
+    <div><b>💵 دفع عند الاستلام</b><span>افحص طلبك ثم ادفع</span></div>
+    <div><b>🔁 استبدال سهل</b><span>خلال 14 يومًا لو المنتج مختوم</span></div>
+  </div>
+</section>
+
+<footer id="contact">
+  <div class="wrap foot">
+    <div>
+      <div class="logo">عبير<span>.</span></div>
+      <p>متجر عطور فاخرة.</p>
+    </div>
+    <div>
+      <p>واتساب: <a id="waLink" href="#" target="_blank" rel="noopener">اضغط للتواصل</a></p>
+      <p>من 10 صباحًا حتى 10 مساءً</p>
+    </div>
+  </div>
+  <p class="copy">© <span id="yr"></span> عبير. جميع الحقوق محفوظة.</p>
+</footer>
+
+<div class="overlay" id="overlay" hidden></div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-head"><h3>سلة المشتريات</h3><button id="closeCart" aria-label="إغلاق">✕</button></div>
+  <div class="items" id="items"></div>
+  <div class="drawer-foot">
+    <div class="total"><span>الإجمالي</span><b id="total">0</b></div>
+    <form id="order">
+      <input name="name" placeholder="الاسم" required>
+      <input name="phone" placeholder="رقم الموبايل" inputmode="tel" required>
+      <input name="address" placeholder="العنوان بالتفصيل" required>
+      <button class="btn full" type="submit">إرسال الطلب عبر واتساب</button>
+    </form>
+  </div>
+</aside>
+
+<script src="app.js"></script>
+</body>
+</html>
