@@ -1,5 +1,5 @@
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
-import { GAMES_BOTS_CHANNEL_ID } from '../../config/games.js';
+import { GAMES_BOTS_CHANNEL_ID, BOURSE_EXTRA_CHANNEL_IDS } from '../../config/games.js';
 import { isGamesBotsChannel } from '../../services/cc/gamesBotChannel.js';
 import { CC } from '../../config/cc.js';
 import { bourseSettings, isSellAllWord } from '../../config/store/bourse.js';
@@ -68,7 +68,8 @@ export default {
         const reply = (payload) => InteractionHelper.safeReply(interaction, { allowedMentions: { parse: [] }, ...payload });
         // The bourse works only in the games bots channel (report #121), so it doesn't flood the chat.
         // The bourse-only server has no games bots channel: the bourse works in any of its channels.
-        if (!isBourseGuild(interaction.guildId) && !isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
+        const extraChannel = BOURSE_EXTRA_CHANNEL_IDS.has(interaction.channelId) || BOURSE_EXTRA_CHANNEL_IDS.has(interaction.channel?.parentId);
+        if (!isBourseGuild(interaction.guildId) && !extraChannel && !isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
         const sub = interaction.options.getSubcommand();
         const { guildId, user } = interaction;
 

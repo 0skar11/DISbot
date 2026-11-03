@@ -91,4 +91,22 @@ describe('bourse-only server', () => {
     // Only the main messageCreate.js reads the message further (the bourse commands); nothing deletes or punishes.
     assert.ok(!touched.includes('delete') && !touched.includes('member') && !touched.includes('mentions'), touched.join(','));
   });
+
+  test('the bourse also works in the extra room, and still not in other rooms', async () => {
+    const { BOURSE_EXTRA_CHANNEL_IDS } = await import('../src/config/games.js');
+    const { default: bourse } = await import('../src/commands/Games/bourse.js');
+    const [extra] = [...BOURSE_EXTRA_CHANNEL_IDS];
+    const run = async (channelId) => {
+      const replies = [];
+      await bourse.execute({
+        id: '1', guildId: HOME_GUILD_ID, channelId, channel: { id: channelId }, user: { id: '200000000000000001' },
+        options: { getSubcommand: () => 'prices' },
+        reply: async (payload) => { replies.push(payload); },
+      }, {}, { db: { get: async (_key, fallback) => fallback, set: async () => true, list: async () => [] } });
+      return replies[0];
+    };
+    assert.match((await run('111111111111111111')).content, /البورصة في/u);
+    const ok = await run(extra);
+    assert.ok(ok.embeds?.length, 'prices embed in the extra room');
+  });
 });
