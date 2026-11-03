@@ -210,6 +210,7 @@ const FAILURE_TEXT = {
     staff_name: '❌ الاسم ده شبه رتب الإدارة، اختار اسم تاني.',
     taken: '❌ فيه رتبة بالاسم ده أصلاً، اختار اسم تاني.',
     create_failed: '❌ معرفتش أعمل الرول، ورجعتلك الـ CC بتاعتك. كلم الإدارة.',
+    paused: '⏸️ عمل رولات جديدة موقوف مؤقتاً، جرب كمان شوية.',
 };
 
 export function purchaseFailureText(result) {

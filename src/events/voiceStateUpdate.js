@@ -10,6 +10,8 @@ import { sanitizeInput } from '../utils/validation.js';
 import { logger } from '../utils/logger.js';
 import { handleMusicVoiceState } from '../services/music/musicVoiceState.js';
 import { handleVoteKickVoiceState } from '../services/voice/voteKickService.js';
+import { isHomeGuild } from '../config/homeGuild.js';
+import { isChannelRoleCreationPaused } from '../config/automation.js';
 
 const channelCreationCooldown = new Map();
 const VOICE_CREATE_COOLDOWN_MS = 2000;
@@ -91,6 +93,12 @@ if (now - lastCreation < VOICE_CREATE_COOLDOWN_MS) {
             }
 
             if (member.voice.channel?.id !== channel.id) {
+                return;
+            }
+
+            // Report #258: no new voice room while channel/role creation is paused, in our server only.
+            if (isHomeGuild(state.guild.id) && isChannelRoleCreationPaused()) {
+                logger.warn(`Channel/role creation is paused: skipped a temporary channel for ${member.id} in guild ${state.guild.id}`);
                 return;
             }
 

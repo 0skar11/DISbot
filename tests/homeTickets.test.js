@@ -1,4 +1,4 @@
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionFlagsBits, ChannelType } from 'discord.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
@@ -6,6 +6,11 @@ import { ROLE_DEFINITIONS } from '../src/services/staffRoleHierarchyService.js';
 import {
   setupHomeTickets, openTicket, claimTicket, verifyTicket, closeTicket, SECTION_ROLE_IDS, TICKET_NAMES, VERIFIED_ROLE_ID,
 } from '../src/services/tickets/homeTickets.js';
+
+// Most of these tests make rooms, so channel/role creation (report #258) is unpaused here; its own
+// behaviour is covered below.
+before(() => { process.env.NO_NEW_CHANNELS_OR_ROLES = 'false'; });
+after(() => { delete process.env.NO_NEW_CHANNELS_OR_ROLES; });
 
 const MEMBER = '200000000000000001';
 const GIRL = '200000000000000002';
@@ -159,5 +164,26 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal((await openTicket(m, 'problem', { now: 30_000_000 })).reason, 'create_failed');
     guild.channels.create = create;
     assert.equal((await openTicket(m, 'problem', { now: 30_000_001 })).ok, true);
+  });
+
+  test('channel/role creation paused (report #258): no new ticket room, but an existing panel can still be edited', async () => {
+    const { guild, created, member } = setup();
+    await setupHomeTickets(guild); // rooms already exist, unpaused
+    process.env.NO_NEW_CHANNELS_OR_ROLES = 'true';
+    try {
+      const before = created.length;
+      assert.equal((await openTicket(member('200000000000000015'), 'problem', { now: 50_000_000 })).reason, 'paused');
+      assert.equal(created.length, before);
+
+      // Editing the already-published panel makes nothing new, so it still works while paused.
+      const result = await setupHomeTickets(guild);
+      assert.equal(result.paused, undefined);
+      assert.equal(created.length, before);
+
+      // A guild missing its rooms cannot be set up while paused.
+      assert.deepEqual(await setupHomeTickets(setup().guild), { paused: true });
+    } finally {
+      process.env.NO_NEW_CHANNELS_OR_ROLES = 'false';
+    }
   });
 });

@@ -56,8 +56,9 @@ export function isStreakChannel(channelId) {
     return channelId === STREAK_CHANNEL_ID;
 }
 
-/** Whether a message has a picture or a GIF: an image file, a GIF link (Tenor, Giphy, .gif) or its embed. */
+/** Whether a message has a picture, a GIF or a sticker (report #257): an image file, a GIF link (Tenor, Giphy, .gif), its embed, or a sticker. */
 export function hasStreakMedia(message) {
+    if (message.stickers?.size) return true;
     const attachments = [...(message.attachments?.values?.() || [])];
     if (attachments.some((file) => (file.contentType ? file.contentType.startsWith('image/') : IMAGE_EXTENSION.test(file.name || '')))) return true;
     if ((message.embeds || []).some((embed) => ['gifv', 'image'].includes(embed.data?.type || embed.type))) return true;
@@ -228,9 +229,8 @@ export async function publishStreakBoard(guild) {
 // Replies that only say "already counted" or "text doesn't count" go away after this long.
 const SHORT_REPLY_DELETE_MS = 15_000;
 
-/** The reply to a message in the streak room: counted now, already counted today, or text only. */
-export function streakReplyText(userId, { result = null, current = 0, media = true } = {}) {
-    if (!media) return `📸 <@${userId}> الكلام مابيتحسبش في الستريك، ابعت صورة أو GIF.`;
+/** The reply to a media message in the streak room: counted now, or already counted today. */
+export function streakReplyText(userId, { result = null, current = 0 } = {}) {
     if (result) {
         const milestone = result.milestone ? ` 🏅 وجايزة **${n(result.milestone)}**` : '';
         const restarted = result.restarted ? ' (الستريك كان وقع ورجع من الأول)' : '';
@@ -245,19 +245,16 @@ async function replyInRoom(message, content, deleteAfterMs = 0) {
 }
 
 /**
- * messageCreate: every message in the streak room gets a reply. A picture or GIF counts for the
- * streak (🔥 on it, the reply names a milestone); one already counted today says so; text doesn't count.
- * Messages elsewhere are left alone. Never throws.
+ * messageCreate: a picture, GIF or sticker in the streak room counts for the streak (🔥 on it, the
+ * reply names a milestone) or, if already counted today, says so. Plain text (report #257) and messages
+ * elsewhere get no reply at all. Never throws.
  */
 export async function handleStreakMessage(message) {
     try {
         if (!isHomeGuild(message.guild?.id) || !isStreakChannel(message.channelId)) return null;
         const client = message.client || message.guild.client;
         const userId = message.author?.id;
-        if (!hasStreakMedia(message)) {
-            await replyInRoom(message, streakReplyText(userId, { media: false }), SHORT_REPLY_DELETE_MS);
-            return null;
-        }
+        if (!hasStreakMedia(message)) return null;
         const result = await recordStreakMessage(client, message.guild.id, userId);
         if (result) {
             await message.react?.('🔥').catch(() => {});
