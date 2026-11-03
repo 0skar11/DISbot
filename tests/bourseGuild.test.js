@@ -99,7 +99,7 @@ describe('bourse-only server', () => {
     const run = async (channelId) => {
       const replies = [];
       await bourse.execute({
-        id: '1', guildId: HOME_GUILD_ID, channelId, channel: { id: channelId }, user: { id: '200000000000000001' },
+        id: '1', guildId: HOME_GUILD_ID, channel: { id: channelId }, user: { id: '200000000000000001' }, // typed form: no channelId
         options: { getSubcommand: () => 'prices' },
         reply: async (payload) => { replies.push(payload); },
       }, {}, { db: { get: async (_key, fallback) => fallback, set: async () => true, list: async () => [] } });

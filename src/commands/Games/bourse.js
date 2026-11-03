@@ -68,7 +68,9 @@ export default {
         const reply = (payload) => InteractionHelper.safeReply(interaction, { allowedMentions: { parse: [] }, ...payload });
         // The bourse works only in the games bots channel (report #121), so it doesn't flood the chat.
         // The bourse-only server has no games bots channel: the bourse works in any of its channels.
-        const extraChannel = BOURSE_EXTRA_CHANNEL_IDS.has(interaction.channelId) || BOURSE_EXTRA_CHANNEL_IDS.has(interaction.channel?.parentId);
+        // A typed command (prefix form) has `channel` but no `channelId`, so the id is read from the channel.
+        const roomId = interaction.channel?.id ?? interaction.channelId;
+        const extraChannel = BOURSE_EXTRA_CHANNEL_IDS.has(roomId) || BOURSE_EXTRA_CHANNEL_IDS.has(interaction.channel?.parentId);
         if (!isBourseGuild(interaction.guildId) && !extraChannel && !isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
         const sub = interaction.options.getSubcommand();
         const { guildId, user } = interaction;
