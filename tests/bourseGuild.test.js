@@ -78,4 +78,17 @@ describe('bourse-only server', () => {
     await handlers.get('guildMemberAdd')(member);
     assert.deepEqual(touched, []);
   });
+
+  test('the other messageCreate listeners (moderation, anti-raid...) skip it, so images and links go through', async () => {
+    const listeners = [];
+    await loadEvents({ on: (name, fn) => { if (name === 'messageCreate') listeners.push(fn); }, once: () => {} });
+    assert.ok(listeners.length > 3);
+    const touched = [];
+    const message = new Proxy({ guild: { id: BOURSE_GUILD_ID }, guildId: BOURSE_GUILD_ID, author: { id: '1', bot: false } }, {
+      get: (target, key) => { if (!(key in target)) touched.push(String(key)); return target[key]; },
+    });
+    for (const listener of listeners) await listener(message).catch(() => {});
+    // Only the main messageCreate.js reads the message further (the bourse commands); nothing deletes or punishes.
+    assert.ok(!touched.includes('delete') && !touched.includes('member') && !touched.includes('mentions'), touched.join(','));
+  });
 });
