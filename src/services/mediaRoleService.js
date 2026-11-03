@@ -3,7 +3,7 @@ import { isServerOwner } from '../config/serverOwners.js';
 import { canLiftHardBan } from './moderation/hardBanService.js';
 import { getGuildConfig, updateGuildConfig } from './config/guildConfig.js';
 import { logger } from '../utils/logger.js';
-import { isHomeGuild } from '../config/homeGuild.js';
+import { isBourseGuild } from '../config/bourseGuild.js';
 
 // Images/files, GIFs and links are for members of the `media` role (and admins) only.
 // The role and its permissions are the owner's to set: the bot never changes them. Discord permissions
@@ -109,14 +109,16 @@ async function canSendMedia(message) {
   return canLiftHardBan(message.guild, message.author.id);
 }
 
-// "الحفرة" (our server only) is open: anyone sends pictures, GIFs and links there without the media role.
-// The room is found by its name (decorations around it are fine), and threads in it count as it.
-const OPEN_MEDIA_ROOM = 'الحفرة';
+// "الحفرة" is open: in the server of that name (and in any room called that) anyone sends pictures, GIFs
+// and links without the media role. Found by name, spelled with ة or ه, with or without "ال", diacritics
+// or decorations around it; threads in such a room count as it.
+const OPEN_MEDIA_NAME = /حفر[ةه]/u;
 
 export function isOpenMediaRoom(message) {
-  if (!isHomeGuild(message.guild?.id)) return false;
-  const names = [message.channel?.name, message.channel?.parent?.name];
-  return names.some((name) => typeof name === 'string' && name.includes(OPEN_MEDIA_ROOM));
+  // The server itself (1472405236000751778) is always open, whatever it is called today.
+  if (isBourseGuild(message.guild?.id)) return true;
+  const names = [message.guild?.name, message.channel?.name, message.channel?.parent?.name];
+  return names.some((name) => typeof name === 'string' && OPEN_MEDIA_NAME.test(name.replace(/[\u064B-\u065F\u0640]/gu, '')));
 }
 
 /** Returns true when the message was deleted for sending media without the media role. */
