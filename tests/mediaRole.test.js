@@ -94,6 +94,8 @@ describe('الحفرة is open for media (our server only)', async () => {
   test('the room is found by name, threads included, in our server only', () => {
     assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, '🕳️・الحفرة')), true);
     assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'thread', 'الحفرة')), true);
+    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, '・الحفره')), true);
+    assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'ال\u0640حُفْرَة 🕳️')), true);
     assert.equal(isOpenMediaRoom(room(HOME_GUILD_ID, 'general')), false);
     assert.equal(isOpenMediaRoom(room('100000000000000009', 'الحفرة')), false);
   });

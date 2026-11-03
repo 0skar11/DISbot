@@ -111,12 +111,13 @@ async function canSendMedia(message) {
 
 // "الحفرة" (our server only) is open: anyone sends pictures, GIFs and links there without the media role.
 // The room is found by its name (decorations around it are fine), and threads in it count as it.
-const OPEN_MEDIA_ROOM = 'الحفرة';
+// Spelled with ة or ه, with or without "ال", diacritics or decorations around it.
+const OPEN_MEDIA_ROOM = /حفر[ةه]/u;
 
 export function isOpenMediaRoom(message) {
   if (!isHomeGuild(message.guild?.id)) return false;
   const names = [message.channel?.name, message.channel?.parent?.name];
-  return names.some((name) => typeof name === 'string' && name.includes(OPEN_MEDIA_ROOM));
+  return names.some((name) => typeof name === 'string' && OPEN_MEDIA_ROOM.test(name.replace(/[\u064B-\u065F\u0640]/gu, '')));
 }
 
 /** Returns true when the message was deleted for sending media without the media role. */
