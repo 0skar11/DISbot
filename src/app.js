@@ -22,6 +22,7 @@ import { flushChatCounts } from './services/leveling/chatCounter.js';
 import { tickVoiceActivity } from './services/leveling/voiceXp.js';
 import pkg from '../package.json' with { type: 'json' };
 import { EXPECTED_SCHEMA_VERSION, EXPECTED_SCHEMA_LABEL } from './config/database/schemaVersion.js';
+import { managedGuilds } from './config/bourseGuild.js';
 
 class TitanBot extends Client {
   constructor() {
@@ -267,7 +268,7 @@ class TitanBot extends Client {
 
   // Warnings are removed automatically 5 days after they were issued.
   async pruneExpiredWarnings() {
-    for (const guildId of this.guilds.cache.keys()) {
+    for (const { id: guildId } of managedGuilds(this)) {
       await WarningService.pruneExpiredWarnings(guildId);
     }
   }
@@ -278,7 +279,8 @@ class TitanBot extends Client {
       return;
     }
     
-    for (const [guildId, guild] of this.guilds.cache) {
+    for (const guild of managedGuilds(this)) {
+      const guildId = guild.id;
       try {
         const counters = await getServerCounters(this, guildId);
         const validCounters = [];

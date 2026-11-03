@@ -1,6 +1,7 @@
 import { logger } from '../../utils/logger.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { managedGuilds } from '../../config/bourseGuild.js';
 
 // The notice in #dont-type-here (owner's request), in our server only. That room is a trap for hacked
 // accounts: whoever writes there is banned by the security bot, so a real member never writes there but a
@@ -35,7 +36,7 @@ const isNotice = (message) => message.embeds?.[0]?.footer?.text === FOOTER;
 
 /** Posts (or edits) and pins the notice in #dont-type-here. Returns `{ status }`. */
 export async function publishHoneypotNotice(client) {
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
         if (!isHomeGuild(guild.id)) continue;
         const channel = guild.channels.cache.find((entry) => entry.name === HONEYPOT_CHANNEL_NAME && entry.isTextBased?.());
         if (!channel) return { status: 'missing-channel' };

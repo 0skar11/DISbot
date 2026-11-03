@@ -1,5 +1,6 @@
 import { Events } from 'discord.js';
 import { logger } from '../utils/logger.js';
+import { isBourseGuild, isBourseGuildCommand } from '../config/bourseGuild.js';
 import { handleArabicUtilityShortcuts } from '../utils/arabicUtilityShortcuts.js';
 import { handleMessageDeleteShortcut } from '../utils/messageDeleteShortcut.js';
 import { parseTypedCommand, mapArgumentsToOptions } from '../utils/prefixParser.js';
@@ -42,6 +43,12 @@ export default {
   name: Events.MessageCreate,
   async execute(message, client) {
     try {
+      // The bourse-only server: nothing but the bourse commands run there (no moderation, XP, roles, shortcuts).
+      if (isBourseGuild(message.guild?.id)) {
+        if (message.author.bot) return;
+        await handlePrefixCommand(message, client, false, true);
+        return;
+      }
       // Runs before the bot check so other bots cannot post in the protected board channels either.
       if (await handleProtectedChannelMessage(message)) return;
       if (await handleGamesChannelMessage(message, client)) return;
@@ -123,13 +130,14 @@ async function isBotCommand(message, client) {
   return Boolean(aliased && client.commands.get(resolveCommandAlias(aliased.commandName)));
 }
 
-async function handlePrefixCommand(message, client, gamesOnly = false) {
+async function handlePrefixCommand(message, client, gamesOnly = false, bourseOnly = false) {
   try {
     const guildConfig = await getGuildConfig(client, message.guild.id);
     const prefix = guildConfig?.prefix || getCommandPrefix();
     if (gamesOnly && !isGameCommandMessage(message.content, [prefix])) return;
     const parsed = parseTypedCommand(message.content, prefix);
     // `منشن` group (our server): runs before the role shortcuts so `شيل منشن @x` isn't "remove role منشن".
+    if (bourseOnly) return await runBourseGuildCommand(message, client, parsed, prefix, guildConfig);
     if (parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;
     if (parsed && await handleStreakCommand(message, parsed.commandName, parsed.args)) return;
     if (await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
@@ -221,4 +229,31 @@ async function handleCountingGame(message, client) {
     logger.error('Error handling counting game:', error);
     return false;
   }
+}
+
+/** The bourse-only server: only the bourse commands (`isBourseGuildCommand`) run, with the usual checks. */
+async function runBourseGuildCommand(message, client, parsed, prefix, guildConfig) {
+  if (!parsed) return;
+  const aliased = applyWordAliases(parsed.commandName.toLowerCase(), parsed.args, parsed.prefixed);
+  if (!aliased) return;
+  const resolvedCommandName = resolveCommandAlias(aliased.commandName);
+  if (!isBourseGuildCommand(resolvedCommandName)) return;
+  const command = client.commands.get(resolvedCommandName);
+  if (!command) return;
+  if (isMaintenanceMode() && !isBotOwner(message.author.id)) return;
+  if (!isCommandCategoryEnabled(command.category)) return;
+  let args = await applyReplyTarget(message, command.data, aliased.args);
+  if (typeof command.normalizePrefixArgs === 'function') args = command.normalizePrefixArgs(args);
+  if (!supportsPrefixExecution(command)) return;
+  if (!(await isCommandEnabled(client, message.guild.id, resolvePrefixAccessKey(command.data, args), command.category))) return;
+  if (!mapArgumentsToOptions(args, command.data).validateRequired().valid) {
+    await executePrefixCommand(command, message, args, client, prefix, guildConfig);
+    return;
+  }
+  const abuseProtection = await enforceAbuseProtection({ guildId: message.guild.id, user: message.author }, command, resolvedCommandName);
+  if (!abuseProtection.allowed) {
+    await message.channel.send(`⏱️ Wait ${formatCooldownDuration(abuseProtection.remainingMs)}`).catch(() => {});
+    return;
+  }
+  await executePrefixCommand(command, message, args, client, prefix, guildConfig);
 }

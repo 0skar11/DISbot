@@ -1,6 +1,7 @@
 import { Events } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../services/config/guildConfig.js';
 import { logger, startupLog } from '../utils/logger.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 const GLOBAL_LOG_CHANNEL_ID = '1550564287129456810';
 
@@ -11,7 +12,7 @@ export default {
   async execute(client) {
     let configured = 0;
 
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
       try {
         const config = await getGuildConfig(client, guild.id);
         await updateGuildConfig(client, guild.id, {

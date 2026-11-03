@@ -1,6 +1,7 @@
 import { Events } from 'discord.js';
 import { logger, startupLog } from '../utils/logger.js';
 import { rememberStaffRoles, refreshStaffPermissionBoard, demoteAdministratorsBelowAdmin } from '../services/staffRoleHierarchyService.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export default {
   name: Events.ClientReady,
@@ -11,7 +12,7 @@ export default {
     let found = 0;
     const boardResults = [];
 
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
       // The permission board is edited to match the roles. The bot never posts there on its own,
       // except once per BOARD_RESET_VERSION, when it clears the channel and posts the board fresh.
       try {

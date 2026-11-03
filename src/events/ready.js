@@ -23,6 +23,7 @@ import { startCustomRoles } from "../services/cc/customRoleService.js";
 import { startVoteKickSweeps } from "../services/voice/voteKickService.js";
 import { isHomeGuild } from "../config/homeGuild.js";
 import { isAutomationPaused } from "../config/automation.js";
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export default {
   name: Events.ClientReady,
@@ -140,7 +141,7 @@ export default {
       const reactionRolePanelSummary = await reconcileReactionRolePanelHealth(client);
       startupLog(`Reaction role panel health: scanned ${reactionRolePanelSummary.scannedPanels}, healthy ${reactionRolePanelSummary.healthyPanels}, missing channel ${reactionRolePanelSummary.missingChannels}`);
       // Level roles are found first so the sync below hands them to members who already passed their level.
-      for (const guild of client.guilds.cache.values()) {
+      for (const guild of managedGuilds(client)) {
         try {
           const tiers = await findLevelTierRoles(client, guild);
           startupLog(`Level roles in ${guild.name}: found ${tiers.found}, missing ${tiers.missing.length}, rewards saved ${tiers.rewardsSaved}`);

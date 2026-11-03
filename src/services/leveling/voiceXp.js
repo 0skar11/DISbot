@@ -2,6 +2,7 @@ import { logger } from '../../utils/logger.js';
 import { VOICE_XP } from '../../config/voiceXp.js';
 import { getLevelingConfig } from './leveling.js';
 import { addXp } from './xpSystem.js';
+import { managedGuilds } from '../../config/bourseGuild.js';
 
 // Voice XP and `top voice`: once a minute (cron in app.js) every member in voice who is talking-ready
 // and not alone gets a minute counted and XP into their normal level (level-ups are announced like chat
@@ -77,7 +78,7 @@ export async function tickVoiceActivity(client) {
     if (ticking) return;
     ticking = true;
     try {
-        for (const guild of client.guilds.cache.values()) {
+        for (const guild of managedGuilds(client)) {
             await tickGuild(client, guild).catch((error) => logger.error(`Voice XP tick failed in ${guild.id}:`, error));
         }
     } finally {

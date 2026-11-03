@@ -1,13 +1,14 @@
 import { Events } from 'discord.js';
 import { logger, startupLog } from '../utils/logger.js';
 import { cacheGuildInvites } from '../services/inviteTrackerService.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 // Remembers every invite's use count at startup so the invite logger can tell which one a new member used.
 export default {
   name: Events.ClientReady,
   once: true,
   async execute(client) {
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
       try {
         const cached = await cacheGuildInvites(guild);
         if (cached) startupLog(`Invite tracking ready in ${guild.name}`);

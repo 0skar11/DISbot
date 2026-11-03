@@ -1,13 +1,14 @@
 import { Events } from 'discord.js';
 import { logger, startupLog } from '../utils/logger.js';
 import { findMediaRole, grantMediaRoleToAllMembers } from '../services/mediaRoleService.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export default {
   name: Events.ClientReady,
   once: true,
 
   async execute(client) {
-    for (const guild of client.guilds.cache.values()) {
+    for (const guild of managedGuilds(client)) {
       try {
         const media = await findMediaRole(guild);
         startupLog(`Media role in ${guild.name}: ${media ? 'found' : 'missing'}`);

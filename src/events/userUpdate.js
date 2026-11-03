@@ -1,6 +1,7 @@
 import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
+import { managedGuilds } from '../config/bourseGuild.js';
 
 export default {
   name: Events.UserUpdate,
@@ -43,7 +44,7 @@ export default {
         });
       }
 
-      const guilds = [...newUser.client.guilds.cache.values()];
+      const guilds = managedGuilds(newUser.client);
       for (const guild of guilds) {
         if (!guild.members.cache.has(newUser.id)) continue;
 

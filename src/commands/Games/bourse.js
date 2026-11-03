@@ -8,6 +8,7 @@ import { findAsset, getMarket, getHoldings, hourOf, assetsFor, maxOwnedOf } from
 import { pricesEmbed, holdingsEmbed, confirmInvestPayload, confirmSellPayload, confirmSellAllPayload, bourseFailureText } from '../../services/cc/bourseUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { isBourseGuild } from '../../config/bourseGuild.js';
 
 // The CC bourse: `اسعار` (prices of the hour), `شراء عربية` / `استثمار عربية` / `شراء 3 2` (buy), `بيع عربية` /
 // `بيع 3 2` (sell), `بيع كلو` / `بيع عربية كلو` (sell everything / all of one asset), `شراء عربية كلو` (as many as the balance
@@ -66,7 +67,8 @@ export default {
     async execute(interaction, config, client) {
         const reply = (payload) => InteractionHelper.safeReply(interaction, { allowedMentions: { parse: [] }, ...payload });
         // The bourse works only in the games bots channel (report #121), so it doesn't flood the chat.
-        if (!isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
+        // The bourse-only server has no games bots channel: the bourse works in any of its channels.
+        if (!isBourseGuild(interaction.guildId) && !isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
         const sub = interaction.options.getSubcommand();
         const { guildId, user } = interaction;
 
