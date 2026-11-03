@@ -36,6 +36,10 @@ export const CLOVER_BOT_ID = '1006332825571692544';
 // anywhere else are deleted (services/cc/gamesBotChannel.js). The bourse lives here too.
 export const GAMES_BOTS_CHANNEL_ID = '1547310695006081075';
 
+// Rooms besides the games bots channel where the bourse commands also work (the games bots rule is
+// unchanged there: Clover still plays only in its own channel).
+export const BOURSE_EXTRA_CHANNEL_IDS = new Set(['1535177947730944080']);
+
 export function gamesBotIds() {
     const ids = String(process.env.GAMES_BOT_IDS || '').split(',').map((id) => id.trim()).filter((id) => /^\d{17,20}$/.test(id));
     return new Set(ids.length ? ids : [CLOVER_BOT_ID]);
