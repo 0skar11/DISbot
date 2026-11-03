@@ -1,4 +1,5 @@
 import { readdir } from 'fs/promises';
+import { Guild } from 'discord.js';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -12,7 +13,8 @@ const BOURSE_GUILD_FILES = new Set(['messageCreate.js', 'interactionCreate.js'])
 
 function eventGuildId(args) {
     for (const arg of args.slice(0, 2)) {
-        const id = arg?.guild?.id ?? arg?.guildId;
+        // Some events pass the Guild itself (guildAuditLogEntryCreate(entry, guild)).
+        const id = arg instanceof Guild ? arg.id : (arg?.guild?.id ?? arg?.guildId);
         if (id) return id;
     }
     return null;
