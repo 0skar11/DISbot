@@ -14,6 +14,7 @@ import { normalizeName } from '../../config/store/bourse.js';
 import { addXpBoost, BOOST_SOURCES } from '../leveling/xpBoostService.js';
 import { forecastMarket } from './bourseService.js';
 import { getTraderRole } from './traderRoleService.js';
+import { isBourseEnabled, isBourseStoreItem } from '../../config/bourseFeature.js';
 
 const ITEM_TYPES = new Set(['role', 'item', 'luckbox', 'boost', 'forecast', 'custom_role']);
 // Bought one at a time.
@@ -37,10 +38,13 @@ export function validateStoreItem(item) {
 
 export function listStoreItems(items = ccStoreItems) {
     return items.filter((item) => {
+        if (!isBourseEnabled() && isBourseStoreItem(item)) return false;
         const problems = validateStoreItem(item);
         if (problems.length) logger.warn(`[CC_STORE] Skipping item ${item?.id}: ${problems.join('; ')}`);
         return problems.length === 0;
-    });
+    }).map((item) => !isBourseEnabled() && item.type === 'luckbox'
+        ? { ...item, description: 'جواه جايزة عشوائية: CC، بوست، صندوق تاني ببلاش، أو نادراً شهر ببلاش لرول مميزة' }
+        : item);
 }
 
 /**
@@ -92,8 +96,10 @@ export function drawLuckBoxPrize(prizes = luckBoxPrizes, rng = Math.random) {
  * the role (or it's missing).
  */
 async function drawLuckBox(client, member, items, rng) {
-    const first = drawLuckBoxPrize(luckBoxPrizes, rng);
-    const drawn = first.extraBox ? [first, drawLuckBoxPrize(luckBoxPrizes.filter((prize) => !prize.extraBox), rng)] : [first];
+    const eligible = isBourseEnabled() ? luckBoxPrizes : luckBoxPrizes.filter((prize) => !prize.forecast && prize.role !== 'trader_role' && !isBourseStoreItem(items.find((item) => item.id === prize.role)));
+    if (!eligible.length) throw new Error('No available luck box prizes');
+    const first = drawLuckBoxPrize(eligible, rng);
+    const drawn = first.extraBox ? [first, drawLuckBoxPrize(eligible.filter((prize) => !prize.extraBox), rng)] : [first];
     return Promise.all(drawn.map(async (prize) => {
         if (!prize.role) return prize;
         const roleItem = getStoreItem(prize.role, items);
@@ -136,6 +142,8 @@ export function findStoreItem(query, items) {
  * for a forecast prize), a boost `boostUntil`, a forecast `forecast`.
  */
 export async function buyItem(client, member, itemId, quantity = 1, { items = ccStoreItems, demoItems = ccStoreDemoItems, settings = ccStoreSettings, rng = Math.random } = {}) {
+    const requested = [...items, ...demoItems].find((item) => item.id === String(itemId || '').toLowerCase());
+    if (!isBourseEnabled() && isBourseStoreItem(requested)) return { ok: false, reason: 'bourse_disabled' };
     const mode = storeMode(settings, member?.guild?.id);
     if (mode === 'closed') return { ok: false, reason: 'closed' };
     // Other servers: the old samples, only ever previewed.

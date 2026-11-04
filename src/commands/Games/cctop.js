@@ -5,6 +5,7 @@ import { MEDALS } from '../../services/games/text.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { getWealthLeaderboard } from '../../services/cc/bourseService.js';
+import { isBourseEnabled } from '../../config/bourseFeature.js';
 
 const PAGE_SIZE = 15;
 
@@ -25,7 +26,7 @@ function boardLine(row, index, wealth) {
  * sell for right now (after the sell fee), and the board is ranked by it.
  */
 export async function ccTopEmbed(client, guild, userId = null) {
-    const wealth = isHomeGuild(guild.id);
+    const wealth = isBourseEnabled() && isHomeGuild(guild.id);
     const board = wealth ? await getWealthLeaderboard(client, guild.id) : await getLeaderboard(client, guild.id);
     const lines = board.slice(0, PAGE_SIZE).map((row, index) => boardLine(row, index, wealth));
     const total = board.reduce((sum, row) => sum + (wealth ? row.total : row.cc), 0);

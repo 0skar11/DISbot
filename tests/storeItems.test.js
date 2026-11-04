@@ -1,4 +1,5 @@
 import { test, describe, beforeEach } from 'node:test';
+import './helpers/enableBourse.js';
 import assert from 'node:assert/strict';
 import { ccStoreItems, luckBoxPrizes, traderRoleSettings, customRoleSettings, CUSTOM_ROLE_VOUCHER, voucherFor } from '../src/config/store/ccStoreItems.js';
 import { bourseAssets } from '../src/config/store/bourse.js';

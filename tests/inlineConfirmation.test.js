@@ -1,5 +1,6 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
+import './helpers/enableBourse.js';
 import { MessageFlags } from 'discord.js';
 import bourse from '../src/commands/Games/bourse.js';
 import storeCommand from '../src/commands/Games/store.js';

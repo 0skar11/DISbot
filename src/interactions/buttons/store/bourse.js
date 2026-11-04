@@ -1,5 +1,6 @@
 import { MessageFlags } from 'discord.js';
 import { isHomeGuild } from '../../../config/homeGuild.js';
+import { isBourseEnabled, BOURSE_DISABLED_NOTICE } from '../../../config/bourseFeature.js';
 import { BOURSE_BUTTON_PREFIX } from '../../../services/cc/bourseUi.js';
 import { bourseTradePayload, sellAllPayload } from '../../../services/cc/bourseTransactions.js';
 
@@ -23,6 +24,7 @@ const failed = (content) => ({ content, embeds: [], components: [], allowedMenti
 
 async function execute(interaction, client, [action, ...args]) {
     if (!interaction.inGuild()) return;
+    if (!isBourseEnabled()) return privately(interaction, BOURSE_DISABLED_NOTICE);
     const ownerId = args[args.length - 1];
     if (ownerId !== interaction.user.id) return privately(interaction, '❌ الزرار ده مش ليك.');
     if (action === 'cancel') return interaction.update(failed('✖️ اتلغى.')).catch(() => {});

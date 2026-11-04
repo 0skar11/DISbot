@@ -8,6 +8,7 @@ import { findAsset, getMarket, getHoldings, hourOf, assetsFor, maxOwnedOf } from
 import { pricesEmbed, holdingsEmbed, confirmInvestPayload, confirmSellPayload, confirmSellAllPayload, bourseFailureText } from '../../services/cc/bourseUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { isBourseEnabled, BOURSE_DISABLED_NOTICE } from '../../config/bourseFeature.js';
 import { isInlineConfirmation } from '../../config/store/confirmation.js';
 import { bourseTradePayload, sellAllPayload } from '../../services/cc/bourseTransactions.js';
 
@@ -71,6 +72,7 @@ export default {
 
     async execute(interaction, config, client) {
         const reply = (payload) => InteractionHelper.safeReply(interaction, { allowedMentions: { parse: [] }, ...payload });
+        if (!isBourseEnabled()) return reply({ content: BOURSE_DISABLED_NOTICE, flags: MessageFlags.Ephemeral });
         // The bourse works only in the games bots channel (report #121), so it doesn't flood the chat.
         if (!isGamesBotsChannel(interaction.channel, interaction.channelId)) return sendToBourseChannel(interaction, reply);
         const sub = interaction.options.getSubcommand();
