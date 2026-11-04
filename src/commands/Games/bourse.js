@@ -9,6 +9,7 @@ import { pricesEmbed, holdingsEmbed, confirmInvestPayload, confirmSellPayload, c
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { isBourseGuild } from '../../config/bourseGuild.js';
+import { isBourseEnabled, BOURSE_DISABLED_NOTICE } from '../../config/bourseFeature.js';
 
 // The CC bourse: `اسعار` (prices of the hour), `شراء عربية` / `استثمار عربية` / `شراء 3 2` (buy), `بيع عربية` /
 // `بيع 3 2` (sell), `بيع كلو` / `بيع عربية كلو` (sell everything / all of one asset), `شراء عربية كلو` (as many as the balance
@@ -66,6 +67,7 @@ export default {
 
     async execute(interaction, config, client) {
         const reply = (payload) => InteractionHelper.safeReply(interaction, { allowedMentions: { parse: [] }, ...payload });
+        if (!isBourseEnabled()) return reply({ content: BOURSE_DISABLED_NOTICE, flags: MessageFlags.Ephemeral });
         // The bourse works only in the games bots channel (report #121), so it doesn't flood the chat.
         // The bourse-only server has no games bots channel: the bourse works in any of its channels.
         // A typed command (prefix form) has `channel` but no `channelId`, so the id is read from the channel.

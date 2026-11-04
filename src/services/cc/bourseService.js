@@ -22,6 +22,7 @@ import { logger } from '../../utils/logger.js';
 import { updateCCState, readCC } from './ccService.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { economyScope } from '../../config/sharedEconomy.js';
+import { assertBourseEnabled } from '../../config/bourseFeature.js';
 
 export const HOUR_MS = 60 * 60 * 1000;
 
@@ -208,6 +209,7 @@ function stripRolls(market) {
  * time. The market is saved when anything changed.
  */
 async function withMarket(client, guildId, change, { now = Date.now(), rng = Math.random, assets = bourseAssets } = {}) {
+    assertBourseEnabled();
     if (!client?.db?.get) throw new Error('Database not available');
     // One market for every server (sharedEconomy.js): it holds every asset, each server shows its own (`assetsFor`).
     return Mutex.runExclusive(`bourse:${economyScope(guildId)}`, async () => {

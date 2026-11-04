@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test';
+import './helpers/enableBourse.js';
 import assert from 'node:assert/strict';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { adjustCC, getProfile } from '../src/services/cc/ccService.js';

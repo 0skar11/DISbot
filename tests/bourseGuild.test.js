@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test';
+import './helpers/enableBourse.js';
 import assert from 'node:assert/strict';
 import { Collection } from 'discord.js';
 import { BOURSE_GUILD_ID, isBourseGuild, isBourseGuildCommand, managedGuilds, BOURSE_GUILD_NOTICE } from '../src/config/bourseGuild.js';
