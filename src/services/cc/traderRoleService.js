@@ -10,6 +10,7 @@ import { getGuildConfig, updateGuildConfig } from '../config/guildConfig.js';
 import { getLevelingConfig } from '../leveling/leveling.js';
 import { LEVEL_TIERS } from '../leveling/levelTierRoles.js';
 import { logger } from '../../utils/logger.js';
+import { isBourseEnabled } from '../../config/bourseFeature.js';
 
 const ID_KEY = 'traderRoleId';
 const CREATED_KEY = 'traderRoleCreated';
@@ -40,6 +41,7 @@ export async function getTraderRole(client, guild) {
  * deleted (made before and removed since: not made again), no-level-role (nothing to put it above).
  */
 export async function ensureTraderRole(client, guild, settings = traderRoleSettings) {
+    if (!isBourseEnabled()) return { status: 'disabled', roleId: null };
     const roles = await guild.roles.fetch();
     const config = await getGuildConfig(client, guild.id);
     const saved = config?.[ID_KEY] && roles.get(config[ID_KEY]);

@@ -193,6 +193,7 @@ export function confirmPurchasePayload(item, quantity, userId, balance, mode = s
 }
 
 const FAILURE_TEXT = {
+    bourse_disabled: '📈 البورصة ومشترياتها متوقفين في البوت ده.',
     closed: CLOSED_LINE,
     not_found: '❌ المنتج ده مش موجود. اكتب `متجر` وشوف الأرقام.',
     bad_quantity: `❌ العدد لازم يكون من 1 لـ ${ccStoreSettings.maxQuantity} (والرتب والصندوق والتنبؤ قطعة واحدة بس).`,

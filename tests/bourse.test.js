@@ -1,4 +1,5 @@
 import { test, describe } from 'node:test';
+import './helpers/enableBourse.js';
 import assert from 'node:assert/strict';
 import { bourseAssets, bourseSettings } from '../src/config/store/bourse.js';
 import {

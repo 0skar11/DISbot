@@ -125,7 +125,7 @@ describe('store room', () => {
 });
 
 describe('store panel', () => {
-    test('shows the items, a commands card, a buy menu and the buttons', () => {
+    test('shows the five non-stock items, a commands card, a buy menu and the buttons', () => {
         const guild = { id: HOME_GUILD_ID, name: 'Void', iconURL: () => null };
         const panel = buildStorePanel(guild);
         const [items, commands] = panel.embeds;
@@ -136,7 +136,8 @@ describe('store panel', () => {
         const other = buildStorePanel({ id: '100000000000000099', name: 'Other', iconURL: () => null }).embeds[0];
         assert.match(other.description, /تجريبي/u);
         assert.equal(other.fields.length, ccStoreDemoItems.length);
-        assert.equal(items.fields.length, ccStoreItems.length);
+        assert.equal(items.fields.length, 5);
+        assert.ok(items.fields.every((field) => !/تاجر|تنبؤ/u.test(field.name)));
         assert.ok(items.fields[0].name.includes(ccStoreItems[0].name));
         assert.match(items.fields[0].value, /السعر/u);
         assert.equal(commands.footer.text, STORE_PANEL_FOOTER);
@@ -144,7 +145,7 @@ describe('store panel', () => {
         assert.ok(commands.fields.every((field) => field.inline));
         const [menuRow, buttonRow] = panel.components.map((row) => row.toJSON());
         assert.equal(menuRow.components[0].custom_id, 'storepanel:buy');
-        assert.equal(menuRow.components[0].options.length, ccStoreItems.length);
+        assert.deepEqual(menuRow.components[0].options.map((option) => option.value), ['xp_boost', 'luck_box', 'level_boost', 'custom_role', 'friends_role']);
         assert.deepEqual(buttonRow.components.map((button) => button.custom_id),
             ['storepanel:balance', 'storepanel:inventory', 'storepanel:top', 'storepanel:help']);
     });
@@ -170,7 +171,7 @@ describe('buying modes', () => {
         assert.equal(storeMode(), 'open');
         assert.equal(storeMode(undefined, HOME_GUILD_ID), 'open');
         assert.equal(storeMode(undefined, '100000000000000099'), 'trial');
-        assert.equal(storeCatalog().length, ccStoreItems.length);
+        assert.deepEqual(storeCatalog().map((item) => item.id), ['xp_boost', 'luck_box', 'level_boost', 'custom_role', 'friends_role']);
         assert.equal(findStoreItem('1', storeCatalog()).id, ccStoreItems[0].id);
         assert.equal(findStoreItem(ccStoreItems[1].id, storeCatalog()).id, ccStoreItems[1].id);
         assert.equal(findStoreItem('99', storeCatalog()), null);
