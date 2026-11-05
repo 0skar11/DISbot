@@ -78,7 +78,9 @@ test('every real command has a valid required-option order in the outgoing regis
     await visit(fileURLToPath(new URL('../src/commands', import.meta.url)));
     const payload = await captureRegistration(commands);
     assert.ok(payload.length > 90, 'audit the full real command set');
-    assert.equal(payload.length, new Set(commands.map((command) => command.data.name)).size);
+    const expectedNames = new Set(commands.map((command) => command.data.name));
+    assert.ok(expectedNames.delete('bourse'), 'audit includes the disabled command');
+    assert.deepEqual(new Set(payload.map((command) => command.name)), expectedNames);
     payload.forEach((command) => assertRequiredOrder(command));
 });
 

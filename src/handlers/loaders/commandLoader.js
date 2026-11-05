@@ -5,6 +5,7 @@ import { Collection } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import botConfig from '../../config/bot.js';
 import { isDisabledGameCommand } from '../../config/games.js';
+import { isDisabledBourseCommand } from '../../config/bourseFeature.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -151,6 +152,7 @@ function collectCommandPayloads(client) {
         }
 
         const commandName = command.data.name;
+        if (isDisabledBourseCommand(commandName)) continue;
         logger.debug(`Processing command for registration: ${commandName}`);
 
         if (registeredNames.has(commandName)) {

@@ -4,6 +4,9 @@ import { botConfig } from '../src/config/bot.js';
 import { isBourseEnabled, BOURSE_DISABLED_NOTICE } from '../src/config/bourseFeature.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import bourse from '../src/commands/Games/bourse.js';
+import storeCommand from '../src/commands/Games/store.js';
+import messageCreate from '../src/events/messageCreate.js';
+import interactionCreate from '../src/events/interactionCreate.js';
 import tradeButtons from '../src/interactions/buttons/store/bourse.js';
 import storeButtons from '../src/interactions/buttons/store/storePanel.js';
 import { getMarket, getHoldings, getWealthLeaderboard, forecastMarket, invest, sell } from '../src/services/cc/bourseService.js';
@@ -34,11 +37,63 @@ describe('main bot stock kill switch', () => {
                     options: { getSubcommand: () => assert.fail('subcommand read before disable check') },
                     reply: async (payload) => { replies.push(payload); },
                 }, {}, { db: forbiddenDb });
-                assert.equal(replies[0].content, BOURSE_DISABLED_NOTICE, `${sub}/${typed}`);
+                assert.equal(replies.length, 0, `${sub}/${typed}`);
             }
         }
     });
 
+    test('typed bourse aliases are silent while ordinary store purchases still dispatch', async () => {
+        const lookups = [];
+        const executions = [];
+        const replies = [];
+        const prefix = '!!';
+        const guild = { id: '100000000000000001' };
+        const channel = { id: '100000000000000002', send: async (payload) => replies.push(payload) };
+        const client = {
+            db: { get: async (_key, fallback) => ({ ...fallback, prefix }) },
+            commands: {
+                get(name) {
+                    lookups.push(name);
+                    if (name === 'bourse') return bourse;
+                    if (name === 'store') return {
+                        ...storeCommand,
+                        category: 'Games',
+                        execute: async (interaction) => executions.push(interaction.options.getSubcommand()),
+                    };
+                },
+            },
+        };
+        const send = (content, index) => messageCreate.execute({
+            id: String(300000000000000001n + BigInt(index)),
+            content, guild, channel, channelId: channel.id, client,
+            author: { id: String(200000000000000001n + BigInt(index)), bot: false },
+            reply: async (payload) => replies.push(payload),
+        }, client);
+        const commands = [
+            'بورصة', 'بورصه', 'البورصة', 'البورصه', 'اسعار', 'أسعار', 'الاسعار', 'الأسعار',
+            'ممتلكاتي', 'ممتلكاتى', 'ممتلكات', 'استثمار عربية', 'استثمر عربية',
+            'شراء ٣ ٢', 'اشتري عربية كلو', 'بيع سبيكة دهب 2', 'بيع كلو', 'بيع عربية كلو',
+            '!!bourse', '!!bourse invest', '!!بيع', 'prices', 'holdings', 'sell 1',
+        ];
+        for (const [index, content] of commands.entries()) await send(content, index);
+        assert.deepEqual(replies, []);
+        assert.deepEqual(lookups, []);
+        assert.deepEqual(executions, []);
+
+        await send('!!buy 1', commands.length);
+        assert.deepEqual(lookups, ['store']);
+        assert.deepEqual(executions, ['buy']);
+    });
+
+    test('stale slash requests return before accessing the registry or replying', async () => {
+        let calls = 0;
+        const unexpected = () => { calls++; };
+        await interactionCreate.execute(
+            { commandName: 'bourse', isChatInputCommand: () => true, reply: unexpected },
+            { commands: { get: unexpected }, db: forbiddenDb },
+        );
+        assert.equal(calls, 0);
+    });
     test('old buy/sell/sellall and cancel buttons cannot touch stored financial data', async () => {
         for (const action of ['buy', 'sell', 'sellall', 'cancel']) {
             const replies = [];
