@@ -3,6 +3,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from '../../utils/logger.js';
+import { isDisabledProtectionEvent } from '../../config/protectionFeature.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,6 +15,7 @@ export default async function loadEvents(client) {
     logger.info(`Found ${eventFiles.length} event files to load`);
 
     for (const file of eventFiles) {
+        if (isDisabledProtectionEvent(file)) continue;
         const filePath = join(eventsPath, file);
         try {
             const { default: event } = await import(`file://${filePath}`);

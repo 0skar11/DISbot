@@ -22,6 +22,7 @@ import { ensureTraderRole } from "../services/cc/traderRoleService.js";
 import { startCustomRoles } from "../services/cc/customRoleService.js";
 import { startVoteKickSweeps } from "../services/voice/voteKickService.js";
 import { isHomeGuild } from "../config/homeGuild.js";
+import { protectionEnabled } from "../config/protectionFeature.js";
 
 export default {
   name: Events.ClientReady,
@@ -34,30 +35,32 @@ export default {
       startupLog(`Serving ${client.guilds.cache.size} guild(s)`);
       startupLog(`Loaded ${client.commands.size} commands`);
 
-      // A failure here must not stop the rest of the startup work.
-      try {
-        const result = await publishArabicModerationCommands(client);
-        startupLog(`Arabic moderation commands: ${result.status} (channel ${result.channelId})`);
-      } catch (error) {
-        logger.error("Failed to publish Arabic moderation commands:", error);
-      }
-      try {
-        const result = await publishTrustedBoard(client);
-        startupLog(`Trusted board: ${result.status} (channel ${result.channelId})`);
-      } catch (error) {
-        logger.error("Failed to publish trusted board:", error);
-      }
-      try {
-        const result = await publishProofGuide(client);
-        startupLog(`Proof guide: ${result.status}`);
-      } catch (error) {
-        logger.error("Failed to publish the proof guide:", error);
-      }
-      try {
-        // The pinned notice in #dont-type-here (our server only).
-        startupLog(`Honeypot notice: ${(await publishHoneypotNotice(client)).status}`);
-      } catch (error) {
-        logger.error("Failed to post the honeypot notice:", error);
+      if (protectionEnabled()) {
+        // A failure here must not stop the rest of the startup work.
+        try {
+          const result = await publishArabicModerationCommands(client);
+          startupLog(`Arabic moderation commands: ${result.status} (channel ${result.channelId})`);
+        } catch (error) {
+          logger.error("Failed to publish Arabic moderation commands:", error);
+        }
+        try {
+          const result = await publishTrustedBoard(client);
+          startupLog(`Trusted board: ${result.status} (channel ${result.channelId})`);
+        } catch (error) {
+          logger.error("Failed to publish trusted board:", error);
+        }
+        try {
+          const result = await publishProofGuide(client);
+          startupLog(`Proof guide: ${result.status}`);
+        } catch (error) {
+          logger.error("Failed to publish the proof guide:", error);
+        }
+        try {
+          // The pinned notice in #dont-type-here (our server only).
+          startupLog(`Honeypot notice: ${(await publishHoneypotNotice(client)).status}`);
+        } catch (error) {
+          logger.error("Failed to post the honeypot notice:", error);
+        }
       }
       try {
         const result = await publishSavedIdeasBoard(client);
@@ -127,8 +130,10 @@ export default {
       startupLog(`Reaction role reconciliation: scanned ${reconciliationSummary.scannedMessages}, removed ${reconciliationSummary.removedMessages}, errors ${reconciliationSummary.errors}`);
       const ticketPanelSummary = await reconcileTicketPanels(client);
       startupLog(`Ticket panel health: scanned ${ticketPanelSummary.scannedGuilds}, healthy ${ticketPanelSummary.healthyPanels}, deleted ${ticketPanelSummary.deletedPanels}, missing channel ${ticketPanelSummary.missingChannels}`);
-      const verificationPanelSummary = await reconcileVerificationPanels(client);
-      startupLog(`Verification panel health: scanned ${verificationPanelSummary.scannedGuilds}, healthy ${verificationPanelSummary.healthyPanels}, deleted ${verificationPanelSummary.deletedPanels}`);
+      if (protectionEnabled()) {
+        const verificationPanelSummary = await reconcileVerificationPanels(client);
+        startupLog(`Verification panel health: scanned ${verificationPanelSummary.scannedGuilds}, healthy ${verificationPanelSummary.healthyPanels}, deleted ${verificationPanelSummary.deletedPanels}`);
+      }
       const reactionRolePanelSummary = await reconcileReactionRolePanelHealth(client);
       startupLog(`Reaction role panel health: scanned ${reactionRolePanelSummary.scannedPanels}, healthy ${reactionRolePanelSummary.healthyPanels}, missing channel ${reactionRolePanelSummary.missingChannels}`);
       // Level roles are found first so the sync below hands them to members who already passed their level.

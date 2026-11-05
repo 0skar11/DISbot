@@ -6,6 +6,7 @@ import { logger } from '../../utils/logger.js';
 import botConfig from '../../config/bot.js';
 import { isDisabledGameCommand } from '../../config/games.js';
 import { isMovedCCCommand, isSilentCommand } from '../../config/commands/commandAvailability.js';
+import { isDisabledProtectionBoard, isDisabledProtectionCommand } from '../../config/protectionFeature.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,6 +68,7 @@ export async function loadCommands(client) {
             const normalizedPath = filePath.replace(/\\/g, '/');
             
             const commandName = path.basename(filePath, '.js');
+            if (isDisabledProtectionCommand(commandName)) continue;
             const commandDir = path.dirname(filePath);
             const category = path.basename(commandDir);
             
@@ -164,6 +166,9 @@ function collectCommandPayloads(client) {
 
         registeredNames.add(commandName);
         const commandJson = orderRegistrationOptions(command.data.toJSON());
+        if (commandName === 'publish-board' && commandJson.options) {
+            commandJson.options = commandJson.options.filter(({ name }) => !isDisabledProtectionBoard(commandName, name));
+        }
         commands.push(commandJson);
         totalSubcommands += getSubcommandInfo(commandJson).length;
 
