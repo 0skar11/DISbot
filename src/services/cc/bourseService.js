@@ -21,6 +21,7 @@ import { Mutex } from '../../utils/mutex.js';
 import { logger } from '../../utils/logger.js';
 import { updateCCState, readCC } from './ccService.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { assertBourseEnabled } from '../../config/bourseFeature.js';
 
 export const HOUR_MS = 60 * 60 * 1000;
 
@@ -207,6 +208,7 @@ function stripRolls(market) {
  * time. The market is saved when anything changed.
  */
 async function withMarket(client, guildId, change, { now = Date.now(), rng = Math.random, assets = assetsFor(guildId) } = {}) {
+    assertBourseEnabled();
     if (!client?.db?.get) throw new Error('Database not available');
     return Mutex.runExclusive(`bourse:${guildId}`, async () => {
         const key = getBourseKey(guildId);

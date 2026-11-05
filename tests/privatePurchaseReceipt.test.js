@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import './helpers/enableBourse.js';
 import { MessageFlags, ComponentType } from 'discord.js';
 import store from '../src/commands/Games/store.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';

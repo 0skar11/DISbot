@@ -417,6 +417,8 @@ export const botConfig = {
   features: {
     // Core systems.
     economy: true,
+    // Stock trading is now handled by the separate private CC bot. Preserve its saved data here.
+    bourse: false,
     leveling: true,
     moderation: true,
     logging: true,
