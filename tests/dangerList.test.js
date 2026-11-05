@@ -51,14 +51,13 @@ const args = (text) => text.split(/\s+/u).slice(1);
 describe('خطر: the danger list (reports #218, #219)', () => {
   beforeEach(() => resetDangerCooldowns());
 
-  test('a trusted member adds someone: notice and board in the trusted channel', async () => {
+  test('a trusted member adds someone and posts a notice without recreating the board', async () => {
     const { guild, sent, message } = setup();
     const msg = message(TRUSTED, `خطر <@${BAD}>`);
     assert.equal(await handleDangerCommand(msg, args(msg.content)), true);
     assert.equal(await isOnDangerList(guild.client, guild.id, BAD), true);
     assert.match(sent.notice[0].content, /اتضاف لقائمة الخطر/u);
-    assert.match(sent.notice[1].embeds[0].title, /قائمة الخطر/u);
-    assert.match(sent.notice[1].embeds[0].description, new RegExp(BAD));
+    assert.equal(sent.notice.length, 1);
     assert.match(sent.reply[0].content, /تايم أوت أسبوع/u);
   });
 
@@ -69,7 +68,8 @@ describe('خطر: the danger list (reports #218, #219)', () => {
     assert.match(sent.reply.at(-1).content, new RegExp(BAD));
     await handleDangerCommand(message(OWNER, `خطر شيل <@${BAD}>`), ['شيل', `<@${BAD}>`]);
     assert.equal(await isOnDangerList(guild.client, guild.id, BAD), false);
-    assert.match(sent.notice.at(-2).content, /اتشال/u);
+    assert.match(sent.notice.at(-1).content, /اتشال/u);
+    assert.equal(sent.notice.length, 2);
   });
 
   test('a stranger or a normal sentence is just chat; owners cannot be added', async () => {

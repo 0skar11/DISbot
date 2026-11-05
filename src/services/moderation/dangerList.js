@@ -17,7 +17,6 @@ import { isServerOwner } from '../../config/serverOwners.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { TRUSTED_BOARD_CHANNEL_ID } from '../trustedBoardService.js';
 import { isTrusted } from '../../utils/antiNukeLogging.js';
-import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { staffAndDangerousRoles } from './rejoinRestore.js';
 import { logger } from '../../utils/logger.js';
 
@@ -26,7 +25,6 @@ export const DANGER_LOG_CHANNEL_ID = '1550564287129456810';
 export const DANGER_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000;
 export const DANGER_COMMAND_WORD = 'خطر';
 const REMOVE_WORDS = new Set(['شيل', 'امسح', 'مسح', 'remove']);
-const BOARD_KEY = 'danger';
 const BOARD_TITLE = '☢️ قائمة الخطر';
 // Several audit entries can come from one attack; one timeout and one log line are enough.
 const PUNISH_COOLDOWN_MS = 60_000;
@@ -185,24 +183,6 @@ export function dangerBoardPayload(list) {
   };
 }
 
-/** Edits the danger board in the trusted channel, or posts it when it is not there yet. */
-export async function refreshDangerBoard(guild) {
-  const channel = await fetchChannel(guild, DANGER_NOTICE_CHANNEL_ID);
-  if (!channel?.messages?.fetch) return false;
-  const payload = dangerBoardPayload(await getDangerList(guild.client, guild.id));
-  const existing = await findBoardMessage(channel, BOARD_KEY, (message) => Boolean(message.embeds?.[0]?.title?.includes('قائمة الخطر'))).catch(() => null);
-  if (existing) {
-    await existing.edit(payload).catch((error) => logger.warn(`[DANGER] Could not edit the board: ${error.message}`));
-    return true;
-  }
-  const sent = await channel.send(payload).catch((error) => {
-    logger.warn(`[DANGER] Could not post the board: ${error.message}`);
-    return null;
-  });
-  if (sent) await rememberBoardMessage(channel, BOARD_KEY, sent.id);
-  return Boolean(sent);
-}
-
 async function postNotice(guild, content) {
   const channel = await fetchChannel(guild, DANGER_NOTICE_CHANNEL_ID);
   await channel?.send({ content, allowedMentions: { parse: [] } }).catch(() => {});
@@ -254,7 +234,6 @@ export async function handleDangerCommand(message, args = []) {
       ...(removed.notRestored.length ? [`⚠️ مرجعتش (مش في السيرفر أو فوق رول البوت): ${roleMentions(removed.notRestored)}`] : []),
     ];
     await postNotice(guild, [`✅ <@${targetId}> اتشال من قائمة الخطر — بواسطة <@${message.author.id}>`, ...rolesLines].join('\n'));
-    await refreshDangerBoard(guild);
     return reply(message, [`✅ <@${targetId}> اتشال من قائمة الخطر.`, ...rolesLines].join('\n'));
   }
 
@@ -268,7 +247,6 @@ export async function handleDangerCommand(message, args = []) {
     ...(added.kept.length ? [`⚠️ ماتشالتش (فوق رول البوت): ${roleMentions(added.kept)}`] : []),
   ];
   await postNotice(guild, [`☢️ <@${targetId}> اتضاف لقائمة الخطر — بواسطة <@${message.author.id}>`, 'لو عمل أي حاجة خطر هياخد تايم أوت أسبوع.', ...rolesLines].join('\n'));
-  await refreshDangerBoard(guild);
   return reply(message, [`☢️ <@${targetId}> اتضاف لقائمة الخطر، وأي حاجة خطر يعملها = تايم أوت أسبوع.`, ...rolesLines].join('\n'));
 }
 

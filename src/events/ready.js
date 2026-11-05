@@ -10,7 +10,7 @@ import { ensureAuditLogChannels } from "../services/auditLogChannelsService.js";
 import { startHomeTickets } from "../services/tickets/homeTickets.js";
 import { publishArabicModerationCommands } from "../services/moderationCommandsBoardService.js";
 import { publishTrustedBoard } from "../services/trustedBoardService.js";
-import { publishSavedIdeasBoard } from "../services/savedIdeasBoardService.js";
+import { removeRetiredBoards } from "../services/retiredBoards.js";
 import { publishHoneypotNotice } from "../services/security/honeypotNotice.js";
 import { publishProofGuide } from "../services/moderation/proofMergeService.js";
 import { startCCTopBoard } from "../services/games/ccTopBoard.js";
@@ -60,10 +60,9 @@ export default {
         logger.error("Failed to post the honeypot notice:", error);
       }
       try {
-        const result = await publishSavedIdeasBoard(client);
-        startupLog(`Saved ideas board: ${result.status} (channel ${result.channelId})`);
+        await removeRetiredBoards(client);
       } catch (error) {
-        logger.error("Failed to publish saved ideas board:", error);
+        logger.error("Failed to remove retired boards:", error);
       }
       try {
         const ccTopBoard = await startCCTopBoard(client);
