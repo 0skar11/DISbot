@@ -42,7 +42,7 @@ describe('main bot stock kill switch', () => {
         }
     });
 
-    test('typed bourse aliases are silent while ordinary store purchases still dispatch', async () => {
+    test('typed bourse and moved CC commands are silent while ordinary store purchases still dispatch', async () => {
         const lookups = [];
         const executions = [];
         const replies = [];
@@ -74,6 +74,9 @@ describe('main bot stock kill switch', () => {
             'ممتلكاتي', 'ممتلكاتى', 'ممتلكات', 'استثمار عربية', 'استثمر عربية',
             'شراء ٣ ٢', 'اشتري عربية كلو', 'بيع سبيكة دهب 2', 'بيع كلو', 'بيع عربية كلو',
             '!!bourse', '!!bourse invest', '!!بيع', 'prices', 'holdings', 'sell 1',
+            'cc', '!!cc', 'bal', 'balance', 'money', 'cash', 'credits',
+            'رصيد', 'رصيدي', 'رصيدى', 'فلوس', 'كريدت', 'رصيد <@200000000000000123>',
+            'top cc', 'Top CC', '!!top cc', 'توب cc', 'توب كريدت', 'cctop', '!!cctop',
         ];
         for (const [index, content] of commands.entries()) await send(content, index);
         assert.deepEqual(replies, []);
@@ -88,10 +91,12 @@ describe('main bot stock kill switch', () => {
     test('stale slash requests return before accessing the registry or replying', async () => {
         let calls = 0;
         const unexpected = () => { calls++; };
-        await interactionCreate.execute(
-            { commandName: 'bourse', isChatInputCommand: () => true, reply: unexpected },
-            { commands: { get: unexpected }, db: forbiddenDb },
-        );
+        for (const commandName of ['bourse', 'cc', 'cctop']) {
+            await interactionCreate.execute(
+                { commandName, isChatInputCommand: () => true, reply: unexpected },
+                { commands: { get: unexpected }, db: forbiddenDb },
+            );
+        }
         assert.equal(calls, 0);
     });
     test('old buy/sell/sellall and cancel buttons cannot touch stored financial data', async () => {

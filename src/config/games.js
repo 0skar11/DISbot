@@ -4,7 +4,7 @@
 // game file is still in the repo (commands/Games, commands/Fun, services/games, the panel buttons)
 // and `GAMES_ENABLED=true` in the environment brings all of it back after a restart.
 //
-// What stays on either way is the CC system: `cc`, `cctop`, the live Top CC board, Clover wins and
+// What stays on either way is the CC system: the live Top CC board, Clover wins and
 // the CC API the games bot uses to pay players (src/services/cc/ccApi.js).
 //
 // While the games are off:
@@ -12,7 +12,7 @@
 //   • the games channel is open again (no "games only" deleting), so the games bot can work there;
 //   • old games panel buttons answer that the games moved.
 
-/** Commands that belong to this bot's games (the CC commands `cc` and `cctop` are not here). */
+/** Commands that belong to this bot's games. */
 export const GAME_COMMAND_NAMES = new Set(['game', 'solo', 'rps', 'xo', 'fight']);
 
 /** Read on every call so the switch can be flipped in tests without re-importing. */
@@ -25,7 +25,7 @@ export function isDisabledGameCommand(commandName) {
     return !gamesEnabled() && GAME_COMMAND_NAMES.has(commandName);
 }
 
-export const GAMES_MOVED_NOTICE = '🎮 الألعاب اتنقلت لبوت الألعاب. الـ CC (`رصيد`، `توب cc`) لسه شغال هنا.';
+export const GAMES_MOVED_NOTICE = '🎮 الألعاب اتنقلت لبوت الألعاب.';
 
 // The games bot: Clover (https://clovers.gg). Its winner messages pay CC here (services/cc/gamesBotWins.js).
 // With Clover Premium the server gets its own copy of the bot with another ID: put that ID (or several,

@@ -41,13 +41,14 @@ describe('games are off by default', () => {
         delete process.env.GAMES_ENABLED;
     });
 
-    test('game commands are not loaded, the CC commands are', async () => {
+    test('game and moved CC commands are omitted while the rest of the economy loads', async () => {
         const { loadCommands } = await import('../src/handlers/loaders/commandLoader.js');
         const loaded = {};
         await loadCommands(loaded);
         for (const name of ['game', 'solo', 'rps', 'xo', 'fight']) assert.equal(loaded.commands.has(name), false, name);
         assert.equal(loaded.commands.has('daily'), false);
-        for (const name of ['cc', 'cctop']) assert.equal(loaded.commands.get(name).category, 'Games', name);
+        for (const name of ['cc', 'cctop']) assert.equal(loaded.commands.has(name), false, name);
+        for (const name of ['store', 'give', 'addcc']) assert.equal(loaded.commands.get(name).category, 'Games', name);
     });
 
     test('the games channel is left alone for the games bot', async () => {

@@ -110,11 +110,12 @@ describe('games channel', () => {
         assert.deepEqual(applyWordAliases('ماس', ['بان', '1'], true), { commandName: 'massban', args: ['1'] });
     });
 
-    test('CC commands live in the Games category, so turning off Economy never hides them', async () => {
+    test('enabled game commands load without restoring the moved CC commands', async () => {
         const { loadCommands } = await import('../src/handlers/loaders/commandLoader.js');
         const loaded = {};
         await loadCommands(loaded);
-        for (const name of ['cc', 'cctop', 'game', 'solo']) assert.equal(loaded.commands.get(name).category, 'Games', name);
+        for (const name of ['cc', 'cctop']) assert.equal(loaded.commands.has(name), false, name);
+        for (const name of ['game', 'solo']) assert.equal(loaded.commands.get(name).category, 'Games', name);
     });
 
     test('word aliases', () => {

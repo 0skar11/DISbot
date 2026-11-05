@@ -21,8 +21,8 @@ export function buildGuideEmbeds({ boostLine = ccBoostLine(), guildId = null } =
         ccEmbed(`${CC.emoji} شرح ${CC.short} والمتجر والبورصة`, [
             `**${CC.short}** هي فلوس السيرفر. بتجمعها وتصرفها في المتجر أو تستثمرها في البورصة.`,
             '',
-            '💰 `رصيد` ← تعرف رصيدك',
-            '🏆 `توب cc` ← ترتيب السيرفر',
+            '💰 زرار **رصيدي** في لوحة المتجر ← تعرف رصيدك',
+            '🏆 زرار **توب CC** في لوحة المتجر ← ترتيب السيرفر',
             ...(boostLine ? ['', boostLine] : []),
         ].join('\n')),
         ccEmbed('💡 تكسب CC ازاي؟', [

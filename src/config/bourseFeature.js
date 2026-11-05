@@ -2,7 +2,6 @@ import { isFeatureEnabled } from './bot.js';
 
 export const BOURSE_DISABLED_NOTICE = '📈 البورصة متوقفة في البوت ده.';
 export const isBourseEnabled = () => isFeatureEnabled('bourse');
-export const isDisabledBourseCommand = (name) => name === 'bourse' && !isBourseEnabled();
 
 export function assertBourseEnabled() {
     if (!isBourseEnabled()) {
