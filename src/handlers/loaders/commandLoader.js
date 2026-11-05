@@ -5,7 +5,7 @@ import { Collection } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import botConfig from '../../config/bot.js';
 import { isDisabledGameCommand } from '../../config/games.js';
-import { isDisabledBourseCommand } from '../../config/bourseFeature.js';
+import { isMovedCCCommand, isSilentCommand } from '../../config/commands/commandAvailability.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,6 +82,8 @@ export async function loadCommands(client) {
             command.filePath = normalizedPath;
             
             const primaryCommandName = command.data.name;
+            if (isMovedCCCommand(primaryCommandName)) continue;
+
             // The games moved to the games bot: their files stay but they aren't loaded (config/games.js).
             if (isDisabledGameCommand(primaryCommandName)) {
                 logger.info(`Skipped game command: ${primaryCommandName} (GAMES_ENABLED is off)`);
@@ -152,7 +154,7 @@ function collectCommandPayloads(client) {
         }
 
         const commandName = command.data.name;
-        if (isDisabledBourseCommand(commandName)) continue;
+        if (isSilentCommand(commandName)) continue;
         logger.debug(`Processing command for registration: ${commandName}`);
 
         if (registeredNames.has(commandName)) {

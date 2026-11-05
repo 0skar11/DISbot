@@ -79,7 +79,9 @@ test('every real command has a valid required-option order in the outgoing regis
     const payload = await captureRegistration(commands);
     assert.ok(payload.length > 90, 'audit the full real command set');
     const expectedNames = new Set(commands.map((command) => command.data.name));
-    assert.ok(expectedNames.delete('bourse'), 'audit includes the disabled command');
+    for (const name of ['bourse', 'cc', 'cctop']) {
+        assert.ok(expectedNames.delete(name), `audit includes ${name}`);
+    }
     assert.deepEqual(new Set(payload.map((command) => command.name)), expectedNames);
     payload.forEach((command) => assertRequiredOrder(command));
 });
