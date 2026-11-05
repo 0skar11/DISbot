@@ -6,6 +6,7 @@ import { parseTypedCommand, mapArgumentsToOptions } from '../utils/prefixParser.
 import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey } from '../utils/messageAdapter.js';
 import { resolveCommandAlias, resolveSubcommandAlias, applyWordAliases } from '../config/commands/commandAliases.js';
 import { getPrefixRestriction } from '../config/commands/prefixRestrictions.js';
+import { isDisabledBourseCommand } from '../config/bourseFeature.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import { getCommandPrefix, isBotOwner, isCommandCategoryEnabled, isMaintenanceMode } from '../config/bot.js';
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
@@ -167,6 +168,7 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     }
 
     const resolvedCommandName = resolveCommandAlias(commandName);
+    if (isDisabledBourseCommand(resolvedCommandName)) return;
     const command = client.commands.get(resolvedCommandName);
     if (!command) return;
     if (isMaintenanceMode() && !isBotOwner(message.author.id)) {
