@@ -7,6 +7,7 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
 import { logger } from '../utils/logger.js';
+import { protectionEnabled } from '../config/protectionFeature.js';
 
 export default {
   name: Events.GuildMemberAdd,
@@ -29,7 +30,7 @@ export default {
           else await channel.send({ content: messageContent, embeds: [new EmbedBuilder().setColor(welcomeConfig.welcomeEmbed?.color || getColor('success')).setTitle(formatWelcomeMessage(welcomeConfig.welcomeEmbed?.title || '🎉 Welcome!', formatData)).setDescription(welcomeMessage).setThumbnail(user.displayAvatarURL()).setTimestamp().setFooter({ text: welcomeConfig.welcomeEmbed?.footer ? formatWelcomeMessage(welcomeConfig.welcomeEmbed.footer, formatData) : `Welcome to ${guild.name}!` })] });
         }
       }
-      if (config?.verification?.enabled || config?.verification?.autoVerify?.enabled) await handleVerification(member, guild, config.verification, member.client);
+      if (protectionEnabled() && (config?.verification?.enabled || config?.verification?.autoVerify?.enabled)) await handleVerification(member, guild, config.verification, member.client);
       await logEvent({ client: member.client, guildId: guild.id, eventType: EVENT_TYPES.MEMBER_JOIN, data: { title: 'User joined', lines: [`**User:** ${user} (${user.id})`, `**Members:** ${guild.memberCount}`], userId: user.id } });
       for (const counter of await getServerCounters(member.client, guild.id)) if (counter?.type && counter.channelId && counter.enabled !== false) await updateCounter(member.client, guild, counter);
       const backupKey = `guild:${guild.id}:birthdays:left`; const backup = (await member.client.db.get(backupKey)) || {};

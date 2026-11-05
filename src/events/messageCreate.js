@@ -7,6 +7,7 @@ import { supportsPrefixExecution, executePrefixCommand, resolvePrefixAccessKey }
 import { resolveCommandAlias, resolveSubcommandAlias, applyWordAliases } from '../config/commands/commandAliases.js';
 import { getPrefixRestriction } from '../config/commands/prefixRestrictions.js';
 import { isSilentCommand } from '../config/commands/commandAvailability.js';
+import { isDisabledProtectionBoard, protectionEnabled } from '../config/protectionFeature.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import { getCommandPrefix, isBotOwner, isCommandCategoryEnabled, isMaintenanceMode } from '../config/bot.js';
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
@@ -43,38 +44,21 @@ export default {
   name: Events.MessageCreate,
   async execute(message, client) {
     try {
+      const protect = protectionEnabled();
       // Runs before the bot check so other bots cannot post in the protected board channels either.
-      if (await handleProtectedChannelMessage(message)) return;
+      if (protect && await handleProtectedChannelMessage(message)) return;
       if (await handleGamesChannelMessage(message, client)) return;
       // The store room only keeps store commands (and reposts its panel every few messages).
       if (await handleStoreChannelMessage(message, client)) return;
       // Games bots (Clover) only play in their channel; elsewhere their messages are deleted.
       if (await handleGamesBotOutsideChannel(message)) return;
-      if (await handleProofPinNotice(message)) return;
+      if (protect && await handleProofPinNotice(message)) return;
       // Wins announced by the games bot (Clover) pay CC here.
       if (await handleGamesBotWin(message, client)) return;
       if (message.author.bot || !message.guild) return;
       logger.debug(`Message received from ${message.author.tag}: ${message.content}`);
 
-      // Danger list (`خطر @member`): @everyone/@here or an invite link from a listed member = a week of timeout.
-      if (await handleDangerMessage(message)) return;
-      if (await handleEveryoneMention(message)) return;
-      // A moderator's proof in the moderation log channel is merged into their log message.
-      if (await handleProofMessage(message)) return;
-      // Insults and banned words (chatFilterService), then spam and repeated owner mentions (antiSpamService).
-      if (await handleChatFilter(message)) {
-        await punishDanger(message.guild, message.author.id, 'شتيمة أو كلام ممنوع');
-        return;
-      }
-      if (await handleSpam(message)) {
-        await punishDanger(message.guild, message.author.id, 'سبام');
-        return;
-      }
-      if (await handleOwnerMentionSpam(message)) return;
-      if (await handleForeignInviteLink(message)) return;
-      if (await handleImageOnlyChannelMessage(message)) return;
-      // The streak room takes everyone's daily picture, so the media role guard skips it.
-      if (!isStreakChannel(message.channelId) && await handleMediaMessage(message)) return;
+      if (protect && await handleProtectedChat(message)) return;
       if (await handleReportChannelMessage(message, { isCommand: (msg) => isBotCommand(msg, client) })) return;
       // Chat XP (runs in the background; the cooldown keeps it from being farmed with commands or spam).
       handleMessageXp(message, client);
@@ -90,7 +74,7 @@ export default {
       // "qr" gets the QR code of our guns.lol page (our server only).
       if (!gamesOnly && await handleQr(message)) return;
       if (!gamesOnly && await handleArabicUtilityShortcuts(message)) return;
-      if (!gamesOnly && await handleMessageDeleteShortcut(message)) return;
+      if (protect && !gamesOnly && await handleMessageDeleteShortcut(message)) return;
       if (await handleCountingGame(message, client)) return;
       await handlePrefixCommand(message, client, gamesOnly);
     } catch (error) {
@@ -98,6 +82,25 @@ export default {
     }
   },
 };
+
+async function handleProtectedChat(message) {
+  if (await handleDangerMessage(message)) return true;
+  if (await handleEveryoneMention(message)) return true;
+  if (await handleProofMessage(message)) return true;
+  if (await handleChatFilter(message)) {
+    await punishDanger(message.guild, message.author.id, 'شتيمة أو كلام ممنوع');
+    return true;
+  }
+  if (await handleSpam(message)) {
+    await punishDanger(message.guild, message.author.id, 'سبام');
+    return true;
+  }
+  if (await handleOwnerMentionSpam(message)) return true;
+  if (await handleForeignInviteLink(message)) return true;
+  if (await handleImageOnlyChannelMessage(message)) return true;
+  // The streak room takes everyone's daily picture, so the media role guard skips it.
+  return !isStreakChannel(message.channelId) && await handleMediaMessage(message);
+}
 
 // Commands also work without the prefix, but only as the first word of the message
 // (`تايم @member 5m`). A command word in the middle of a sentence is ignored.
@@ -132,14 +135,16 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     const prefix = guildConfig?.prefix || getCommandPrefix();
     if (gamesOnly && !isGameCommandMessage(message.content, [prefix])) return;
     const parsed = parseTypedCommand(message.content, prefix);
+    const protect = protectionEnabled();
     // `منشن` group (our server): runs before the role shortcuts so `شيل منشن @x` isn't "remove role منشن".
-    if (parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;
+    if (protect && parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;
     if (parsed && await handleStreakCommand(message, parsed.commandName, parsed.args)) return;
-    if (await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
+    if (protect && await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
     if (!parsed) return;
 
     let { commandName, args } = parsed;
     if (commandName.toLowerCase() === 'trusted') {
+      if (!protect) return;
       if (args.length) {
         await message.channel.send(`⚠️ ${prefix}trusted`).catch(() => {});
       } else {
@@ -151,11 +156,13 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     const typedCommand = commandName.toLowerCase();
     // `purge` wipes the whole channel: owner only, confirmed with a button (in our server `purge 50 تأكيد` skips the button). `clear`/`مسح`/`م` delete N messages.
     if (typedCommand === 'purge') {
+      if (!protect) return;
       await handlePurgeMessage(message, args);
       return;
     }
-    if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args)) return;
+    if (typedCommand === DANGER_COMMAND_WORD && (!protect || await handleDangerCommand(message, args))) return;
     if (typedCommand === 'مسح' && args[0] === 'تحذيرات') {
+      if (!protect) return;
       await handleClearWarningsShortcut(message, args.slice(1));
       return;
     }
@@ -170,7 +177,7 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     }
 
     const resolvedCommandName = resolveCommandAlias(commandName);
-    if (isSilentCommand(resolvedCommandName)) return;
+    if (isSilentCommand(resolvedCommandName) || isDisabledProtectionBoard(resolvedCommandName, resolveSubcommandAlias(args[0]))) return;
     const command = client.commands.get(resolvedCommandName);
     if (!command) return;
     if (isMaintenanceMode() && !isBotOwner(message.author.id)) {
@@ -178,7 +185,7 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
       return;
     }
     if (!isCommandCategoryEnabled(command.category)) return;
-    if (await blockDangerCommand(message.guild, message.author.id, resolvedCommandName)) {
+    if (protect && await blockDangerCommand(message.guild, message.author.id, resolvedCommandName)) {
       await message.channel.send({ content: `🚫 <@${message.author.id}> انت في قائمة الخطر.`, allowedMentions: { parse: [] } }).catch(() => {});
       return;
     }

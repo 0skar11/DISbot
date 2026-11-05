@@ -3,6 +3,7 @@ import { join } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { dirname } from 'path';
 import { logger } from '../../utils/logger.js';
+import { isDisabledProtectionInteractionPath } from '../../config/protectionFeature.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -38,6 +39,7 @@ export default async (client) => {
 
         for (const filePath of interactionFiles) {
           const relativePath = filePath.slice(interactionsPath.length + 1).replace(/\\/g, '/');
+          if (isDisabledProtectionInteractionPath(relativePath)) continue;
           const fileName = relativePath.split('/').pop();
 
           try {

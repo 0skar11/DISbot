@@ -7,6 +7,7 @@ import { handleMediaMessage } from '../services/mediaRoleService.js';
 import { handleChatFilter } from '../services/moderation/chatFilterService.js';
 import { handleGamesBotWin } from '../services/cc/gamesBotWins.js';
 import { isHomeGuild } from '../config/homeGuild.js';
+import { protectionEnabled } from '../config/protectionFeature.js';
 
 const MAX_LOGGED_EDIT_CONTENT_LENGTH = 512;
 
@@ -40,7 +41,7 @@ export default {
       if (oldMessage.content === newMessage.content) return;
 
       // An edit must not sneak in an insult, an invite to another server, or a link without the media role.
-      if (!newMessage.partial && !(await handleChatFilter(newMessage)) && !(await handleForeignInviteLink(newMessage))) await handleMediaMessage(newMessage);
+      if (protectionEnabled() && !newMessage.partial && !(await handleChatFilter(newMessage)) && !(await handleForeignInviteLink(newMessage))) await handleMediaMessage(newMessage);
 
       const metaLines = [
         formatLogLine('Channel', newMessage.channel ? `${newMessage.channel.name} ${newMessage.channel.toString()}` : 'Unknown'),

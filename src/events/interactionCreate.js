@@ -16,6 +16,7 @@ import { validateChatInputPayloadOrThrow } from '../utils/commandInputValidation
 import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abuseProtection.js';
 import { isCommandEnabled } from '../services/commandAccessService.js';
 import { isSilentCommand } from '../config/commands/commandAvailability.js';
+import { isDisabledProtectionBoard, isDisabledProtectionComponent, protectionEnabled } from '../config/protectionFeature.js';
 import { resolveSlashAccessKey } from '../utils/messageAdapter.js';
 import { isCollectorManagedComponent } from '../utils/collectorComponents.js';
 import { isBlockedSlashCommand, GAMES_ONLY_NOTICE } from '../services/games/gamesChannel.js';
@@ -54,6 +55,9 @@ export default {
   name: Events.InteractionCreate,
   async execute(interaction, client) {
     if (isSilentCommand(interaction.commandName)) return;
+    if (isDisabledProtectionComponent(interaction.customId)) return;
+    if (interaction.commandName === 'publish-board'
+        && isDisabledProtectionBoard(interaction.commandName, interaction.options?.getSubcommand?.(false))) return;
 
     const interactionTraceContext = createInteractionTraceContext(interaction);
     interaction.traceContext = interactionTraceContext;
@@ -184,7 +188,7 @@ export default {
               return;
             }
 
-            if (await blockDangerCommand(interaction.guild, interaction.user.id, interaction.commandName)) {
+            if (protectionEnabled() && await blockDangerCommand(interaction.guild, interaction.user.id, interaction.commandName)) {
               await interaction.reply({ content: '🚫 انت في قائمة الخطر.', flags: MessageFlags.Ephemeral }).catch(() => {});
               return;
             }
