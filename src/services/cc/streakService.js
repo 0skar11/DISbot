@@ -57,6 +57,10 @@ let boardRefresh = null;
 let boardRefreshRequested = false;
 let boardUpdateTimer = null;
 
+export function isStreakEnabled() {
+    return process.env.STREAK_ENABLED?.trim().toLowerCase() === 'true';
+}
+
 /** Whether a message is in the streak room. */
 export function isStreakChannel(channelId) {
     return channelId === STREAK_CHANNEL_ID;
@@ -92,7 +96,7 @@ export function liveStreak(streak, now = Date.now()) {
  * counted today), otherwise `{ count, best, bonus, milestone, restarted }`.
  */
 export async function recordStreakMessage(client, guildId, userId, now = Date.now()) {
-    if (!isHomeGuild(guildId) || !userId) return null;
+    if (!isStreakEnabled() || !isHomeGuild(guildId) || !userId) return null;
     const today = utcDay(now);
     const key = `${guildId}:${userId}`;
     if (counted.get(key) === today) return null;
@@ -171,17 +175,20 @@ const USER = /^<@!?(\d{17,20})>$|^(\d{17,20})$/u;
 export async function handleStreakCommand(message, commandName, args = []) {
     if (!isHomeGuild(message.guild?.id)) return false;
     const first = String(commandName || '').toLowerCase();
-    const client = message.guild.client;
-    if (TOP_WORDS.has(first) && PROFILE_WORDS.has(String(args[0] || '').toLowerCase()) && args.length === 1) {
-        const embed = await streakTopEmbed(client, message.guild, message.author.id);
+    const isTop = TOP_WORDS.has(first) && PROFILE_WORDS.has(String(args[0] || '').toLowerCase()) && args.length === 1;
+    if (isTop) {
+        // Consume this shortcut even when disabled so it cannot fall through to the levels leaderboard.
+        if (!isStreakEnabled()) return true;
+        const embed = await streakTopEmbed(message.guild.client, message.guild, message.author.id);
         await message.channel.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch(() => {});
         return true;
     }
     if (!PROFILE_WORDS.has(first) || args.length > 1) return false;
     const match = args.length ? USER.exec(args[0]) : null;
     if (args.length && !match) return false;
+    if (!isStreakEnabled()) return true;
     const userId = match ? (match[1] || match[2]) : message.author.id;
-    await message.channel.send({ content: await streakProfileLine(client, message.guild.id, userId), allowedMentions: { parse: [] } }).catch(() => {});
+    await message.channel.send({ content: await streakProfileLine(message.guild.client, message.guild.id, userId), allowedMentions: { parse: [] } }).catch(() => {});
     return true;
 }
 
@@ -203,7 +210,7 @@ async function openForPictures(channel, guild) {
 
 /** Resolves only the owner's pinned streak room. Never create or redirect to another channel. */
 export async function ensureStreakChannel(guild) {
-    if (!isHomeGuild(guild?.id)) return null;
+    if (!isStreakEnabled() || !isHomeGuild(guild?.id)) return null;
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
     if (config?.[CONFIG_KEY] !== STREAK_CHANNEL_ID) {
         await updateGuildConfig(guild.client, guild.id, { [CONFIG_KEY]: STREAK_CHANNEL_ID })
@@ -244,6 +251,7 @@ async function publishBoard(guild) {
 
 /** Serialize refreshes, keeping at most one extra pass when a count arrives during a refresh. */
 export function publishStreakBoard(guild) {
+    if (!isStreakEnabled()) return Promise.resolve({ status: 'disabled' });
     if (!isHomeGuild(guild?.id)) return Promise.resolve({ status: 'no-channel' });
     boardRefreshRequested = true;
     if (!boardRefresh) {
@@ -290,7 +298,7 @@ async function replyInRoom(message, content) {
  */
 export async function handleStreakMessage(message) {
     try {
-        if (!isHomeGuild(message.guild?.id) || !isStreakChannel(message.channelId)) return null;
+        if (!isStreakEnabled() || !isHomeGuild(message.guild?.id) || !isStreakChannel(message.channelId)) return null;
         const client = message.client || message.guild.client;
         const userId = message.author?.id;
         if (!hasStreakMedia(message)) {
@@ -331,7 +339,7 @@ export async function streaksEndingTonight(client, guildId, now = Date.now()) {
  * the members whose streak would end tonight. Returns true when the reminder was sent.
  */
 export async function sendDailyReminder(guild, now = Date.now()) {
-    if (!isHomeGuild(guild?.id) || new Date(now).getUTCHours() < STREAK.reminderHourUtc) return false;
+    if (!isStreakEnabled() || !isHomeGuild(guild?.id) || new Date(now).getUTCHours() < STREAK.reminderHourUtc) return false;
     const today = utcDay(now);
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
     if (config?.[REMINDER_KEY] === today) return false;
@@ -353,6 +361,7 @@ export async function sendDailyReminder(guild, now = Date.now()) {
 
 /** Startup: the streak room, its board and the daily reminder in our server, checked every STREAK_BOARD_REFRESH_MS. */
 export async function startStreak(client) {
+    if (!isStreakEnabled()) return { status: 'disabled' };
     const guild = [...client.guilds.cache.values()].find((item) => isHomeGuild(item.id));
     if (!guild) return { status: 'skipped' };
     const refresh = async () => {

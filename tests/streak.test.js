@@ -5,7 +5,7 @@ import { getEconomyKey } from '../src/utils/database.js';
 import {
   recordStreakMessage, streakBonus, liveStreak, getStreakLeaderboard, handleStreakCommand, resetStreakCache, STREAK,
   ensureStreakChannel, handleStreakMessage, hasStreakMedia, sendDailyReminder, isStreakChannel, STREAK_CHANNEL_ID,
-  publishStreakBoard, STREAK_CHANNEL_NAME, STREAK_BOARD_UPDATE_DELAY_MS,
+  publishStreakBoard, startStreak, STREAK_CHANNEL_NAME, STREAK_BOARD_UPDATE_DELAY_MS,
 } from '../src/services/cc/streakService.js';
 import { ChannelType, PermissionFlagsBits, PermissionsBitField } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../src/services/config/guildConfig.js';
@@ -13,6 +13,36 @@ import { getGuildConfig, updateGuildConfig } from '../src/services/config/guildC
 const USER = '200000000000000001';
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 16, 12);
+
+test('streak defaults off while its room stays exempt from the media guard', async (t) => {
+  const previous = process.env.STREAK_ENABLED;
+  delete process.env.STREAK_ENABLED;
+  t.after(() => {
+    if (previous === undefined) delete process.env.STREAK_ENABLED;
+    else process.env.STREAK_ENABLED = previous;
+  });
+  const unexpected = () => assert.fail('disabled streak touched Discord or storage');
+  const client = { get db() { return unexpected(); }, get guilds() { return unexpected(); } };
+  const guild = { id: HOME_GUILD_ID, client, get channels() { return unexpected(); } };
+  const message = {
+    guild, client, channelId: STREAK_CHANNEL_ID, author: { id: USER },
+    channel: { send: unexpected }, react: unexpected, reply: unexpected,
+    attachments: [{ contentType: 'image/png' }],
+  };
+
+  assert.equal(isStreakChannel(message.channelId), true);
+  assert.equal(await recordStreakMessage(client, guild.id, USER, NOW), null);
+  assert.equal(await handleStreakMessage(message), null);
+  assert.equal(await handleStreakCommand(message, 'ستريك'), true);
+  assert.equal(await handleStreakCommand(message, 'top', ['streak']), true);
+  assert.equal(await handleStreakCommand(message, 'top', ['chat']), false);
+  assert.equal(await ensureStreakChannel(guild), null);
+  assert.deepEqual(await publishStreakBoard(guild), { status: 'disabled' });
+  assert.equal(await sendDailyReminder(guild, Date.UTC(2026, 9, 16, 20)), false);
+  assert.deepEqual(await startStreak(client), { status: 'disabled' });
+});
+
+beforeEach(() => { process.env.STREAK_ENABLED = 'true'; });
 
 test('fixed streak room is recognized before startup without creating any channel', () => {
   resetStreakCache();
