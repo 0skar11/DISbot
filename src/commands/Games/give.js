@@ -24,8 +24,16 @@ export default {
 
         if (!target || target.bot) return reply('البوتات مالهاش CC 🤖');
         if (target.id === interaction.user.id) return reply('❌ مينفعش تحوّل لنفسك.');
-        const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+        const [sender, member] = await Promise.all([
+            interaction.member?.joinedTimestamp ? interaction.member : interaction.guild.members.fetch(interaction.user.id).catch(() => null),
+            interaction.guild.members.fetch(target.id).catch(() => null),
+        ]);
         if (!member) return reply('❌ العضو ده مش في السيرفر.');
+        // Anti-alt: both sides must have been in the server for CC.transfer.minServerDays.
+        const minAge = CC.transfer.minServerDays * 24 * 60 * 60 * 1000;
+        const tooNew = (m) => !m?.joinedTimestamp || Date.now() - m.joinedTimestamp < minAge;
+        if (tooNew(sender)) return reply(`❌ لازم يكون ليك في السيرفر ${CC.transfer.minServerDays} يوم على الأقل عشان تحوّل.`);
+        if (tooNew(member)) return reply(`❌ العضو ده لسه ليه أقل من ${CC.transfer.minServerDays} يوم في السيرفر، مينفعش تحوّله.`);
 
         const result = await transferCC(client, interaction.guildId, interaction.user.id, target.id, amount);
         if (!result.ok) {

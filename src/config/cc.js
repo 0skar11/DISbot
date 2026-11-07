@@ -65,6 +65,7 @@ export const CC = {
     // The first `cheapPerWeek` transfers of the last 7 days pay `taxPercent`; each one after that pays
     // `extraPercentPerTransfer` more, up to `maxTaxPercent`. With these numbers: 5%, 5%, 5%, 10%, 15%, ... 50%.
     transfer: {
+        minServerDays: 30,
         minAmount: 10,
         taxPercent: 5,
         cheapPerWeek: 3,
