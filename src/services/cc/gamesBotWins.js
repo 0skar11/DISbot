@@ -6,7 +6,7 @@
 // messages from the games bot IDs count (config/games.js), so members can't fake a win by typing
 // the same text, and each message pays once.
 
-import { gamesBotIds } from '../../config/games.js';
+import { gamesBotIds, ccEnabled } from '../../config/games.js';
 import { CC, formatCC, ccBoostLine, gamesBotDailyCap } from '../../config/cc.js';
 import { awardGamesBotWin } from './ccService.js';
 import { logger } from '../../utils/logger.js';
@@ -79,6 +79,8 @@ function rememberPaid(messageId) {
  * a message pays once either way.
  */
 export async function handleGamesBotWin(message, client) {
+    // Clover wins are paid by the CC bot now (CC_ENABLED=true brings this back).
+    if (!ccEnabled()) return false;
     if (!message.guild || !message.author?.bot || !gamesBotIds().has(message.author.id)) return false;
     const win = parseWinMessage(message);
     if (!win) return false;

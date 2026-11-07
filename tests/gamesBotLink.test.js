@@ -161,6 +161,9 @@ describe('games bot (Clover) wins', async () => {
     const { handleGamesBotWin, parseWinner } = await import('../src/services/cc/gamesBotWins.js');
     const { CLOVER_BOT_ID } = await import('../src/config/games.js');
     let nextId = 1;
+    const previousCC = process.env.CC_ENABLED;
+    before(() => { process.env.CC_ENABLED = 'true'; });
+    after(() => { if (previousCC === undefined) delete process.env.CC_ENABLED; else process.env.CC_ENABLED = previousCC; });
 
     function winMessage(content, { authorId = CLOVER_BOT_ID, bot = true, winnerBot = false, id = String(nextId++) } = {}) {
         const replies = [];
