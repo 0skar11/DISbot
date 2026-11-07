@@ -8,6 +8,10 @@ import { logger } from '../utils/logger.js';
 // The role and its permissions are the owner's to set: the bot never changes them. Discord permissions
 // can't stop a plain link from being sent, so the message guard below deletes those.
 const MEDIA_ROLE_NAME = 'media';
+// Roles that always allow media, whatever their name (the owner's GIF role). MEDIA_ROLE_IDS in the environment adds
+// more (comma separated).
+const EXTRA_MEDIA_ROLE_IDS = ['1552363597357654068'];
+const extraMediaRoleIds = () => new Set([...EXTRA_MEDIA_ROLE_IDS, ...String(process.env.MEDIA_ROLE_IDS || '').split(',').map((id) => id.trim()).filter((id) => /^\d{17,20}$/u.test(id))]);
 const BLOCKED_NOTICE_DELETE_MS = 5_000;
 // Guild config flag set once every member who was in the server got the media role.
 const GRANTED_TO_ALL_KEY = 'mediaRoleGrantedToAll';
@@ -21,7 +25,7 @@ const mediaRoleIds = new Map(); // guildId -> roleId
 /** Whether `role` is the server's media role (the saved one, or one named `media`). */
 export function isMediaRole(role, guildId = role?.guild?.id) {
   if (!role || role.managed) return false;
-  return role.id === mediaRoleIds.get(guildId) || role.name === MEDIA_ROLE_NAME;
+  return role.id === mediaRoleIds.get(guildId) || role.name === MEDIA_ROLE_NAME || extraMediaRoleIds().has(role.id);
 }
 
 async function savedMediaRoleId(guild) {

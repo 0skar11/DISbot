@@ -59,6 +59,19 @@ describe('media lock', () => {
     assert.equal(isMediaRole(media, guild.id), true);
   });
 
+  test('the owner GIF role counts as a media role whatever its name, and MEDIA_ROLE_IDS adds more', () => {
+    const role = (id, name = 'gif pass') => ({ id, name, managed: false });
+    assert.equal(isMediaRole(role('1552363597357654068'), 'g'), true);
+    assert.equal(isMediaRole({ ...role('1552363597357654068'), managed: true }, 'g'), false);
+    assert.equal(isMediaRole(role('100000000000000001'), 'g'), false);
+    process.env.MEDIA_ROLE_IDS = '100000000000000001, 100000000000000002';
+    try {
+      assert.equal(isMediaRole(role('100000000000000002'), 'g'), true);
+    } finally {
+      delete process.env.MEDIA_ROLE_IDS;
+    }
+  });
+
   test('startup discovers the media role without granting it to members', async () => {
     const media = { id: 'media-id', name: 'media', managed: false, editable: true };
     let roleFetches = 0;
