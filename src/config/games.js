@@ -25,6 +25,18 @@ export function isDisabledGameCommand(commandName) {
     return !gamesEnabled() && GAME_COMMAND_NAMES.has(commandName);
 }
 
+// The CC money commands moved to the CC bot, so they are OFF here by default. Nothing was deleted:
+// `CC_ENABLED=true` in the environment loads and registers them again after a restart.
+export const CC_COMMAND_NAMES = new Set(['cc', 'cctop', 'addcc', 'give', 'bourse']);
+
+export function ccEnabled() {
+    return String(process.env.CC_ENABLED || '').trim().toLowerCase() === 'true';
+}
+
+export function isDisabledCCCommand(commandName) {
+    return !ccEnabled() && CC_COMMAND_NAMES.has(commandName);
+}
+
 export const GAMES_MOVED_NOTICE = '🎮 الألعاب اتنقلت لبوت الألعاب.';
 
 // The games bot: Clover (https://clovers.gg). Its winner messages pay CC here (services/cc/gamesBotWins.js).
