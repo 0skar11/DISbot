@@ -29,11 +29,10 @@ export default {
             interaction.guild.members.fetch(target.id).catch(() => null),
         ]);
         if (!member) return reply('❌ العضو ده مش في السيرفر.');
-        // Anti-alt: both sides must have been in the server for CC.transfer.minServerDays.
+        // Anti-alt: the sender must have been in the server for CC.transfer.minServerDays (the receiver can be new).
         const minAge = CC.transfer.minServerDays * 24 * 60 * 60 * 1000;
         const tooNew = (m) => !m?.joinedTimestamp || Date.now() - m.joinedTimestamp < minAge;
         if (tooNew(sender)) return reply(`❌ لازم يكون ليك في السيرفر ${CC.transfer.minServerDays} يوم على الأقل عشان تحوّل.`);
-        if (tooNew(member)) return reply(`❌ العضو ده لسه ليه أقل من ${CC.transfer.minServerDays} يوم في السيرفر، مينفعش تحوّله.`);
 
         const result = await transferCC(client, interaction.guildId, interaction.user.id, target.id, amount);
         if (!result.ok) {
