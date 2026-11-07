@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'url';
 import { Collection } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import botConfig from '../../config/bot.js';
-import { isDisabledGameCommand } from '../../config/games.js';
+import { isDisabledGameCommand, isDisabledCCCommand } from '../../config/games.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -87,6 +87,12 @@ export async function loadCommands(client) {
                 continue;
             }
             
+            // CC lives in the CC bot now: the CC commands here are not loaded unless CC_ENABLED=true.
+            if (isDisabledCCCommand(primaryCommandName)) {
+                logger.info(`Skipped CC command: ${primaryCommandName} (CC_ENABLED is off)`);
+                continue;
+            }
+
             if (!uniqueCommandNames.has(primaryCommandName)) {
                 uniqueCommandNames.add(primaryCommandName);
                 

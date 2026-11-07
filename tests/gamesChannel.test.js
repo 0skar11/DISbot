@@ -113,7 +113,9 @@ describe('games channel', () => {
     test('CC commands live in the Games category, so turning off Economy never hides them', async () => {
         const { loadCommands } = await import('../src/handlers/loaders/commandLoader.js');
         const loaded = {};
-        await loadCommands(loaded);
+        const previous = process.env.CC_ENABLED;
+        process.env.CC_ENABLED = 'true';
+        try { await loadCommands(loaded); } finally { if (previous === undefined) delete process.env.CC_ENABLED; else process.env.CC_ENABLED = previous; }
         for (const name of ['cc', 'cctop', 'game', 'solo']) assert.equal(loaded.commands.get(name).category, 'Games', name);
     });
 

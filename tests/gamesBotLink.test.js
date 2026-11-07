@@ -41,13 +41,13 @@ describe('games are off by default', () => {
         delete process.env.GAMES_ENABLED;
     });
 
-    test('game commands are not loaded, the CC commands are', async () => {
+    test('game commands and the CC money commands are not loaded (they live in the CC bot)', async () => {
         const { loadCommands } = await import('../src/handlers/loaders/commandLoader.js');
         const loaded = {};
         await loadCommands(loaded);
         for (const name of ['game', 'solo', 'rps', 'xo', 'fight']) assert.equal(loaded.commands.has(name), false, name);
         assert.equal(loaded.commands.has('daily'), false);
-        for (const name of ['cc', 'cctop']) assert.equal(loaded.commands.get(name).category, 'Games', name);
+        for (const name of ['cc', 'cctop', 'addcc', 'give', 'bourse']) assert.equal(loaded.commands.has(name), false, name);
     });
 
     test('the games channel is left alone for the games bot', async () => {
