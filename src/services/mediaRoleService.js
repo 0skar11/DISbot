@@ -25,7 +25,16 @@ const mediaRoleIds = new Map(); // guildId -> roleId
 /** Whether `role` is the server's media role (the saved one, or one named `media`). */
 export function isMediaRole(role, guildId = role?.guild?.id) {
   if (!role || role.managed) return false;
-  return role.id === mediaRoleIds.get(guildId) || role.name === MEDIA_ROLE_NAME || extraMediaRoleIds().has(role.id);
+  return role.id === mediaRoleIds.get(guildId) || role.name === MEDIA_ROLE_NAME;
+}
+
+/**
+ * Whether `role` lets its members send media: the media role, or one of the extra roles (the owner's GIF role).
+ * Only for the send check: the one-time grant to everybody uses isMediaRole, so an extra role is never handed out.
+ */
+export function isMediaSenderRole(role, guildId = role?.guild?.id) {
+  if (!role || role.managed) return false;
+  return isMediaRole(role, guildId) || extraMediaRoleIds().has(role.id);
 }
 
 async function savedMediaRoleId(guild) {
@@ -107,7 +116,7 @@ export function isPlayCommand(message) {
 async function canSendMedia(message) {
   if (isServerOwner(message.author.id)) return true;
   const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
-  if (member?.roles.cache.some((role) => isMediaRole(role, message.guild.id))) return true;
+  if (member?.roles.cache.some((role) => isMediaSenderRole(role, message.guild.id))) return true;
   if (member?.permissions.has(PermissionFlagsBits.Administrator)) return true;
   return canLiftHardBan(message.guild, message.author.id);
 }

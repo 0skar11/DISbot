@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionsBitField, PermissionFlagsBits } from 'discord.js';
-import { hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
+import { hasMediaContent, isPlayCommand, findMediaRole, isMediaRole, isMediaSenderRole, grantMediaRoleToAllMembers } from '../src/services/mediaRoleService.js';
 import mediaRoleReady from '../src/events/mediaRole.js';
 
 const message = (content, attachments = 0) => ({ content, attachments: { size: attachments } });
@@ -61,12 +61,15 @@ describe('media lock', () => {
 
   test('the owner GIF role counts as a media role whatever its name, and MEDIA_ROLE_IDS adds more', () => {
     const role = (id, name = 'gif pass') => ({ id, name, managed: false });
-    assert.equal(isMediaRole(role('1552363597357654068'), 'g'), true);
-    assert.equal(isMediaRole({ ...role('1552363597357654068'), managed: true }, 'g'), false);
-    assert.equal(isMediaRole(role('100000000000000001'), 'g'), false);
+    assert.equal(isMediaSenderRole(role('1552363597357654068'), 'g'), true);
+    // It is only a sender role: never the role the one-time grant hands to every member.
+    assert.equal(isMediaRole(role('1552363597357654068'), 'g'), false);
+    assert.equal(isMediaSenderRole({ ...role('1552363597357654068'), managed: true }, 'g'), false);
+    assert.equal(isMediaSenderRole(role('100000000000000001'), 'g'), false);
     process.env.MEDIA_ROLE_IDS = '100000000000000001, 100000000000000002';
     try {
-      assert.equal(isMediaRole(role('100000000000000002'), 'g'), true);
+      assert.equal(isMediaSenderRole(role('100000000000000002'), 'g'), true);
+      assert.equal(isMediaRole(role('100000000000000002'), 'g'), false);
     } finally {
       delete process.env.MEDIA_ROLE_IDS;
     }
