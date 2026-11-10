@@ -6,7 +6,7 @@ import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { getGuildConfig, updateGuildConfig } from '../src/services/config/guildConfig.js';
 
 // The server settings were read from the database several times before every command. They are now
-// kept in memory for a few seconds (our server only) and dropped on every write.
+// kept in memory for a few seconds (every server, as the owner asked) and dropped on every write.
 const OTHER_GUILD_ID = '999999999999999999';
 const configKey = (guildId) => `guild:${guildId}:config`;
 
@@ -37,10 +37,10 @@ describe('hot key cache (server settings read on every message)', () => {
     delete process.env.DB_HOT_CACHE_TTL_MS;
   });
 
-  test('only our server\'s settings and counting game keys are cached', () => {
+  test('only the settings and counting game keys are cached, for every server', () => {
     assert.ok(hotKeyRule(configKey(HOME_GUILD_ID)));
     assert.ok(hotKeyRule(`countingGame:${HOME_GUILD_ID}`));
-    assert.equal(hotKeyRule(configKey(OTHER_GUILD_ID)), null);
+    assert.ok(hotKeyRule(configKey(OTHER_GUILD_ID)));
     assert.equal(hotKeyRule(`guild:${HOME_GUILD_ID}:economy:1`), null);
     assert.equal(hotKeyRule(`guild:${HOME_GUILD_ID}:leveling:users:1`), null);
   });
@@ -112,10 +112,12 @@ describe('hot key cache (server settings read on every message)', () => {
     assert.equal(pg.reads.length, 4);
   });
 
-  test('another server reads the database every time, as before', async () => {
-    pg.store.set(configKey(OTHER_GUILD_ID), { prefix: '!' });
-    await db.get(configKey(OTHER_GUILD_ID));
-    await db.get(configKey(OTHER_GUILD_ID));
+  test('another server gets the same speed-up, with its own copy', async () => {
+    pg.store.set(configKey(OTHER_GUILD_ID), { prefix: '?' });
+    pg.store.set(configKey(HOME_GUILD_ID), { prefix: '!' });
+    assert.equal((await db.get(configKey(OTHER_GUILD_ID))).prefix, '?');
+    assert.equal((await db.get(configKey(OTHER_GUILD_ID))).prefix, '?');
+    assert.equal((await db.get(configKey(HOME_GUILD_ID))).prefix, '!');
     assert.equal(pg.reads.length, 2);
   });
 

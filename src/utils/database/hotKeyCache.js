@@ -5,17 +5,16 @@
 // round trip to the database, so every command waited on them. These keys are now kept in memory for a
 // few seconds and dropped the moment this bot writes them.
 //
-// Our server only (see CLAUDE.md): other servers read the database every time, as before.
+// Every server the bot is in gets it (the owner asked for the speed-up everywhere, without exception).
 // `DB_HOT_CACHE_TTL_MS=0` turns the cache off.
-import { HOME_GUILD_ID } from '../../config/homeGuild.js';
 
 const DEFAULT_TTL_MS = 15_000;
 
 // `cacheMisses`: also remember "nothing saved". Never for the server settings: a failed read looks the
 // same as a missing row, and the settings (trusted lists, protection) must not fall back to defaults.
 const HOT_KEYS = [
-    { pattern: /^guild:(\d+):config$/u, cacheMisses: false },
-    { pattern: /^countingGame:(\d+)$/u, cacheMisses: true },
+    { pattern: /^guild:\d+:config$/u, cacheMisses: false },
+    { pattern: /^countingGame:\d+$/u, cacheMisses: true },
 ];
 
 export function hotCacheTtlMs() {
@@ -25,14 +24,10 @@ export function hotCacheTtlMs() {
     return Number.isFinite(ttl) && ttl >= 0 ? ttl : DEFAULT_TTL_MS;
 }
 
-/** The cache rule for a key, or null when the key is not cached (other keys, other servers). */
+/** The cache rule for a key, or null when the key is not cached. */
 export function hotKeyRule(key) {
     if (typeof key !== 'string') return null;
-    for (const rule of HOT_KEYS) {
-        const match = rule.pattern.exec(key);
-        if (match) return match[1] === HOME_GUILD_ID ? rule : null;
-    }
-    return null;
+    return HOT_KEYS.find((rule) => rule.pattern.test(key)) || null;
 }
 
 const MISSING = Symbol('missing');
