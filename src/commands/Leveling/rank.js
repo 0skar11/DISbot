@@ -41,9 +41,14 @@ export default {
       );
     }
 
-    const userData = await getUserLevelData(client, interaction.guildId, targetUser.id);
+    // The four reads don't depend on each other, so they go to the database together instead of one by one.
+    const [userData, everyone, chatCounts, voiceMinutes] = await Promise.all([
+      getUserLevelData(client, interaction.guildId, targetUser.id),
+      Promise.resolve().then(() => getLeaderboard(client, interaction.guildId, 100)).catch(() => []),
+      Promise.resolve().then(() => getChatCounts(client, interaction.guildId)).catch(() => ({})),
+      Promise.resolve().then(() => getVoiceMinutes(client, interaction.guildId)).catch(() => ({})),
+    ]);
     const level = userData?.level ?? 0;
-    const everyone = await getLeaderboard(client, interaction.guildId, 100).catch(() => []);
     const entry = everyone.find((item) => item.userId === targetUser.id);
 
     const embed = buildRankEmbed(member, {
@@ -54,8 +59,8 @@ export default {
       xpNeeded: getXpForLevel(level),
       position: entry?.rank ?? null,
       rankedCount: everyone.length,
-      messages: (await getChatCounts(client, interaction.guildId).catch(() => ({})))[targetUser.id] || 0,
-      voiceMinutes: (await getVoiceMinutes(client, interaction.guildId).catch(() => ({})))[targetUser.id] || 0,
+      messages: chatCounts?.[targetUser.id] || 0,
+      voiceMinutes: voiceMinutes?.[targetUser.id] || 0,
     });
 
     await InteractionHelper.safeEditReply(interaction, { embeds: [embed], allowedMentions: { parse: [] } });

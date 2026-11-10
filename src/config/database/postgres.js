@@ -85,6 +85,10 @@ export function resolvePostgresPoolConfig() {
         statement_timeout: process.env.NODE_ENV === 'production' ? 30000 : 0,
         keepalives: 1,
         keepalives_idle: 30,
+        // node-postgres reads `keepAlive`: TCP keep-alive stops idle connections from being dropped
+        // silently, which made the first command after a quiet period wait for a reconnect.
+        keepAlive: true,
+        keepAliveInitialDelayMillis: 10000,
         ssl,
     };
 

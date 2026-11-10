@@ -35,7 +35,9 @@ export async function readGuildConfig(client, guildId, context = {}) {
             return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
         }
 
-        const rawConfig = await client.db.get(getGuildConfigKey(guildId), null);
+        // `context.fresh`: skip the short settings cache (used before a read-change-save).
+        const read = context.fresh && typeof client.db.getFresh === 'function' ? client.db.getFresh : client.db.get;
+        const rawConfig = await read.call(client.db, getGuildConfigKey(guildId), null);
 
         if (rawConfig === null) {
             return normalizeGuildConfig({}, GUILD_CONFIG_DEFAULTS);
