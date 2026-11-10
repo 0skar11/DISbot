@@ -28,7 +28,7 @@ export const setGuildConfig = wrapServiceBoundary(async function setGuildConfig(
 });
 
 export const updateGuildConfig = wrapServiceBoundary(async function updateGuildConfig(client, guildId, updates, context = {}) {
-    const currentConfig = await readGuildConfig(client, guildId, context);
+    const currentConfig = await readGuildConfig(client, guildId, { ...context, fresh: true });
     const merged = { ...currentConfig, ...updates };
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
     return await writeGuildConfig(client, guildId, normalized, context);
@@ -71,7 +71,7 @@ export const patchGuildConfig = wrapServiceBoundary(async function patchGuildCon
         );
     }
 
-    const currentConfig = await readGuildConfig(client, guildId, context);
+    const currentConfig = await readGuildConfig(client, guildId, { ...context, fresh: true });
     const merged = deepMergeGuildConfig(currentConfig, patch);
     const normalized = normalizeGuildConfig(merged, GUILD_CONFIG_DEFAULTS);
     validateGuildConfigOrThrow(normalized, { guildId, ...context });

@@ -2,6 +2,7 @@ import { pgDb } from '../postgresDatabase.js';
 import { MemoryStorage } from '../memoryStorage.js';
 import { logger } from '../logger.js';
 import { validateGuildConfigOrThrow } from '../schemas.js';
+import { HotKeyCache } from './hotKeyCache.js';
 
 class DatabaseWrapper {
     constructor() {
@@ -11,6 +12,8 @@ class DatabaseWrapper {
         this.connectionType = 'none';
         this.degradedModeWarningShown = false;
         this.degradedReason = null;
+        // Keys read on every message (server settings, counting game) are kept in memory for a few seconds.
+        this.hotCache = new HotKeyCache();
     }
 
     async initialize() {
@@ -69,18 +72,36 @@ class DatabaseWrapper {
             });
         }
 
-        return this.db.set(key, value, ttl);
+        return this.#write(key, () => this.db.set(key, value, ttl));
     }
 
     async get(key, defaultValue = null) {
-        return this.db.get(key, defaultValue);
+        // The memory fallback is already in memory; only PostgreSQL reads are worth caching.
+        if (this.useFallback) return this.db.get(key, defaultValue);
+        return this.hotCache.get(key, defaultValue, (missing) => this.db.get(key, missing));
+    }
+
+    /** Reads straight from the database, skipping the cache (for read-change-save of the settings). */
+    async getFresh(key, defaultValue = null) {
+        this.hotCache.invalidate(key);
+        return this.get(key, defaultValue);
+    }
+
+    // The cached copy is dropped before and after the write, so a read during it is not kept.
+    async #write(key, write) {
+        this.hotCache.invalidate(key);
+        try {
+            return await write();
+        } finally {
+            this.hotCache.invalidate(key);
+        }
     }
 
     async delete(key) {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Deleting from memory: ${key}`);
         }
-        return this.db.delete(key);
+        return this.#write(key, () => this.db.delete(key));
     }
 
     async list(prefix) {
@@ -99,6 +120,7 @@ class DatabaseWrapper {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Incrementing in memory: ${key}`);
         }
+        this.hotCache.invalidate(key);
         if (this.db.increment) {
             return this.db.increment(key, amount);
         }
@@ -112,6 +134,7 @@ class DatabaseWrapper {
         if (this.useFallback) {
             logger.debug(`[DEGRADED] Decrementing in memory: ${key}`);
         }
+        this.hotCache.invalidate(key);
         if (this.db.decrement) {
             return this.db.decrement(key, amount);
         }
