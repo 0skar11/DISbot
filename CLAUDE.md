@@ -1,16 +1,16 @@
 # Notes for Claude
 
-## Our only server
+## Changes apply to every server (owner's rule, replaces the old "home server only" rule)
 
-The bot's only server is **1155236281706627173** (`HOME_GUILD_ID` in `src/config/homeGuild.js`).
+The owner's rule, literally: **from now on every change is for everything, no exceptions.** New features,
+changes to existing ones, commands, boards, timers and settings all apply to **every server the bot is in**,
+in this repo and in the CC bot (`0skar11/CC-bot`).
 
-The owner's rule, literally: **anything new is for this server only.** Every new feature, every change
-to an existing one, every new command, board, role, timer or setting. Other servers the bot is in keep
-exactly what they already have and get nothing new unless the owner explicitly asks for it.
+- Do not gate new work behind `isHomeGuild(guildId)` (`src/config/homeGuild.js`) and do not keep a separate old
+  behaviour for other servers. Existing home-server-only code stays as it is until the owner asks to change it.
+- Tests cover the change in more than one server where that makes sense (see `tests/hotKeyCache.test.js`).
+- Which servers the CC bot answers in is a deployment setting (`BOURSE_GUILD_IDS`, `ECONOMY_SCOPE_ID`; see
+  `PUBLIC-MODE.md` in that repo), not something the code decides.
 
-- A new feature checks `isHomeGuild(guildId)` (from `src/config/homeGuild.js`) before it does anything:
-  startup work, timers and sweeps skip other servers; commands, buttons and forms answer there with
-  "not available" or do nothing.
-- Changing an existing feature: keep the old behaviour for other servers (see `storeCatalog` in
-  `src/services/cc/ccStoreService.js`, which still shows the old samples there).
-- Tests use `HOME_GUILD_ID` when they test a new feature, and add a case showing another server is left alone.
+The bot's own server is still **1155236281706627173** (`HOME_GUILD_ID`): the shared CC balance and the bourse
+data are saved under its keys (`src/config/sharedEconomy.js`).
