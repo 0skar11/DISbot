@@ -59,8 +59,12 @@ export default {
           : message.content;
       }
 
-      if (message.attachments.size > 0) {
-        metaLines.push(formatLogLine('Attachments', String(message.attachments.size)));
+      if (message.attachments?.size > 0) {
+        const attachmentList = [...message.attachments.values()]
+          .map((a) => a.name || a.url || 'attachment')
+          .join(', ');
+        const truncatedList = attachmentList.length > 500 ? `${attachmentList.slice(0, 497)}...` : attachmentList;
+        metaLines.push(formatLogLine('Attachments', `${message.attachments.size} (${truncatedList})`));
       }
 
       await logEvent({

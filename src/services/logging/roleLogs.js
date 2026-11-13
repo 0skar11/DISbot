@@ -4,9 +4,9 @@
 // out, and one audit log request is shared by every log within a second, so bursts stay light.
 
 import { AuditLogEvent, PermissionsBitField } from 'discord.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { getAuditLogChannelId, AUDIT_LOG_CATEGORY_ID } from '../auditLogChannelsService.js';
+import { resolveAuditRoom, postAuditRoom } from './auditRooms.js';
 import { logger } from '../../utils/logger.js';
 
 // The audit entry can land a moment after the gateway event; tests set this to 0.
@@ -20,16 +20,24 @@ function embed({ color, title, lines }) {
     return { color, title, description: lines.filter(Boolean).join('\n').slice(0, 4000), timestamp: new Date().toISOString() };
 }
 
-/** The roles room: by its name inside the Logs category, else by the ID saved in the config. */
+/** The roles room: resolveAuditRoom first, with home-server category lookup as a fallback. */
 async function findRolesRoom(guild) {
-    const byName = guild.channels.cache.find?.((channel) => channel.parentId === AUDIT_LOG_CATEGORY_ID && channel.name === ROOM_NAME && channel.send);
+    const room = await resolveAuditRoom(guild, 'roles');
+    if (room?.send) return room;
+    if (typeof room === 'string') {
+        const found = guild.channels?.cache?.get?.(room) || (await guild.channels?.fetch?.(room).catch(() => null));
+        if (found?.send) return found;
+    }
+    const byName = guild.channels?.cache?.find?.((channel) => channel.parentId === AUDIT_LOG_CATEGORY_ID && channel.name === ROOM_NAME && channel.send);
     if (byName) return byName;
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
     const channelId = getAuditLogChannelId(config, ROOM_NAME);
-    return channelId ? guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null) : null;
+    return channelId ? guild.channels?.cache?.get?.(channelId) || (await guild.channels?.fetch?.(channelId).catch(() => null)) : null;
 }
 
 async function post(guild, payload) {
+    const posted = await postAuditRoom(guild, 'roles', payload);
+    if (posted) return true;
     const channel = await findRolesRoom(guild);
     if (!channel?.send) return false;
     return channel.send({ embeds: [payload], allowedMentions: { parse: [] } }).then(() => true).catch((error) => {
@@ -75,7 +83,7 @@ const isBot = (guild, entry) => Boolean(entry?.executor?.id && entry.executor.id
 /** Roles given to or taken from a member (not by the bot). */
 export async function logMemberRoles(oldMember, newMember) {
     const guild = newMember?.guild;
-    if (!guild || !isHomeGuild(guild.id) || !oldMember?.roles?.cache || oldMember.partial) return false;
+    if (!guild || !oldMember?.roles?.cache || oldMember.partial) return false;
     const added = [...newMember.roles.cache.values()].filter((role) => !oldMember.roles.cache.has(role.id));
     const removed = [...oldMember.roles.cache.values()].filter((role) => !newMember.roles.cache.has(role.id));
     if (!added.length && !removed.length) return false;
@@ -106,21 +114,21 @@ function permissionChanges(oldRole, newRole) {
 }
 
 export async function logRoleCreate(role) {
-    if (!role?.guild || !isHomeGuild(role.guild.id)) return false;
+    if (!role?.guild) return false;
     const entry = await auditEntry(role.guild, AuditLogEvent.RoleCreate, role.id);
     if (isBot(role.guild, entry)) return false;
     return post(role.guild, embed({ color: COLORS.green, title: '🆕 رول اتعملت', lines: [`🎭 الرول: <@&${role.id}> (${role.name})`, byLine(entry)] }));
 }
 
 export async function logRoleDelete(role) {
-    if (!role?.guild || !isHomeGuild(role.guild.id)) return false;
+    if (!role?.guild) return false;
     const entry = await auditEntry(role.guild, AuditLogEvent.RoleDelete, role.id);
     if (isBot(role.guild, entry)) return false;
     return post(role.guild, embed({ color: COLORS.red, title: '🗑️ رول اتمسحت', lines: [`🎭 الرول: **${role.name}** (${role.id})`, byLine(entry)] }));
 }
 
 export async function logRoleUpdate(oldRole, newRole) {
-    if (!newRole?.guild || !isHomeGuild(newRole.guild.id)) return false;
+    if (!newRole?.guild) return false;
     const lines = [];
     if (oldRole.name !== newRole.name) lines.push(`✏️ الاسم: **${oldRole.name}** ← **${newRole.name}**`);
     const colorOf = (role) => role.colors?.primaryColor ?? role.color ?? 0;

@@ -17,6 +17,7 @@ import { sendModerationActionLog } from './moderationActionLogService.js';
 import { canLiftHardBan } from './hardBanService.js';
 import { isStaffMember } from '../staffRoleHierarchyService.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { postAuditRoom } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
 
 export const FLOOD_MESSAGES = 6;
@@ -90,6 +91,25 @@ export async function handleSpam(message, { now = Date.now() } = {}) {
         await member.timeout(SPAM_TIMEOUT_MS, reason).catch((error) => logger.warn(`Spam timeout failed for ${member.id}: ${error.message}`));
         await sendModerationActionLog(message.guild, { action: 'timeout', targetUser: message.author, moderatorUser: message.client.user, reason, durationMs: SPAM_TIMEOUT_MS, channel: message.channel });
     }
+
+    try {
+        const lines = [
+            `👤 **العضو:** <@${message.author.id}> (${message.author.tag || message.author.id})`,
+            `💬 **الروم:** <#${message.channel.id}>`,
+            `🚫 **المخالفة:** ${reason}`,
+            `⚖️ **الإجراء:** مسح الرسائل + تايم ${SPAM_TIMEOUT_MS / 60_000} دقائق`,
+            `🤖 **المنفذ:** <@${message.client?.user?.id}> (بوت)`,
+        ];
+        await postAuditRoom(message.guild, 'automode', {
+            color: 0xe74c3c,
+            title: '🛡️ أوتومود — مكافحة السبام (Anti-Spam)',
+            description: lines.join('\n'),
+            timestamp: new Date().toISOString(),
+        });
+    } catch (auditErr) {
+        logger.debug('Failed to post spam action to automode room:', auditErr);
+    }
+
     await notice(message.channel, message.author.id, `${reason} ・ ⏳ تايم ${SPAM_TIMEOUT_MS / 60_000} دقايق`);
     return true;
 }
@@ -135,6 +155,25 @@ export async function handleOwnerMentionSpam(message, { now = Date.now() } = {})
             logger.warn(`Owner mention warning failed for ${message.author.id}: ${error.message}`);
         }
     }
+
+    try {
+        const lines = [
+            `👤 **العضو:** <@${message.author.id}> (${message.author.tag || message.author.id})`,
+            `💬 **الروم:** <#${message.channel.id}>`,
+            `🚫 **المخالفة:** ${reason}`,
+            `⚖️ **الإجراء:** ${punishment}`,
+            `🤖 **المنفذ:** <@${message.client?.user?.id}> (بوت)`,
+        ];
+        await postAuditRoom(message.guild, 'automode', {
+            color: 0xFEE75C,
+            title: '🛡️ أوتومود — منشن صاحب السيرفر',
+            description: lines.join('\n'),
+            timestamp: new Date().toISOString(),
+        });
+    } catch (auditErr) {
+        logger.debug('Failed to post owner mention action to automode room:', auditErr);
+    }
+
     await notice(message.channel, message.author.id, `متمنشنش صاحب السيرفر كتير ・ ${punishment}`);
     return true;
 }

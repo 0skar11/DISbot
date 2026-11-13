@@ -1,4 +1,4 @@
-import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
+import { Events, EmbedBuilder, PermissionFlagsBits, AuditLogEvent } from 'discord.js';
 import { getColor, botConfig } from '../config/bot.js';
 import { getWelcomeConfig, getUserApplications, deleteApplication } from '../utils/database.js';
 import { formatWelcomeMessage } from '../utils/welcome.js';
@@ -6,6 +6,7 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
 import { deleteUserLevelData } from '../services/leveling/leveling.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
 import { logger } from '../utils/logger.js';
 import { isHomeGuild } from '../config/homeGuild.js';
 
@@ -77,6 +78,25 @@ export default {
                     });
                 }
             }
+        }
+
+        try {
+            const kickEntry = await fetchAuditEntry(guild, AuditLogEvent.MemberKick, user.id);
+            if (kickEntry) {
+                const lines = [
+                    `👤 **العضو:** <@${user.id}> (${user.tag || user.username || user.id} - ${user.id})`,
+                    `👮 **المشرف:** ${formatExecutor(kickEntry.executor)}`,
+                    `📄 **السبب:** ${kickEntry.reason || 'بدون سبب'}`,
+                ];
+                await postAuditRoom(guild, 'ban', {
+                    color: 0xFFA500,
+                    title: '👢 طرد عضو (Kick)',
+                    description: lines.join('\n'),
+                    timestamp: new Date().toISOString(),
+                });
+            }
+        } catch (kickError) {
+            logger.debug('Error checking kick entry on member remove:', kickError);
         }
 
         try {

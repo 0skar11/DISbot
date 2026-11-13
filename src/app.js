@@ -39,6 +39,9 @@ class TitanBot extends Client {
         GatewayIntentBits.GuildVoiceStates,             
 
         GatewayIntentBits.GuildBans,
+        GatewayIntentBits.GuildModeration,
+        GatewayIntentBits.AutoModerationExecution,
+        GatewayIntentBits.AutoModerationConfiguration,
         GatewayIntentBits.GuildInvites,                    
       ],
     });

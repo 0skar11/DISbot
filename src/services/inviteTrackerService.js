@@ -1,6 +1,7 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { getGuildConfig } from './config/guildConfig.js';
 import { getAuditLogChannelId } from './auditLogChannelsService.js';
+import { postAuditRoom } from './logging/auditRooms.js';
 import { registerJoin } from './inviteRewardService.js';
 import { logger } from '../utils/logger.js';
 
@@ -83,10 +84,6 @@ async function processJoin(member) {
 
 async function logJoin(member, used, after) {
   const { guild } = member;
-  const config = await getGuildConfig(member.client, guild.id);
-  const channelId = getAuditLogChannelId(config, 'invites');
-  const channel = channelId ? guild.channels.cache.get(channelId) : null;
-  if (!channel?.isTextBased?.()) return;
 
   let inviteLine = '**الدعوة:** غير معروفة';
   let inviterLine = '**دعاه:** غير معروف';
@@ -100,21 +97,18 @@ async function logJoin(member, used, after) {
       : '**دعاه:** غير معروف';
   }
 
-  await channel.send({
-    embeds: [{
-      title: '📨 عضو دخل',
-      color: 0x57f287,
-      thumbnail: { url: member.user.displayAvatarURL() },
-      description: [
-        `**العضو:** ${member} (${member.user.tag} - ${member.id})`,
-        inviterLine,
-        inviteLine,
-        `**عمر الحساب:** <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`,
-        `**عدد الأعضاء:** ${guild.memberCount}`,
-      ].join('\n'),
-      timestamp: new Date().toISOString(),
-    }],
-    allowedMentions: { parse: [] },
+  await postAuditRoom(guild, 'invites', {
+    title: '📨 عضو دخل',
+    color: 0x57f287,
+    thumbnail: { url: member.user?.displayAvatarURL?.() },
+    description: [
+      `**العضو:** ${member} (${member.user?.tag || member.id} - ${member.id})`,
+      inviterLine,
+      inviteLine,
+      `**عمر الحساب:** <t:${Math.floor((member.user?.createdTimestamp || Date.now()) / 1000)}:R>`,
+      `**عدد الأعضاء:** ${guild.memberCount}`,
+    ].join('\n'),
+    timestamp: new Date().toISOString(),
   });
 }
 

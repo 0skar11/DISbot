@@ -1,3 +1,4 @@
+import { AuditLogEvent } from 'discord.js';
 import { 
     getJoinToCreateConfig, 
     removeJoinToCreateTrigger,
@@ -6,11 +7,44 @@ import {
     saveTicketData
 } from '../utils/database.js';
 import { getServerCounters, saveServerCounters } from '../services/serverstatsService.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
 import { logger } from '../utils/logger.js';
+
+function formatChannelType(type) {
+    switch (type) {
+        case 0: return 'روم كتابي (Text)';
+        case 2: return 'روم صوتي (Voice)';
+        case 4: return 'قسم (Category)';
+        case 5: return 'إعلانات (Announcement)';
+        case 13: return 'منصة (Stage)';
+        case 15: return 'منتدى (Forum)';
+        default: return `نوع ${type}`;
+    }
+}
 
 export default {
     name: 'channelDelete',
     async execute(channel, client) {
+        if (channel.guild) {
+            try {
+                const entry = await fetchAuditEntry(channel.guild, AuditLogEvent.ChannelDelete, channel.id);
+                const lines = [
+                    `🏷️ **الروم:** **${channel.name}** [${channel.id}]`,
+                    `📁 **النوع:** ${formatChannelType(channel.type)}`,
+                    channel.parentId ? `📂 **القسم:** ${channel.parent?.name || channel.parentId}` : null,
+                    `👮 **بواسطة:** ${formatExecutor(entry?.executor)}`,
+                ].filter(Boolean);
+
+                await postAuditRoom(channel.guild, 'channels', {
+                    color: 0xe74c3c,
+                    title: '🗑️ روم اتمسحت',
+                    description: lines.join('\n'),
+                    timestamp: new Date().toISOString(),
+                });
+            } catch (err) {
+                logger.warn(`Failed to log channelDelete for ${channel.id}:`, err);
+            }
+        }
         
         if (channel.type === 0 && channel.guild) {
             try {

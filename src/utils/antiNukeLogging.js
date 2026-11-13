@@ -2,6 +2,7 @@ import { AuditLogEvent, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { logger } from './logger.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 import { isServerOwner } from '../config/serverOwners.js';
+import { postAuditRoom } from '../services/logging/auditRooms.js';
 
 const TEN_SECONDS = 10_000;
 const ONE_MINUTE = 60_000;
@@ -98,6 +99,12 @@ function warn(guild, executorId, action, count, threshold) {
 function alert(guild, executorId, punishment, reason) {
   const embed = new EmbedBuilder().setColor(0xed4245).setTitle(`🚨 ${punishment}`)
     .setDescription(`**العضو:** <@${executorId}>\n**السبب:** ${reason}\n**الوقت:** ${time()}`);
+  postAuditRoom(guild, 'automode', {
+    color: 0xed4245,
+    title: `🛡️ أوتومود — مكافحة التخريب (Anti-Raid): ${punishment}`,
+    description: `👤 **العضو:** <@${executorId}>\n📄 **السبب:** ${reason}\n🤖 **المنفذ:** <@${guild.client?.user?.id}> (بوت)`,
+    timestamp: new Date().toISOString(),
+  }).catch(() => {});
   return send(guild, { content: `<@&${ALERT_ROLE_ID}>`, embeds: [embed], allowedMentions: { roles: [ALERT_ROLE_ID] } });
 }
 

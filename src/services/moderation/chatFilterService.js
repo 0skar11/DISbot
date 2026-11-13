@@ -17,6 +17,7 @@ import { canLiftHardBan } from './hardBanService.js';
 import { REPORT_CHANNEL_ID } from '../reportChannelService.js';
 import { issueWarning } from './warnEscalation.js';
 import { sendModerationActionLog } from './moderationActionLogService.js';
+import { postAuditRoom } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
 import { checkText } from './chatFilterRules.js';
 export { checkText, normalizeForFilter, IBN_AL_ALLOWED, INSULTS, BANNED_WORDS } from './chatFilterRules.js';
@@ -66,6 +67,25 @@ export async function handleChatFilter(message) {
         }
     } catch (error) {
         logger.warn(`Chat filter could not punish ${message.author.id}: ${error.message}`);
+    }
+
+    try {
+        const lines = [
+            `👤 **العضو:** <@${message.author.id}> (${message.author.tag || message.author.id})`,
+            `💬 **الروم:** <#${message.channel.id}>`,
+            `🚫 **المخالفة:** ${rule.label} (\`${ruleName}\`)`,
+            `⚖️ **الإجراء:** ${punishment}`,
+            `📝 **الرسالة:** ${message.content.slice(0, 1000)}`,
+            `🤖 **المنفذ:** <@${message.client?.user?.id}> (بوت)`,
+        ];
+        await postAuditRoom(message.guild, 'automode', {
+            color: 0xe74c3c,
+            title: '🛡️ أوتومود — فلتر الشات',
+            description: lines.join('\n'),
+            timestamp: new Date().toISOString(),
+        });
+    } catch (auditErr) {
+        logger.debug('Failed to post chat filter action to automode room:', auditErr);
     }
 
     await notice(message, rule.reply ? rule.reply(message.author.id) : `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);

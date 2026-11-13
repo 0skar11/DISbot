@@ -3,6 +3,7 @@
 import { ChannelType } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from './config/guildConfig.js';
 import { logger } from '../utils/logger.js';
+import { resolveAuditRoom, postAuditRoom } from './logging/auditRooms.js';
 import {
   appendContentSection,
   buildLogDescription,
@@ -185,6 +186,16 @@ export function isEventEnabled(config, eventType) {
   return true;
 }
 
+export function getAuditRoomKeyForEvent(eventType) {
+  if (!eventType || typeof eventType !== 'string') return null;
+  if (eventType.startsWith('message.')) return 'message';
+  if (['moderation.ban', 'moderation.kick', 'moderation.unban'].includes(eventType)) return 'ban';
+  if (['moderation.timeout', 'moderation.untimeout', 'moderation.mute'].includes(eventType)) return 'timeout';
+  if (eventType.startsWith('member.')) return 'join';
+  // role.* stays with roleLogs (avoid duplicates)
+  return null;
+}
+
 function getLogChannelForEvent(config, eventType, overrideChannelId = null) {
   if (overrideChannelId) {
     return overrideChannelId;
@@ -223,6 +234,32 @@ export async function logEvent({
       return null;
     }
 
+    // Check if event is explicitly disabled
+    const enabledEvents = config?.logging?.enabledEvents || {};
+    const category = eventType?.split('.')[0];
+    if (enabledEvents[eventType] === false || (category && enabledEvents[`${category}.*`] === false)) {
+      return null;
+    }
+
+    // Check if a room exists for this event in audit rooms (e.g. Radar)
+    const roomKey = getAuditRoomKeyForEvent(eventType);
+    if (roomKey) {
+      const roomChannel = await resolveAuditRoom(guild, roomKey);
+      if (roomChannel) {
+        const embed = createLogEmbed(guild, eventType, data);
+        const payload = { embeds: [embed] };
+        if (content) payload.content = content;
+        if (attachments?.length > 0) payload.files = attachments;
+
+        const sent = await postAuditRoom(guild, roomKey, payload);
+        if (sent) {
+          logger.info(`Event logged: ${eventType} in guild ${guildId} (routed to ${roomKey})`);
+          return sent;
+        }
+      }
+    }
+
+    // Fallback: old audit destination behavior (requires config.logging.enabled)
     if (!isEventEnabled(config, eventType)) {
       return null;
     }
@@ -334,7 +371,7 @@ function createLogEmbed(guild, eventType, data) {
     fields: data.blockFields || [],
     author: data.author || null,
     timestamp: true,
-    footer: data.footer || { text: guild.name, iconURL: guild.iconURL({ dynamic: true }) || undefined },
+    footer: data.footer || { text: guild.name, iconURL: guild.iconURL?.({ dynamic: true }) || undefined },
   });
 }
 

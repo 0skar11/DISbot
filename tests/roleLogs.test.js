@@ -62,9 +62,9 @@ describe('the roles log room (kept at the owner\'s request)', () => {
     assert.equal(await logRoleCreate({ id: 'r9', guild, name: 'Ticket' }), false);
   });
 
-  test('another server gets nothing', async () => {
+  test('another server is logged too (every server gets the update)', async () => {
     const { guild, sent } = setup({ guildId: '100000000000000099' });
-    assert.equal(await logMemberRoles(member(guild, MEMBER, []), member(guild, MEMBER, ['r1'])), false);
-    assert.equal(sent.length, 0);
+    assert.equal(await logMemberRoles(member(guild, MEMBER, []), member(guild, MEMBER, ['r1'])), true);
+    assert.equal(sent.length,  1);
   });
 });
