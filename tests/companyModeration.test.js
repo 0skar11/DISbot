@@ -67,12 +67,13 @@ test('blocked-name normalization catches spacing, accents, presentation forms an
 test('company names share server word rules and reject explicit adult names without substring false positives', () => {
     assert.equal(chatRule, checkText, 'chat and company use one pure rule implementation');
     const blockedNames = ['مطعم الدعارة', 'دار د ع ا ر ة', 'دار د.ع.ا.ر.ة', 'ﺩﻋﺎﺭﺓ', 'دَعاَرة',
-        'مؤسسة سكس', 's3x restaurant', 'p0rn cafe', 'b r o t h e l', 'مطعم شرموطه', 'شركة الحفره', 'a3ars cafe',
+        'مؤسسة سكس', 's3x restaurant', 'p0rn cafe', 'b r o t h e l', 'مطعم شرموطه', 'a3ars cafe',
         'دع اره', 'دع.اره', 'دعا-ره', 'pro stitution', 'por n', 'مطعم دع.اره', 'مطعم الدع.اره',
-        'my s e x', 'my p0r n cafe', 'مطعم شر موطه', 'مطعم شر.موطه', 'kha wal cafe', 'kh awal cafe', 'شركة الح فره'];
+        'my s e x', 'my p0r n cafe', 'مطعم شر موطه', 'مطعم شر.موطه', 'kha wal cafe', 'kh awal cafe'];
     for (const name of blockedNames) assert.equal(companyNameIssue(name), 'forbidden_name', name);
     for (const name of ['Essex Restaurant', 'Middlesex Meals', 'Sussex Diner', 'مطعم أطفال', 'مطعم العائلة', 'Kids Restaurant',
-        'جنسن للمأكولات', 'خوله للمأكولات', 'ابن العم', 'ابن ال عم', 'مطعم ابن الحلال', 'Nick Restaurant', 'نيكول للمأكولات']) {
+        'جنسن للمأكولات', 'خوله للمأكولات', 'ابن العم', 'ابن ال عم', 'مطعم ابن الحلال', 'Nick Restaurant', 'نيكول للمأكولات',
+        'شركة الحفره', 'شركة الح فره']) {
         assert.equal(companyNameIssue(name), null, name);
     }
     assert.equal(companyNameIssue('a'.repeat(33)), 'name');
