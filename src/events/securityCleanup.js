@@ -10,7 +10,7 @@ export default {
         for (const guild of client.guilds.cache.values()) {
             try {
                 const result = await runSecurityCleanup(client, guild);
-                if (!result.skipped) startupLog(`Security cleanup in ${guild.name}: ${result.invitesDeleted} invites deleted, ${result.users} users and ${result.roles} roles untrusted`);
+                if (!result.skipped) startupLog(`Security cleanup in ${guild.name}: ${result.users} users and ${result.roles} roles untrusted`);
             } catch (error) {
                 logger.error(`Security cleanup failed in ${guild.name}:`, error);
             }

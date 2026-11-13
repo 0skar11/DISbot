@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { PermissionsBitField } from 'discord.js';
 import { checkText, handleChatFilter, INSULTS, IBN_AL_ALLOWED } from '../src/services/moderation/chatFilterService.js';
 import { trackMessage, handleOwnerMentionSpam, handleSpam, FLOOD_MESSAGES, OWNER_PING_ID, SPAM_TIMEOUT_MS } from '../src/services/moderation/antiSpamService.js';
-import { purgeInvites, untrust } from '../src/services/securityCleanupService.js';
+import { runSecurityCleanup, untrust } from '../src/services/securityCleanupService.js';
+import securityCleanupEvent from '../src/events/securityCleanup.js';
 import { SERVER_OWNER_IDS } from '../src/config/serverOwners.js';
 import { MAIN_INVITE_CODE } from '../src/config/security.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
@@ -173,16 +174,35 @@ describe('security cleanup (#145, #149, #150, #152)', () => {
     assert.deepEqual(SERVER_OWNER_IDS, ['1159601661392715906']);
   });
 
-  test('deletes every invite except the main one', async () => {
-    const deleted = [];
-    const invite = (code) => ({ code, delete: async () => deleted.push(code) });
+  test('invites are never deleted on startup or cleanup (owner request)', async () => {
+    let deleteCalled = false;
+    const invite = (code) => ({
+      code,
+      delete: async () => {
+        deleteCalled = true;
+        throw new Error('invite.delete must never be called');
+      },
+    });
     const guild = {
+      id: 'g_invite_test',
       name: 'g',
       members: { me: { permissions: new PermissionsBitField(PermissionsBitField.All) } },
       invites: { fetch: async () => new Map(['a1', MAIN_INVITE_CODE, 'b2'].map((code) => [code, invite(code)])) },
     };
-    assert.equal(await purgeInvites(guild), 2);
-    assert.deepEqual(deleted, ['a1', 'b2']);
+    const store = new Map();
+    const client = {
+      guilds: { cache: new Map([[guild.id, guild]]) },
+      db: { get: async (k, f) => (store.has(k) ? store.get(k) : f), set: async (k, v) => { store.set(k, v); return true; } },
+    };
+    const result = await runSecurityCleanup(client, guild);
+    assert.equal(deleteCalled, false, 'runSecurityCleanup does not delete invites');
+    assert.equal(result.skipped, false);
+    assert.equal('invitesDeleted' in result, false);
+
+    // Also verify the ready event execution does not delete invites
+    store.clear();
+    await securityCleanupEvent.execute(client);
+    assert.equal(deleteCalled, false, 'securityCleanup event does not delete invites');
   });
 
   test('takes izatona and role 1547448260661084161 out of the trusted list', async () => {

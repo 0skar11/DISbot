@@ -4,7 +4,7 @@
 
 export const CLEANUP_VERSION = 1;
 
-// The only invite link that stays; every other invite of the server is deleted (report #152).
+// The main invite link (report #152). Invites are never deleted by the bot (owner request).
 export const MAIN_INVITE_CODE = 'paaHzAssVG';
 export const MAIN_INVITE_URL = `https://discord.gg/${MAIN_INVITE_CODE}`;
 
