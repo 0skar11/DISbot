@@ -15,7 +15,8 @@ export const INSULTS = [
 ];
 const INSULTS_LATIN = ['sharmot', 'sharmota', 'metnak', 'mitnak', 'metnaka', 'manyok', 'manyak', 'khawal', 'a3ars', '3ars', 'm3ars', 'zobr', 'zeby', 'teez', 'tez', 'labwa', 'a7ba'];
 
-export const BANNED_WORDS = [/(?<!\p{L})ال\s?حفره(?!\p{L})/u, /(?<![a-z])[ae]l\s?7ofr?a(?![a-z])/u];
+// "الحفره" used to be here; it is allowed now (in every server). Add patterns here to delete a word without punishment.
+export const BANNED_WORDS = [];
 
 /** Lowercase, no tashkeel/tatweel/invisibles, consistent letter shapes and no repeats. */
 export function normalizeForFilter(text) {
