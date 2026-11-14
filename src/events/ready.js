@@ -11,7 +11,7 @@ import { startHomeTickets } from "../services/tickets/homeTickets.js";
 import { publishArabicModerationCommands } from "../services/moderationCommandsBoardService.js";
 import { publishTrustedBoard } from "../services/trustedBoardService.js";
 import { removeRetiredBoards } from "../services/retiredBoards.js";
-import { publishHoneypotNotice } from "../services/security/honeypotNotice.js";
+import { publishHoneypotNotice, publishZenithHoneypotNotice } from "../services/security/honeypotNotice.js";
 import { publishProofGuide } from "../services/moderation/proofMergeService.js";
 import { startCCTopBoard } from "../services/games/ccTopBoard.js";
 import { startServersBoard } from "../services/serversBoard.js";
@@ -58,6 +58,11 @@ export default {
         startupLog(`Honeypot notice: ${(await publishHoneypotNotice(client)).status}`);
       } catch (error) {
         logger.error("Failed to post the honeypot notice:", error);
+      }
+      try {
+        startupLog(`Zenith honeypot notice: ${(await publishZenithHoneypotNotice(client)).status}`);
+      } catch (error) {
+        logger.error("Failed to post the Zenith honeypot notice:", error);
       }
       try {
         await removeRetiredBoards(client);

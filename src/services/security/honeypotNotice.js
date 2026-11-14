@@ -54,3 +54,47 @@ export async function publishHoneypotNotice(client) {
     }
     return { status: 'skipped' };
 }
+
+// Zenith's trap room (#honeypot, the one Protector watches): same bilingual notice as CHAOS Club's, posted once,
+// pinned, and edited in place on later startups.
+const ZENITH_GUILD_ID = '1569932761471524874';
+const ZENITH_CHANNEL_NAME = 'honeypot';
+const ZENITH_BOARD_KEY = 'honeypotNoticeZenith';
+const ZENITH_FOOTER = 'Honeypot';
+
+export function buildZenithHoneypotNotice() {
+    return {
+        color: 0x2b2d31,
+        title: 'Honeypot',
+        description: [
+            '# DO NOT TYPE HERE',
+            '**لا تكتب هنا**',
+            '',
+            'Typing in this channel = **instant ban**.',
+            'الكتابة بهذي الروم = **باند فوري**.',
+            '',
+            'This channel is a trap to catch hacked accounts and spam bots. Just ignore it.',
+            'هذي الروم فخ لكشف الحسابات المهكرة وبوتات السبام، تجاهلها وبس.',
+        ].join('\n'),
+        footer: { text: ZENITH_FOOTER },
+    };
+}
+
+export async function publishZenithHoneypotNotice(client) {
+    const guild = client.guilds.cache.get(ZENITH_GUILD_ID);
+    if (!guild) return { status: 'skipped' };
+    const channel = guild.channels.cache.find((entry) => entry.name === ZENITH_CHANNEL_NAME && entry.isTextBased?.());
+    if (!channel) return { status: 'missing-channel' };
+    const payload = { embeds: [buildZenithHoneypotNotice()], allowedMentions: { parse: [] } };
+    const isOwn = (message) => message.author?.id === client.user.id && message.embeds?.[0]?.footer?.text === ZENITH_FOOTER;
+    const existing = await findBoardMessage(channel, ZENITH_BOARD_KEY, isOwn).catch(() => null);
+    if (existing) {
+        await existing.edit(payload);
+        if (!existing.pinned) await existing.pin().catch(() => {});
+        return { status: 'updated' };
+    }
+    const sent = await channel.send(payload);
+    await rememberBoardMessage(channel, ZENITH_BOARD_KEY, sent.id);
+    await sent.pin().catch((error) => logger.warn(`Could not pin the Zenith honeypot notice: ${error.message}`));
+    return { status: 'sent' };
+}
