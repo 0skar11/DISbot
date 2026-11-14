@@ -162,14 +162,13 @@ export async function pullToVoice(message, targetMember) {
   if (!isOwner && (message.guild.ownerId === targetMember.id || targetMember.roles.highest.position >= staff.roles.highest.position)) {
     return reply(message, '❌ ماتقدرش تسحب عضو رتبته أعلى منك أو زيك.');
   }
-  // The bot does the move, so the staff member's own rights count on both rooms (a deny on a room is not bypassed),
-  // and the member must be allowed into the room too. Owners skip the staff check.
+  // The bot does the move, so the staff member's own rights count on both rooms (a deny on a room is not bypassed).
+  // The pulled member needs no right on the room (staff may bring anyone anywhere). Owners skip the staff check.
   const from = targetMember.voice.channel;
   const allowed = (channel, who, flags) => channel?.permissionsFor?.(who)?.has(flags) ?? true;
   if (!isOwner && !(allowed(from, staff, PermissionFlagsBits.MoveMembers) && allowed(room, staff, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]))) {
     return reply(message, '🚫 No Permission');
   }
-  if (!allowed(room, targetMember, PermissionFlagsBits.Connect)) return reply(message, '❌ العضو ممنوع يدخل الروم ده.');
   await targetMember.voice.setChannel(room, `Pulled by ${message.author.tag}`);
   await message.channel.send({ content: `✅ تم سحب <@${targetMember.id}> إلى ${room}`, allowedMentions: { parse: [] } }).catch(() => {});
   return true;
