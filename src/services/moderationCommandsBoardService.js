@@ -51,6 +51,7 @@ function buildEmbed() {
           '`قفل` — Lock channel',
           '`فتح` — Unlock channel',
           '`مسح 10` / `م 10` — Delete messages',
+          '`سحب @العضو` — Pull to your voice room',
           '`ملاحظات @العضو` — User notes',
           '`ملاحظات @العضو الملاحظة` — Add a note',
           '`قل @العضو النص` — Say as the bot',

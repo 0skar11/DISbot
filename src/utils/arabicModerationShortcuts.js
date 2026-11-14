@@ -12,7 +12,7 @@ import { moderationCard, cardReason, formatDurationMs, NO_REASON } from './moder
 import { unbanDmLine } from '../services/moderation/punishmentDm.js';
 
 const COMMANDS = new Set([
-  'وارن', 'وارنات', 'تايم', 'انتايم', 'بان', 'انبان', 'كلير', 'ان', 'شيل', 'ر', 'رول', 'ب', 'رتبة', 'ازالةرتبة', 'purge', 'تراست', 'انتراست', 'trusted', 'trustedlist', 'warn', 'warnings', 'timeout', 'untimeout', 'ban', 'unban', 'clear', 'remove', 'role', 'roll', 'lock', 'unlock',
+  'وارن', 'وارنات', 'تايم', 'انتايم', 'بان', 'انبان', 'كلير', 'ان', 'شيل', 'ر', 'رول', 'ب', 'رتبة', 'ازالةرتبة', 'purge', 'تراست', 'انتراست', 'trusted', 'trustedlist', 'warn', 'warnings', 'timeout', 'untimeout', 'ban', 'unban', 'clear', 'remove', 'role', 'roll', 'lock', 'unlock', 'سحب', 'pull',
 ].map((value) => value.toLowerCase()));
 const ADD_ROLE_COMMANDS = new Set(['ر', 'رول', 'ان', 'رتبة', 'role', 'roll', 'addrole']);
 const REMOVE_ROLE_COMMANDS = new Set(['ب', 'شيل', 'ازالةرتبة', 'remove', 'unrole', 'removerole']);
@@ -146,6 +146,27 @@ async function changeRole(message, targetMember, roleName, add) {
   return sendCard(message, { emoji: '➖', title: 'ROLE REMOVED', fields: [['User', `<@${targetMember.id}>`], ['Role', `${role}`]], moderatorId: message.author.id });
 }
 
+/**
+ * `سحب @العضو` (or as a reply): moves the member to the voice room the staff member is in. Staff only (Move Members);
+ * the owner and members of a higher or equal role can't be pulled by a lower one. Without the permission it stays silent.
+ */
+export async function pullToVoice(message, targetMember) {
+  const staff = message.member;
+  if (!hasPermission(staff, PermissionFlagsBits.MoveMembers)) return reply(message, '🚫 No Permission');
+  if (!targetMember) return true;
+  const room = staff.voice?.channel;
+  if (!room) return reply(message, '❌ ادخل روم صوتي الأول.');
+  if (!targetMember.voice?.channel) return reply(message, '❌ العضو مش في روم صوتي.');
+  if (targetMember.voice.channelId === room.id) return reply(message, '⚠️ هو معاك في نفس الروم.');
+  const isOwner = message.guild.ownerId === staff.id || isServerOwner(staff.id);
+  if (!isOwner && (message.guild.ownerId === targetMember.id || targetMember.roles.highest.position >= staff.roles.highest.position)) {
+    return reply(message, '❌ ماتقدرش تسحب عضو رتبته أعلى منك أو زيك.');
+  }
+  await targetMember.voice.setChannel(room, `Pulled by ${message.author.tag}`);
+  await message.channel.send({ content: `✅ تم سحب <@${targetMember.id}> إلى ${room}`, allowedMentions: { parse: [] } }).catch(() => {});
+  return true;
+}
+
 async function listWarnings(message, targetMember, guildId) {
   if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
   if (!targetMember) return true;
@@ -248,6 +269,8 @@ export async function handleArabicModerationShortcut(message) {
   try {
     if (command === 'وارنات' || command === 'warnings') return listWarnings(message, targetMember, guild.id);
     if (ADD_ROLE_COMMANDS.has(command) || REMOVE_ROLE_COMMANDS.has(command)) return changeRole(message, targetMember, tail, ADD_ROLE_COMMANDS.has(command));
+
+    if (command === 'سحب' || command === 'pull') return pullToVoice(message, targetMember);
 
     if (command === 'وارن' || command === 'warn') {
       if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
