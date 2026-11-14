@@ -13,7 +13,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } fro
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { filterStaffRoles } from '../staffRoleHierarchyService.js';
-import { TRUSTED_BOARD_CHANNEL_ID } from '../trustedBoardService.js';
+import { TRUSTED_BOARD_CHANNEL_ID, trustedBoardChannelFor } from '../trustedBoardService.js';
 import { isTrusted } from '../../utils/antiNukeLogging.js';
 import { logger } from '../../utils/logger.js';
 
@@ -22,6 +22,12 @@ export const REJOIN_APPROVAL_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
 // Where the decision is written once the request is deleted (the owner's log channel).
 export const REJOIN_LOG_CHANNEL_ID = '1550564287129456810';
 export const REJOIN_BUTTON_PREFIX = 'rejoinroles';
+
+// Zenith works the same way: its approval requests (and the decisions) go to its trusted room.
+const ZENITH_GUILD_ID = '1569932761471524874';
+const isRejoinGuild = (guildId) => isHomeGuild(guildId) || String(guildId) === ZENITH_GUILD_ID;
+const approvalChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_APPROVAL_CHANNEL_ID : trustedBoardChannelFor(guildId));
+const logChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_LOG_CHANNEL_ID : trustedBoardChannelFor(guildId));
 
 // Roles with any of these need approval like the staff roles.
 const DANGEROUS = [
@@ -36,7 +42,7 @@ const recordKey = (guildId, userId) => `guild:${guildId}:rejoin:${userId}`;
 /** Saves the roles and nickname of a member who leaves. Returns the saved record, or null. */
 export async function saveLeavingMember(member, now = Date.now()) {
     const guild = member?.guild;
-    if (!guild || !isHomeGuild(guild.id) || member.user?.bot) return null;
+    if (!guild || !isRejoinGuild(guild.id) || member.user?.bot) return null;
     const roles = [...(member.roles?.cache?.values?.() || [])]
         .filter((role) => role.id !== guild.id && !role.managed)
         .map((role) => role.id);
@@ -81,7 +87,7 @@ export function approvalPayload(userId, roles) {
  */
 export async function restoreRejoiningMember(member) {
     const guild = member?.guild;
-    if (!guild || !isHomeGuild(guild.id) || member.user?.bot) return null;
+    if (!guild || !isRejoinGuild(guild.id) || member.user?.bot) return null;
     const key = recordKey(guild.id, member.id);
     const record = await guild.client.db.get(key, null);
     if (!record?.roles) return null;
@@ -101,8 +107,8 @@ export async function restoreRejoiningMember(member) {
     if (record.nickname && member.manageable !== false) await member.setNickname(record.nickname, 'رجع السيرفر').catch(() => {});
 
     if (pending.length) {
-        const channel = guild.channels.cache.get(REJOIN_APPROVAL_CHANNEL_ID)
-            || await guild.channels.fetch(REJOIN_APPROVAL_CHANNEL_ID).catch(() => null);
+        const channel = guild.channels.cache.get(approvalChannelFor(guild.id))
+            || await guild.channels.fetch(approvalChannelFor(guild.id)).catch(() => null);
         await channel?.send?.(approvalPayload(member.id, pending)).catch((error) => logger.warn(`[REJOIN] Could not ask about ${member.id}: ${error.message}`));
         await guild.client.db.set(key, { ...record, roles: [], pending: pending.map((role) => role.id) });
     } else {
@@ -163,8 +169,8 @@ export function decisionLog(memberId, deciderId, roleIds, approved, skipped = []
 
 /** Posts the decision in REJOIN_LOG_CHANNEL_ID. Returns true when it was posted. */
 export async function logRejoinDecision(guild, memberId, deciderId, roleIds, approved, skipped = []) {
-    const channel = guild.channels.cache.get(REJOIN_LOG_CHANNEL_ID)
-        || await guild.channels.fetch(REJOIN_LOG_CHANNEL_ID).catch(() => null);
+    const channel = guild.channels.cache.get(logChannelFor(guild.id))
+        || await guild.channels.fetch(logChannelFor(guild.id)).catch(() => null);
     if (!channel?.send) return false;
     return channel.send(decisionLog(memberId, deciderId, roleIds, approved, skipped)).then(() => true).catch(() => false);
 }

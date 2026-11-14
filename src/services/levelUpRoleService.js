@@ -42,16 +42,33 @@ export async function handleLevelUpMessage(message) {
     return 'given';
 }
 
-/** Startup catch-up: the last 100 announcements. Returns how many members got the role. */
+const lastKey = (guildId) => `guild:${guildId}:levelUpRole:lastMessage`;
+
+/**
+ * Startup catch-up for announcements made while the bot was down. It remembers the newest announcement it has
+ * handled and only looks at newer ones, so a role a moderator removed later is never given back by a restart.
+ * Returns how many members got the role.
+ */
 export async function runLevelUpBackfill(guild) {
     const rule = levelRuleFor(guild.id);
     if (!rule) return { skipped: true };
     const channel = guild.channels.cache.get(rule.channelId);
     if (!channel?.isTextBased?.()) return { skipped: true };
-    const messages = await channel.messages.fetch({ limit: 100 });
+    const db = guild.client?.db;
+    const lastId = db ? await db.get(lastKey(guild.id), null) : null;
+    const messages = await channel.messages.fetch({ limit: 100, ...(lastId ? { after: lastId } : {}) });
+    const ordered = [...messages.values()].sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
     let given = 0;
-    for (const message of messages.values()) {
+    for (const message of ordered) {
         if (await handleLevelUpMessage(message).catch((error) => { logger.warn(`Level-up role failed: ${error.message}`); return 'error'; }) === 'given') given += 1;
     }
+    if (db && ordered.length) await db.set(lastKey(guild.id), ordered[ordered.length - 1].id);
     return { skipped: false, given };
+}
+
+/** Remembers the newest handled announcement (live ones too), so the next startup does not look at it again. */
+export async function rememberLevelUpMessage(message) {
+    const db = message.client?.db || message.guild?.client?.db;
+    if (!db || !levelRuleFor(message.guild?.id) || message.channelId !== levelRuleFor(message.guild.id).channelId) return;
+    await db.set(lastKey(message.guild.id), message.id);
 }
