@@ -1,9 +1,9 @@
 import { TRUSTED_BOARD_CHANNEL_ID } from './trustedBoardService.js';
-import { MODERATION_COMMANDS_CHANNEL_ID } from './moderationCommandsBoardService.js';
+import { MODERATION_COMMANDS_CHANNEL_ID, EXTRA_COMMANDS_CHANNEL_IDS } from './moderationCommandsBoardService.js';
 import { isServerOwner } from '../config/serverOwners.js';
 
 // Board channels where only the owners and this bot may write.
-const PROTECTED_CHANNEL_IDS = new Set([TRUSTED_BOARD_CHANNEL_ID, MODERATION_COMMANDS_CHANNEL_ID]);
+const PROTECTED_CHANNEL_IDS = new Set([TRUSTED_BOARD_CHANNEL_ID, MODERATION_COMMANDS_CHANNEL_ID, ...EXTRA_COMMANDS_CHANNEL_IDS, '1571076213705809941']);
 const BLOCKED_NOTICE_DELETE_MS = 3_000;
 const SERVERS_BOARD_BOTS = new Set(['1550544520423415928', '1567561044472103103', '1567865213540241519']);
 const SERVERS_BOARD_FOOTER = '🔄 بيتحدث تلقائي كل 5 دقايق • آخر تحديث';

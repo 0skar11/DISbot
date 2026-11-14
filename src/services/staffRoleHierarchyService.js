@@ -5,6 +5,9 @@ import { getGuildConfig, updateGuildConfig } from './config/guildConfig.js';
 import { isHomeGuild } from '../config/homeGuild.js';
 
 const ROLE_PERMISSIONS_CHANNEL_ID = '1550598605382099044';
+// The permission board room of each server (Zenith has its own).
+const PERMISSION_CHANNELS = { '1569932761471524874': '1571076213705809941' };
+export const permissionChannelFor = (guildId) => PERMISSION_CHANNELS[String(guildId)] || ROLE_PERMISSIONS_CHANNEL_ID;
 const PERMISSION_BOARD_FOOTER = 'Staff permissions • Anti-Raid / Anti-Nuke administration';
 
 const PERMISSION_LABELS = new Map([
@@ -228,14 +231,15 @@ const BOARD_RESET_CONFIG_KEY = 'staffPermissionBoardResetVersion';
 const BULK_DELETE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000 - 60_000;
 
 async function fetchBoardChannel(guild, { reset = false } = {}) {
-  const channel = await guild.channels.fetch(ROLE_PERMISSIONS_CHANNEL_ID).catch(() => null);
-  if (!channel?.isTextBased?.()) throw new Error(`Permission channel ${ROLE_PERMISSIONS_CHANNEL_ID} was not found in guild ${guild.id}`);
+  const channelId = permissionChannelFor(guild.id);
+  const channel = await guild.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) throw new Error(`Permission channel ${channelId} was not found in guild ${guild.id}`);
 
   const me = guild.members.me || await guild.members.fetchMe().catch(() => null);
   const permissions = me ? channel.permissionsFor(me) : null;
   const required = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.ReadMessageHistory];
   if (reset) required.push(PermissionFlagsBits.ManageMessages);
-  if (!permissions?.has(required)) throw new Error(`Missing permissions in channel ${ROLE_PERMISSIONS_CHANNEL_ID}: ViewChannel, SendMessages, EmbedLinks, ReadMessageHistory${reset ? ' and ManageMessages' : ''} are required`);
+  if (!permissions?.has(required)) throw new Error(`Missing permissions in channel ${channel.id}: ViewChannel, SendMessages, EmbedLinks, ReadMessageHistory${reset ? ' and ManageMessages' : ''} are required`);
   return channel;
 }
 
@@ -290,7 +294,13 @@ export async function publishStaffPermissionBoard(guild, { reset = false } = {})
   }
 
   const existing = await findBoardMessage(channel, BOARD_KEY, isBoard(guild));
-  if (!existing) return { ...result, status: 'missing' };
+  if (!existing) {
+    // Other servers get the board posted once; the home server's board is only ever edited.
+    if (isHomeGuild(guild.id) || !embeds.length) return { ...result, status: embeds.length ? 'missing' : 'no-roles' };
+    const posted = await channel.send({ embeds });
+    await rememberBoardMessage(channel, BOARD_KEY, posted.id);
+    return { ...result, status: 'sent' };
+  }
   if (!embeds.length) return { ...result, status: 'no-roles' };
   await existing.edit({ embeds });
   return { ...result, status: 'updated' };

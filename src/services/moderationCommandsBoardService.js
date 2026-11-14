@@ -3,6 +3,8 @@ import { logger } from '../utils/logger.js';
 import { findBoardMessage, rememberBoardMessage } from '../utils/boardMessage.js';
 
 export const MODERATION_COMMANDS_CHANNEL_ID = '1551621505991835699';
+// Other servers' rooms for the same list (the startup posts it there once, then keeps it updated).
+export const EXTRA_COMMANDS_CHANNEL_IDS = ['1571076238347468830'];
 const MODERATION_COMMANDS_TITLE = '🛡️ أوامر الموديريشن بالعربي';
 // Older versions showed this marker in the message; it is stripped from existing posts.
 const LEGACY_MARKER = 'titanbot:arabic-moderation-commands:v1';
@@ -73,7 +75,16 @@ function embedSignature(embed) {
  * A new post is only sent with `allowSend` (the /publish-board command); startup never posts.
  * Returns { status, channelId } where status is 'sent', 'updated', 'exists' or 'missing'; throws on failure.
  */
-export async function publishArabicModerationCommands(client, { allowSend = false } = {}) {
+export async function publishArabicModerationCommands(client, options = {}) {
+  const result = await publishCommandsIn(client, MODERATION_COMMANDS_CHANNEL_ID, options);
+  for (const channelId of EXTRA_COMMANDS_CHANNEL_IDS) {
+    await publishCommandsIn(client, channelId, { ...options, allowSend: true }).catch((error) => logger.warn(`Moderation commands board in ${channelId}: ${error.message}`));
+  }
+  return result;
+}
+
+async function publishCommandsIn(client, channelId, { allowSend = false } = {}) {
+  const MODERATION_COMMANDS_CHANNEL_ID = channelId;
   const channel = await client.channels.fetch(MODERATION_COMMANDS_CHANNEL_ID).catch((error) => {
     throw new Error(`Channel ${MODERATION_COMMANDS_CHANNEL_ID} could not be fetched (is the bot in that server?): ${error.message}`);
   });

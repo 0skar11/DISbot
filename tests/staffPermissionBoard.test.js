@@ -77,10 +77,25 @@ describe('staff permission board', () => {
     assert.equal(messages.size, 1);
   });
 
-  test('a missing board is not re-posted', async () => {
+  test('a missing board is not re-posted in the home server', async () => {
     const { guild, messages, post } = setup();
+    guild.id = '1155236281706627173';
     post({ author: { id: 'member' } });
     assert.equal((await publishStaffPermissionBoard(guild)).status, 'missing');
     assert.equal(messages.size, 1);
+  });
+
+  test('another server gets its board posted once, in its own room', async () => {
+    const { guild, messages, post } = setup();
+    guild.id = '1569932761471524874';
+    let fetched = null;
+    const channel = await guild.channels.fetch();
+    guild.channels.fetch = async (id) => { fetched = id; return channel; };
+    post({ author: { id: 'member' } });
+    assert.equal((await publishStaffPermissionBoard(guild)).status, 'sent');
+    assert.equal(fetched, '1571076213705809941');
+    assert.equal(messages.size, 2);
+    assert.equal((await publishStaffPermissionBoard(guild)).status, 'updated');
+    assert.equal(messages.size, 2);
   });
 });
