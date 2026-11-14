@@ -243,9 +243,31 @@ async function fetchBoardChannel(guild, { reset = false } = {}) {
   return channel;
 }
 
+// Other servers have their own role names, so their board lists the roles that hold powerful permissions (top role first).
+const KEY_PERMISSIONS = [
+  [PermissionFlagsBits.Administrator, 'Administrator'], [PermissionFlagsBits.ManageGuild, 'Manage Server'], [PermissionFlagsBits.ManageRoles, 'Manage Roles'],
+  [PermissionFlagsBits.ManageChannels, 'Manage Channels'], [PermissionFlagsBits.BanMembers, 'Ban Members'], [PermissionFlagsBits.KickMembers, 'Kick Members'],
+  [PermissionFlagsBits.ModerateMembers, 'Timeout Members'], [PermissionFlagsBits.ManageMessages, 'Manage Messages'], [PermissionFlagsBits.MentionEveryone, 'Mention Everyone'],
+  [PermissionFlagsBits.ManageWebhooks, 'Manage Webhooks'], [PermissionFlagsBits.ViewAuditLog, 'View Audit Log'],
+];
+
+export function buildGenericBoardEmbeds(roles) {
+  return [...roles.values()]
+    .filter((role) => !role.managed && role.name !== '@everyone' && KEY_PERMISSIONS.some(([flag]) => role.permissions.has(flag)))
+    .sort((a, b) => (b.position ?? 0) - (a.position ?? 0))
+    .slice(0, 10)
+    .map((role) => {
+      const names = role.permissions.has(PermissionFlagsBits.Administrator)
+        ? ['Administrator (كل الصلاحيات)']
+        : KEY_PERMISSIONS.filter(([flag]) => role.permissions.has(flag)).map(([, name]) => name);
+      return { color: role.color || 0x5865f2, title: role.name, description: names.map((name) => `• ${name}`).join('\n'), footer: { text: PERMISSION_BOARD_FOOTER } };
+    });
+}
+
 // One message holds every staff role's embed (one embed per role, in hierarchy order).
 async function buildBoardEmbeds(guild) {
   const roles = await guild.roles.fetch();
+  if (!isHomeGuild(guild.id)) return buildGenericBoardEmbeds(roles);
   const savedIds = await savedStaffRoleIds(guild);
   return ROLE_DEFINITIONS.flatMap((definition) => {
     const role = findStaffRole(roles, definition, savedIds);

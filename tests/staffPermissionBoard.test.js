@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionsBitField } from 'discord.js';
 import '../src/utils/embeds.js';
-import { publishStaffPermissionBoard, ROLE_DEFINITIONS } from '../src/services/staffRoleHierarchyService.js';
+import { publishStaffPermissionBoard, buildGenericBoardEmbeds, ROLE_DEFINITIONS } from '../src/services/staffRoleHierarchyService.js';
 
 const FOOTER = 'Staff permissions • Anti-Raid / Anti-Nuke administration';
 const DAY = 24 * 60 * 60 * 1000;
@@ -44,7 +44,7 @@ function setup() {
     name: definition.name, managed: false, permissions: new PermissionsBitField(definition.permissions), toString: () => `<@&${index}>`,
   }]));
   roles.find = (fn) => [...roles.values()].find(fn);
-  const guild = { id: 'g', client, channels: { fetch: async () => channel }, members: { me: {} }, roles: { fetch: async () => roles } };
+  const guild = { id: '1155236281706627173', client, channels: { fetch: async () => channel }, members: { me: {} }, roles: { fetch: async () => roles } };
   return { guild, messages, post, edits, bot };
 }
 
@@ -97,5 +97,19 @@ describe('staff permission board', () => {
     assert.equal(messages.size, 2);
     assert.equal((await publishStaffPermissionBoard(guild)).status, 'updated');
     assert.equal(messages.size, 2);
+  });
+
+  test('other servers get a board of their own powerful roles, top first, without bots or plain roles', () => {
+    const perms = (...flags) => new PermissionsBitField(flags);
+    const roles = new Map([
+      ['1', { name: 'plain', position: 1, managed: false, permissions: perms('SendMessages') }],
+      ['2', { name: 'mod', position: 5, managed: false, color: 0x2ecc71, permissions: perms('BanMembers', 'ModerateMembers') }],
+      ['3', { name: 'boss', position: 9, managed: false, permissions: perms('Administrator') }],
+      ['4', { name: 'robot', position: 8, managed: true, permissions: perms('Administrator') }],
+    ]);
+    const embeds = buildGenericBoardEmbeds(roles);
+    assert.deepEqual(embeds.map((embed) => embed.title), ['boss', 'mod']);
+    assert.match(embeds[0].description, /Administrator/);
+    assert.match(embeds[1].description, /Ban Members/);
   });
 });
