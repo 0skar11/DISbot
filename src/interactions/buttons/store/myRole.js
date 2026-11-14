@@ -1,5 +1,5 @@
 import { ComponentType, MessageFlags } from 'discord.js';
-import { isHomeGuild } from '../../../config/homeGuild.js';
+import { hasRealStore } from '../../../services/cc/ccStoreService.js';
 import { listCustomRoles, memberRoles, checkInvite, removeMember, leaveRole, handOver, setCancelled } from '../../../services/cc/customRoleService.js';
 import {
     MY_ROLE_PREFIX, MY_ROLE_PICK, myRolesPayload, invitePicker, memberPicker, invitePayload, customRoleFailureText,
@@ -35,7 +35,7 @@ async function memberNames(guild, ids) {
 }
 
 async function execute(interaction, client, [action, ownerId, roleId]) {
-    if (!interaction.inGuild() || !isHomeGuild(interaction.guildId)) return;
+    if (!interaction.inGuild() || !hasRealStore(interaction.guildId)) return;
     if (interaction.user.id !== ownerId) return privately(interaction, { content: customRoleFailureText({ reason: 'not_yours' }) });
     const { guild, user } = interaction;
 

@@ -5,8 +5,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
 import { CC, ccEmbed, formatCC } from '../../config/cc.js';
 import { ccStoreItems, ccStoreDemoItems, ccStoreSettings, storeRoomSettings, customRoleSettings, CUSTOM_ROLE_VOUCHERS, voucherFor } from '../../config/store/ccStoreItems.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
-import { storeMode, storeCatalog, buyItem } from './ccStoreService.js';
+import { storeMode, storeCatalog, buyItem, hasRealStore } from './ccStoreService.js';
 import { forecastEmbed } from './bourseUi.js';
 
 export const STORE_BUTTON_PREFIX = 'storepanel';
@@ -50,7 +49,7 @@ export function isStorePanelFooter(text) {
 
 /** The commands as a header field plus one card (inline field) per command. */
 export function commandFields(header = 'اكتب الأمر هنا في الروم 👇', guildId = null) {
-    const commands = isHomeGuild(guildId) ? [...STORE_COMMANDS, ...CUSTOM_ROLE_COMMANDS] : STORE_COMMANDS;
+    const commands = hasRealStore(guildId) ? [...STORE_COMMANDS, ...CUSTOM_ROLE_COMMANDS] : STORE_COMMANDS;
     return [
         { name: '⌨️ الأوامر', value: header },
         ...commands.map(([name, value]) => ({ name, value, inline: true })),

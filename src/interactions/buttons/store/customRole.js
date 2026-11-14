@@ -1,14 +1,14 @@
 import { MessageFlags } from 'discord.js';
 import { acceptInvite } from '../../../services/cc/customRoleService.js';
 import { CUSTOM_ROLE_PREFIX, customRoleFailureText } from '../../../services/cc/customRoleUi.js';
-import { isHomeGuild } from '../../../config/homeGuild.js';
+import { hasRealStore } from '../../../services/cc/ccStoreService.js';
 
 // The accept / decline buttons of a custom role invite (`رولي انفايت @member`, see customRoleUi.js):
 // `customrole:<accept|decline>:<roleId>:<invitedId>:<sentAt seconds>`. Only the invited member can press them.
 const privately = (interaction, content) => interaction.reply({ content, allowedMentions: { parse: [] }, flags: MessageFlags.Ephemeral }).catch(() => {});
 
 async function execute(interaction, client, [action, roleId, invitedId, sentAt]) {
-    if (!interaction.inGuild() || !isHomeGuild(interaction.guildId)) return;
+    if (!interaction.inGuild() || !hasRealStore(interaction.guildId)) return;
     if (interaction.user.id !== invitedId) return privately(interaction, '❌ الدعوة دي مش ليك.');
     if (action === 'decline') {
         return interaction.update({ content: `✖️ <@${invitedId}> رفض الدعوة.`, embeds: [], components: [], allowedMentions: { parse: [] } }).catch(() => {});

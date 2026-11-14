@@ -2,10 +2,9 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { CC } from '../../config/cc.js';
 import { ccStoreSettings, voucherFor } from '../../config/store/ccStoreItems.js';
 import { getProfile } from '../../services/cc/ccService.js';
-import { storeCatalog, findStoreItem, storeMode, maxQuantityOf } from '../../services/cc/ccStoreService.js';
+import { storeCatalog, findStoreItem, storeMode, maxQuantityOf, hasRealStore } from '../../services/cc/ccStoreService.js';
 import { buildStorePanel, inventoryEmbed, confirmPurchasePayload, purchaseFailureText, purchase } from '../../services/cc/storeUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
 import { isInlineConfirmation } from '../../config/store/confirmation.js';
 import { replyWithPrivatePurchase } from '../../services/cc/privatePurchaseReceipt.js';
 
@@ -51,7 +50,7 @@ export default {
 
         if (sub === 'list') {
             // Our server shows the member's balance on the panel (report #174); other servers keep the old panel.
-            const balance = isHomeGuild(interaction.guildId) ? (await getProfile(client, interaction.guildId, interaction.user.id)).cc : null;
+            const balance = hasRealStore(interaction.guildId) ? (await getProfile(client, interaction.guildId, interaction.user.id)).cc : null;
             return reply(buildStorePanel(interaction.guild, { balance }));
         }
 
@@ -68,7 +67,7 @@ export default {
         if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > maxQuantityOf(item)) {
             return reply({ content: purchaseFailureText({ reason: 'bad_quantity' }) });
         }
-        const confirmed = isHomeGuild(interaction.guildId) && interaction.options.getBoolean?.('confirm') === true;
+        const confirmed = hasRealStore(interaction.guildId) && interaction.options.getBoolean?.('confirm') === true;
         // Custom roles still need their form; a private result is revealed without buying again.
         if (confirmed && item.type !== 'custom_role') {
             const member = interaction.member?.roles?.cache ? interaction.member : await interaction.guild.members.fetch(interaction.user.id);

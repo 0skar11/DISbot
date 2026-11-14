@@ -6,7 +6,7 @@
 // The items are for our server only (src/config/homeGuild.js); other servers keep the old samples
 // (ccStoreDemoItems), always as a preview.
 
-import { ccStoreItems, ccStoreDemoItems, ccStoreSettings, luckBoxPrizes, voucherFor } from '../../config/store/ccStoreItems.js';
+import { ccStoreItems, ccStoreDemoItems, ccStoreSettings, luckBoxPrizes, voucherFor, zenithStoreItems, zenithLuckBoxPrizes, isZenithStore } from '../../config/store/ccStoreItems.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { getProfile, updateCCState } from './ccService.js';
 import { logger } from '../../utils/logger.js';
@@ -15,6 +15,12 @@ import { addXpBoost, BOOST_SOURCES } from '../leveling/xpBoostService.js';
 import { forecastMarket } from './bourseService.js';
 import { getTraderRole } from './traderRoleService.js';
 import { isBourseEnabled, isBourseStoreItem } from '../../config/bourseFeature.js';
+
+/** Servers with the real store: ours and Zenith (the others only see the old samples, as a preview). */
+export const hasRealStore = (guildId) => isHomeGuild(guildId) || isZenithStore(guildId);
+/** The catalog of a server's store: Zenith's own, else `fallback` (ours). */
+export const storeItemsFor = (guildId, fallback = ccStoreItems) => (isZenithStore(guildId) ? zenithStoreItems : fallback);
+const prizesFor = (guildId) => (isZenithStore(guildId) ? zenithLuckBoxPrizes : luckBoxPrizes);
 
 const ITEM_TYPES = new Set(['role', 'item', 'luckbox', 'boost', 'forecast', 'custom_role']);
 // Bought one at a time.
@@ -42,7 +48,7 @@ export function listStoreItems(items = ccStoreItems) {
         const problems = validateStoreItem(item);
         if (problems.length) logger.warn(`[CC_STORE] Skipping item ${item?.id}: ${problems.join('; ')}`);
         return problems.length === 0;
-    }).map((item) => !isBourseEnabled() && item.type === 'luckbox'
+    }).map((item) => !isBourseEnabled() && item.type === 'luckbox' && !item.keepDescription
         ? { ...item, description: 'جواه جايزة عشوائية: CC، بوست، صندوق تاني ببلاش، أو نادراً شهر ببلاش لرول مميزة' }
         : item);
 }
@@ -52,7 +58,7 @@ export function listStoreItems(items = ccStoreItems) {
  * keep the store as it was (trial) and get no updates.
  */
 export function storeMode(settings = ccStoreSettings, guildId = null) {
-    if (guildId && !isHomeGuild(guildId)) return settings.open || settings.trial ? 'trial' : 'closed';
+    if (guildId && !hasRealStore(guildId)) return settings.open || settings.trial ? 'trial' : 'closed';
     if (settings.open) return 'open';
     return settings.trial ? 'trial' : 'closed';
 }
@@ -70,8 +76,8 @@ export function sortStoreItems(items) {
 export function storeCatalog(settings = ccStoreSettings, { items = ccStoreItems, demoItems = ccStoreDemoItems, guildId = null } = {}) {
     if (storeMode(settings, guildId) === 'closed') return [];
     // Other servers keep their old sample store exactly as it was (no updates).
-    if (guildId && !isHomeGuild(guildId)) return listStoreItems(demoItems);
-    return sortStoreItems(listStoreItems(items));
+    if (guildId && !hasRealStore(guildId)) return listStoreItems(demoItems);
+    return sortStoreItems(listStoreItems(storeItemsFor(guildId, items)));
 }
 
 /** How many of `item` can be bought at once. */
@@ -96,7 +102,8 @@ export function drawLuckBoxPrize(prizes = luckBoxPrizes, rng = Math.random) {
  * the role (or it's missing).
  */
 async function drawLuckBox(client, member, items, rng) {
-    const eligible = isBourseEnabled() ? luckBoxPrizes : luckBoxPrizes.filter((prize) => !prize.forecast && prize.role !== 'trader_role' && !isBourseStoreItem(items.find((item) => item.id === prize.role)));
+    const prizes = prizesFor(member.guild.id);
+    const eligible = isBourseEnabled() ? prizes : prizes.filter((prize) => !prize.forecast && prize.role !== 'trader_role' && !isBourseStoreItem(items.find((item) => item.id === prize.role)));
     if (!eligible.length) throw new Error('No available luck box prizes');
     const first = drawLuckBoxPrize(eligible, rng);
     const drawn = first.extraBox ? [first, drawLuckBoxPrize(eligible.filter((prize) => !prize.extraBox), rng)] : [first];
@@ -115,8 +122,8 @@ async function itemRoleId(client, guild, item) {
     return item.roleKey === 'trader' ? (await getTraderRole(client, guild).catch(() => null))?.id || null : null;
 }
 
-export function getStoreItem(itemId, items = ccStoreItems) {
-    return listStoreItems(items).find((item) => item.id === String(itemId || '').toLowerCase()) || null;
+export function getStoreItem(itemId, items = ccStoreItems, guildId = null) {
+    return listStoreItems(storeItemsFor(guildId, items)).find((item) => item.id === String(itemId || '').toLowerCase()) || null;
 }
 
 /** Finds an item by its id or by its number in the list (`1` is the first item). */
@@ -142,18 +149,18 @@ export function findStoreItem(query, items) {
  * for a forecast prize), a boost `boostUntil`, a forecast `forecast`.
  */
 export async function buyItem(client, member, itemId, quantity = 1, { items = ccStoreItems, demoItems = ccStoreDemoItems, settings = ccStoreSettings, rng = Math.random } = {}) {
-    const requested = [...items, ...demoItems].find((item) => item.id === String(itemId || '').toLowerCase());
+    const requested = [...items, ...zenithStoreItems, ...demoItems].find((item) => item.id === String(itemId || '').toLowerCase());
     if (!isBourseEnabled() && isBourseStoreItem(requested)) return { ok: false, reason: 'bourse_disabled' };
     const mode = storeMode(settings, member?.guild?.id);
     if (mode === 'closed') return { ok: false, reason: 'closed' };
     // Other servers: the old samples, only ever previewed.
-    if (!isHomeGuild(member.guild.id)) {
+    if (!hasRealStore(member.guild.id)) {
         const demo = getStoreItem(itemId, demoItems);
         if (!demo) return { ok: false, reason: 'not_found' };
         if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > settings.maxQuantity) return { ok: false, reason: 'bad_quantity' };
         return previewPurchase(client, member, demo, quantity);
     }
-    const item = getStoreItem(itemId, items);
+    const item = getStoreItem(itemId, items, member.guild.id);
     if (!item) return { ok: false, reason: 'not_found' };
     if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > maxQuantityOf(item, settings)) return { ok: false, reason: 'bad_quantity' };
     if (mode === 'trial') return previewPurchase(client, member, item, quantity);

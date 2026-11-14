@@ -3,7 +3,7 @@ import { listCustomRoles, memberRoles, checkInvite, removeMember, leaveRole, han
 import { myRolesPayload, invitePayload, customRoleFailureText, renewalChangedText, leftText, kickedText, handedText } from '../../services/cc/customRoleUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { myRoleWords } from '../../config/commands/commandAliases.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
+import { hasRealStore } from '../../services/cc/ccStoreService.js';
 
 // `رولي`: the custom roles bought in the CC store (customRoleService.js).
 //   رولي                  your roles, their members and renewal, with a button for each thing you can do
@@ -50,7 +50,7 @@ export default {
         const fail = (result) => reply({ content: customRoleFailureText(result) });
         const { guild, user } = interaction;
         // Custom roles are sold in our server only (src/config/homeGuild.js).
-        if (!isHomeGuild(guild.id)) return reply({ content: '❌ الأمر ده مش متاح في السيرفر ده.' });
+        if (!hasRealStore(guild.id)) return reply({ content: '❌ الأمر ده مش متاح في السيرفر ده.' });
         const sub = interaction.options.getSubcommand() || 'info';
 
         if (sub === 'info') {

@@ -4,7 +4,7 @@ import { buyCustomRole, parseRoleColor, validateRoleName, listCustomRoles, ledRo
 import { CUSTOM_ROLE_PREFIX, customRolePreviewEmbed, customRoleReceiptEmbed } from '../../../services/cc/customRoleUi.js';
 import { purchaseFailureText } from '../../../services/cc/storeUi.js';
 import { getProfile } from '../../../services/cc/ccService.js';
-import { isHomeGuild } from '../../../config/homeGuild.js';
+import { hasRealStore } from '../../../services/cc/ccStoreService.js';
 
 // The store's custom role form (`customrole:create:<itemId>`, see customRoleUi.js). In trial mode it only
 // shows what the role would look like; otherwise it buys the role (customRoleService.js). The answer
@@ -14,12 +14,12 @@ function answer(interaction, payload) {
 }
 
 async function execute(interaction, client, [action, itemId]) {
-    if (!interaction.inGuild() || action !== 'create' || !isHomeGuild(interaction.guildId)) return;
-    const item = getStoreItem(itemId);
+    if (!interaction.inGuild() || action !== 'create' || !hasRealStore(interaction.guildId)) return;
+    const item = getStoreItem(itemId, undefined, interaction.guildId);
     if (!item || item.type !== 'custom_role') {
         return interaction.reply({ content: purchaseFailureText({ reason: 'not_found' }), flags: MessageFlags.Ephemeral }).catch(() => {});
     }
-    const mode = storeMode();
+    const mode = storeMode(undefined, interaction.guildId);
     if (mode === 'closed') return interaction.reply({ content: purchaseFailureText({ reason: 'closed' }), flags: MessageFlags.Ephemeral }).catch(() => {});
 
     if (interaction.isFromMessage?.()) await interaction.deferUpdate();

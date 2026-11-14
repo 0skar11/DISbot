@@ -1,7 +1,7 @@
 // Prefix replies are public. Reveal an already-purchased result through an owner-only ephemeral
 // component reply, never through prefix followUp and never by running the purchase again.
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, MessageFlags } from 'discord.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
+import { hasRealStore } from './ccStoreService.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 export const PRIVATE_PURCHASE_TTL_MS = 5 * 60_000;
@@ -9,7 +9,7 @@ const UNAVAILABLE = '🔒 الشراء تم، بس عرض النتيجة الخ�
 const EXPIRED = '🔒 انتهت مهلة عرض النتيجة الخاصة. الشراء تم؛ متكررش الشراء وكلم الإدارة لو النتيجة فاتتك.';
 
 export async function replyWithPrivatePurchase(interaction, payload, privatePayload) {
-    if (!isHomeGuild(interaction.guildId)) return InteractionHelper.safeReply(interaction, payload);
+    if (!hasRealStore(interaction.guildId)) return InteractionHelper.safeReply(interaction, payload);
     const status = (content, components = []) => ({ ...payload, content: [payload.content, content].filter(Boolean).join('\n'), components });
     if (!await InteractionHelper.safeReply(interaction, status('🔒 الشراء تم. جاري تجهيز عرض النتيجة الخاصة.'))) return null;
 

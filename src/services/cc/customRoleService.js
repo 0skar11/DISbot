@@ -23,7 +23,8 @@ import { Mutex } from '../../utils/mutex.js';
 import { logger } from '../../utils/logger.js';
 import { spendCC, grantCC, getProfile, updateCCState } from './ccService.js';
 import { getTraderRole } from './traderRoleService.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
+import { hasRealStore } from './ccStoreService.js';
+import { isZenithStore } from '../../config/store/ccStoreItems.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -112,8 +113,15 @@ export function memberRoles(records, userId) {
     return records.filter((record) => record.members.includes(userId));
 }
 
-/** Where a new custom role goes: just above the trader role (0 = leave it where Discord puts it). */
+/**
+ * Where a new custom role goes: just above the trader role (0 = leave it where Discord puts it). Zenith has no trader
+ * role: its custom roles go just above the "احرار" role (members' base role), below the staff.
+ */
 async function rolePosition(client, guild) {
+    if (isZenithStore(guild.id)) {
+        const base = guild.roles.cache.find((role) => String(role.name).replace(/[^\p{L}\p{N}]/gu, '') === 'احرار');
+        return base ? base.position + 1 : 0;
+    }
     const trader = await getTraderRole(client, guild).catch(() => null);
     return trader ? trader.position + 1 : 0;
 }
@@ -386,8 +394,8 @@ async function leaderCanPay(client, guild, record) {
 
 export async function sweepCustomRoles(client, options = {}) {
     for (const guild of client.guilds.cache.values()) {
-        // Custom roles are sold in our server only.
-        if (!isHomeGuild(guild.id)) continue;
+        // Custom roles are sold in our server and in Zenith.
+        if (!hasRealStore(guild.id)) continue;
         const records = await listCustomRoles(client, guild.id).catch(() => []);
         if (!records.length) continue;
         const summary = await sweepGuildCustomRoles(client, guild, options).catch((error) => {

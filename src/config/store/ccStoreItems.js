@@ -128,3 +128,36 @@ export const storeRoomSettings = {
     // Seconds between two messages of the same member in the store room.
     slowmodeSeconds: 3,
 };
+
+// ---- Zenith's store (owner request): the same system, its own catalog, nothing about XP (another bot runs it there). ----
+// Same item ids as above where the item is the same kind of thing, so the store, the custom role form and the luck box
+// work unchanged; the prices and the prizes are Zenith's. Ready-made roles of the server (`type: 'role'` with a `roleId`
+// of a role that already exists there) go into zenithRoleItems: the bot only gives them, it never makes or edits them.
+export const ZENITH_GUILD_ID = '1569932761471524874';
+
+/** Ready-made Zenith roles for sale: `{ id, name, emoji, description, price, type: 'role', roleId }`. Empty until the owner picks them. */
+export const zenithRoleItems = [];
+
+export const zenithStoreItems = [
+    { id: 'luck_box', name: 'صندوق حظ', emoji: '🎁', description: 'جواه جايزة عشوائية من CC، من 300 لحد 50,000', price: 1500, type: 'luckbox', keepDescription: true },
+    ...zenithRoleItems,
+    { id: 'custom_role', name: 'رول مميزة باسمك', emoji: '🎨', description: 'رول ليك لوحدك، بتختار اسمها ولونها وأيقونتها ・ في الشهر', price: 3000, type: 'custom_role', kind: 'personal', maxMembers: 1 },
+    { id: 'friends_role', name: 'رول ليك ولصحابك', emoji: '👥', description: 'رول ليك و15 من صحابك وإنت المسؤول، بتبعتلهم `رولي انفايت` ・ في الشهر', price: 8000, type: 'custom_role', kind: 'friends', maxMembers: 16 },
+];
+
+// Zenith's luck box: CC only, about 1,190 CC back on average for its 1,500 price (about 79%), so boxes don't create CC.
+export const zenithLuckBoxPrizes = [
+    { cc: 300, weight: 300 },
+    { cc: 600, weight: 250 },
+    { cc: 1000, weight: 180 },
+    { cc: 1500, weight: 110 },
+    { cc: 2500, weight: 60 },
+    { cc: 4000, weight: 30 },
+    { cc: 7500, weight: 12 },
+    { cc: 15000, weight: 5 },
+    { cc: 30000, weight: 2 },
+    { cc: 50000, weight: 1 },
+];
+
+/** Whether `guildId` is Zenith (its own catalog). */
+export const isZenithStore = (guildId) => String(guildId) === ZENITH_GUILD_ID;
