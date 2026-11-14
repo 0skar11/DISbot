@@ -98,8 +98,7 @@ export function buildProofGuideEmbed() {
 /** Posts (once) or edits the pinned guide in every server's proof channel. Zenith's first post pings @everyone. */
 export async function publishProofGuide(client) {
     const results = {};
-    // Zenith's guide comes from the security bot; this bot only keeps the home server's.
-    for (const [guildId, channelId] of Object.entries(PROOF_CHANNELS).filter(([guildId]) => guildId === HOME_GUILD_ID)) results[guildId] = await publishGuideIn(client, guildId, channelId);
+    for (const [guildId, channelId] of Object.entries(PROOF_CHANNELS)) results[guildId] = await publishGuideIn(client, guildId, channelId);
     return results;
 }
 

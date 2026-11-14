@@ -49,7 +49,7 @@ export default {
       }
       try {
         const result = await publishProofGuide(client);
-        startupLog(`Proof guide: ${result.status}`);
+        startupLog(`Proof guide: ${Object.values(result).map((r) => r.status).join(', ')}`);
       } catch (error) {
         logger.error("Failed to publish the proof guide:", error);
       }
