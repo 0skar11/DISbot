@@ -25,6 +25,23 @@ export async function listAnimatedEmojiFiles() {
     .map((file) => ({ name: path.basename(file, '.gif'), file: path.join(ANIMATED_DIR, file) }));
 }
 
+// The casino's card pictures (`cc_2S` ... `cc_AC`, `cc_back`) live in the home server only (owner request).
+export const CARD_EMOJI = /^cc_(?:10|[2-9JQKA])[SHDC]$|^cc_back$/u;
+
+/** Deletes the card emojis from a server that is not the home server. Returns how many. */
+export async function removeCardEmojis(guild) {
+  if (isHomeGuild(guild.id)) return { skipped: true, removed: 0 };
+  const botMember = guild.members.me || await guild.members.fetchMe().catch(() => null);
+  if (!botMember?.permissions.has(PermissionFlagsBits.ManageGuildExpressions)) return { skipped: true, removed: 0 };
+  const existing = await guild.emojis.fetch();
+  let removed = 0;
+  for (const emoji of existing.values()) {
+    if (!CARD_EMOJI.test(emoji.name)) continue;
+    if (await emoji.delete('Card emojis live in the home server only').then(() => true).catch(() => false)) removed += 1;
+  }
+  return { skipped: false, removed };
+}
+
 /** Uploads the missing server emojis. Returns counts, or `skipped` when the bot lacks the permission. */
 export async function ensureServerEmojis(guild) {
   const botMember = guild.members.me || await guild.members.fetchMe().catch(() => null);
@@ -38,6 +55,7 @@ export async function ensureServerEmojis(guild) {
   let failed = 0;
   for (const { name, file } of await listServerEmojiFiles()) {
     if (existingNames.has(name)) continue;
+    if (CARD_EMOJI.test(name) && !isHomeGuild(guild.id)) continue;
     try {
       await guild.emojis.create({ attachment: file, name, reason: 'Server emoji set' });
       added += 1;

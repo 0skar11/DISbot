@@ -1,6 +1,6 @@
 import { Events } from 'discord.js';
 import { logger, startupLog } from '../utils/logger.js';
-import { ensureServerEmojis, ensurePeepoEmojis, ensureAnimatedEmojis } from '../services/serverEmojiService.js';
+import { ensureServerEmojis, ensurePeepoEmojis, ensureAnimatedEmojis, removeCardEmojis } from '../services/serverEmojiService.js';
 import { ensureWelcomeEmoji } from '../services/welcomeEmojiService.js';
 
 export default {
@@ -12,6 +12,8 @@ export default {
     startupLog(`Welcome emoji: ${await ensureWelcomeEmoji(client)}`);
     for (const guild of client.guilds.cache.values()) {
       try {
+        const cards = await removeCardEmojis(guild);
+        if (!cards.skipped && cards.removed) startupLog(`Card emojis removed from ${guild.name}: ${cards.removed}`);
         const { skipped, added, failed } = await ensureServerEmojis(guild);
         if (skipped) logger.warn(`Server emojis skipped for ${guild.name}: bot needs Manage Expressions.`);
         else startupLog(`Server emojis in ${guild.name}: added ${added}, failed ${failed}`);

@@ -25,10 +25,21 @@ describe('server emojis', () => {
   });
 
   test('uploads nothing when the emoji folder is empty', async () => {
+    const { HOME_GUILD_ID } = await import('../src/config/homeGuild.js');
     const files = await listServerEmojiFiles();
-    const guild = guildWith();
+    const guild = { ...guildWith(), id: HOME_GUILD_ID };
     const result = await ensureServerEmojis(guild);
     assert.deepEqual(result, { skipped: false, added: files.length, failed: 0 });
+  });
+
+  test('another server gets every emoji except the card pictures', async () => {
+    const files = await listServerEmojiFiles();
+    const cards = files.filter(({ name }) => /^cc_/u.test(name)).length;
+    assert.ok(cards >= 53);
+    const guild = { ...guildWith(), id: '1569932761471524874' };
+    const result = await ensureServerEmojis(guild);
+    assert.deepEqual(result, { skipped: false, added: files.length - cards, failed: 0 });
+    assert.ok(!guild.created.some(({ name }) => /^cc_/u.test(name)));
   });
 
   test('skips when the bot cannot manage expressions', async () => {
