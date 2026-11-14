@@ -74,3 +74,26 @@ describe('سحب (pull to your voice room)', () => {
     assert.deepEqual(s.moved.map(([id]) => id), ['A']);
   });
 });
+
+describe('typed `سحب` / `pull` reaches the command', () => {
+  test('with a mention it pulls; without a target the word stays ordinary chat', async () => {
+    const { handlePullShortcut } = await import('../src/utils/arabicModerationShortcuts.js');
+    const s = setup();
+    s.message.guild.members = { fetch: async (id) => (id === '222222222222222222' ? s.target : null) };
+    assert.equal(await handlePullShortcut(s.message, ['<@222222222222222222>']), true);
+    assert.deepEqual(s.moved.map(([room]) => room), ['A']);
+    const chat = setup();
+    chat.message.guild.members = { fetch: async () => null };
+    assert.equal(await handlePullShortcut(chat.message, ['اللعبة', 'دي']), false);
+    assert.equal(chat.moved.length, 0);
+    // The id of a member who is not in the server: handled (an error line), nobody moved.
+    assert.equal(await handlePullShortcut(chat.message, ['333333333333333333']), true);
+    assert.equal(chat.moved.length, 0);
+  });
+
+  test('messageCreate sends `سحب` and `pull` to it', async () => {
+    const { readFileSync } = await import('node:fs');
+    const source = readFileSync(new URL('../src/events/messageCreate.js', import.meta.url), 'utf8');
+    assert.match(source, /typedCommand === 'سحب' \|\| typedCommand === 'pull'\) && await handlePullShortcut/u);
+  });
+});

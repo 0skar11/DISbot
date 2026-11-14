@@ -239,6 +239,25 @@ export async function handleArabicRoleShortcut(message, prefixes = []) {
   return true;
 }
 
+/**
+ * `سحب @member` / `pull @member` (or as a reply) typed in a channel: pulls the member to the staff member's voice room.
+ * `سحب` is also an ordinary Arabic word, so without a mentioned, id'd or replied-to member it is left alone (false).
+ */
+export async function handlePullShortcut(message, args = []) {
+  const body = args.join(' ');
+  const mention = body.match(/<@!?(\d+)>/u);
+  const id = body.match(/(?:^|\s)(\d{17,20})(?:\s|$)/u);
+  const targetId = mention?.[1] || id?.[1] || await getReplyTargetId(message);
+  if (!targetId) return false;
+  const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
+  try {
+    await pullToVoice(message, targetMember);
+  } catch (error) {
+    await reply(message, `❌ ${error.userMessage || error.message || 'حدث خطأ أثناء تنفيذ الأمر.'}`);
+  }
+  return true;
+}
+
 /** `مسح تحذيرات @member` (or as a reply) — clears all of a member's warnings. */
 export async function handleClearWarningsShortcut(message, args) {
   if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
