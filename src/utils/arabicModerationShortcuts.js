@@ -65,7 +65,10 @@ function hasPermission(member, permission) {
   return member.permissions.has(permission) || member.guild.ownerId === member.id;
 }
 
+// Typed shortcuts stay silent for people without permission, except timeout, ban and kick (owner request).
+const KEEPS_DENIAL = /^[^p{L}p{N}]*(?:timeout|time|ban|kick|تايم|بان|كيك|طرد)(?:s|$)/iu;
 async function reply(message, content) {
+  if (/No Permission|ليس لديك صلاحية/u.test(content) && !KEEPS_DENIAL.test(String(message.content || ''))) return;
   await message.channel.send({ content, allowedMentions: { parse: [] } }).then(scheduleNoPermissionDelete).catch(() => {});
 }
 
