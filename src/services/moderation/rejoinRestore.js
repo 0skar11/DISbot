@@ -13,7 +13,7 @@ import { ActionRowBuilder, ButtonBuilder, ButtonStyle, PermissionFlagsBits } fro
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { filterStaffRoles } from '../staffRoleHierarchyService.js';
-import { TRUSTED_BOARD_CHANNEL_ID, trustedBoardChannelFor } from '../trustedBoardService.js';
+import { TRUSTED_BOARD_CHANNEL_ID } from '../trustedBoardService.js';
 import { isTrusted } from '../../utils/antiNukeLogging.js';
 import { logger } from '../../utils/logger.js';
 
@@ -23,11 +23,12 @@ export const REJOIN_APPROVAL_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
 export const REJOIN_LOG_CHANNEL_ID = '1550564287129456810';
 export const REJOIN_BUTTON_PREFIX = 'rejoinroles';
 
-// Zenith works the same way: its approval requests (and the decisions) go to its trusted room.
+// Zenith works the same way: its approval requests (and the decisions) go to its permissions room.
+const ZENITH_APPROVAL_CHANNEL_ID = '1571076213705809941';
 const ZENITH_GUILD_ID = '1569932761471524874';
 const isRejoinGuild = (guildId) => isHomeGuild(guildId) || String(guildId) === ZENITH_GUILD_ID;
-const approvalChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_APPROVAL_CHANNEL_ID : trustedBoardChannelFor(guildId));
-const logChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_LOG_CHANNEL_ID : trustedBoardChannelFor(guildId));
+const approvalChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_APPROVAL_CHANNEL_ID : ZENITH_APPROVAL_CHANNEL_ID);
+const logChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_LOG_CHANNEL_ID : ZENITH_APPROVAL_CHANNEL_ID);
 
 // Roles with any of these need approval like the staff roles.
 const DANGEROUS = [
