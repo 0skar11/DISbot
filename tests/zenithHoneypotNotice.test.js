@@ -29,7 +29,7 @@ test('Zenith #honeypot: notice posted and pinned once, then edited in place', as
   assert.equal([...messages.values()][0].pinned, true);
   assert.equal((await publishZenithHoneypotNotice(client)).status, 'updated');
   assert.equal(channel.sent, 1);
-  assert.match(buildZenithHoneypotNotice().description, /instant ban/u);
+  assert.match(buildZenithHoneypotNotice().description, /instant kick/u);
 });
 
 test('other servers: nothing is posted', async () => {

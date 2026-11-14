@@ -60,23 +60,33 @@ export async function publishHoneypotNotice(client) {
 const ZENITH_GUILD_ID = '1569932761471524874';
 const ZENITH_CHANNEL_NAME = 'honeypot';
 const ZENITH_BOARD_KEY = 'honeypotNoticeZenith';
-const ZENITH_FOOTER = 'Honeypot';
+const ZENITH_FOOTER = 'Zenith Security';
 
-export function buildZenithHoneypotNotice() {
+export function buildZenithHoneypotNotice(guild = null) {
+    const icon = guild?.iconURL?.({ size: 256 }) ?? null;
     return {
-        color: 0x2b2d31,
-        title: 'Honeypot',
+        color: 0xe74c3c,
+        author: { name: 'ZENITH  •  HONEYPOT', ...(icon ? { icon_url: icon } : {}) },
+        title: '🚫  DO NOT TYPE HERE  |  ممنوع الكتابة هنا',
         description: [
-            '# DO NOT TYPE HERE',
-            '**لا تكتب هنا**',
+            '**Typing in this channel = instant kick.**',
+            '**الكتابة في الروم ده = طرد فوري.**',
             '',
-            'Typing in this channel = **instant ban**.',
-            'الكتابة بهذي الروم = **باند فوري**.',
-            '',
-            'This channel is a trap to catch hacked accounts and spam bots. Just ignore it.',
-            'هذي الروم فخ لكشف الحسابات المهكرة وبوتات السبام، تجاهلها وبس.',
+            '*Just ignore this channel and carry on. Nothing here concerns you.*',
+            '*تجاهل الروم وكمّل عادي، مفيش حاجة هنا تخصك.*',
         ].join('\n'),
-        footer: { text: ZENITH_FOOTER },
+        fields: [
+            {
+                name: '🪤  Why does it exist? | ليه موجود؟',
+                value: 'A trap for hacked accounts and spam bots: they post in every room, a real member never does.\nفخ للحسابات المهكرة وبوتات السبام، بتكتب في كل الرومات، والعضو الحقيقي عمره ما يكتب هنا.',
+            },
+            {
+                name: '🔐  Got kicked by mistake? | اتطردت بالغلط؟',
+                value: 'Change your password, turn on 2FA, then rejoin and tell the staff.\nغيّر الباسورد وفعّل التحقق بخطوتين، وارجع وكلّم الإدارة.',
+            },
+        ],
+        ...(icon ? { thumbnail: { url: icon } } : {}),
+        footer: { text: ZENITH_FOOTER, ...(icon ? { icon_url: icon } : {}) },
     };
 }
 
@@ -85,7 +95,7 @@ export async function publishZenithHoneypotNotice(client) {
     if (!guild) return { status: 'skipped' };
     const channel = guild.channels.cache.find((entry) => entry.name === ZENITH_CHANNEL_NAME && entry.isTextBased?.());
     if (!channel) return { status: 'missing-channel' };
-    const payload = { embeds: [buildZenithHoneypotNotice()], allowedMentions: { parse: [] } };
+    const payload = { embeds: [buildZenithHoneypotNotice(guild)], allowedMentions: { parse: [] } };
     const isOwn = (message) => message.author?.id === client.user.id && message.embeds?.[0]?.footer?.text === ZENITH_FOOTER;
     const existing = await findBoardMessage(channel, ZENITH_BOARD_KEY, isOwn).catch(() => null);
     if (existing) {
