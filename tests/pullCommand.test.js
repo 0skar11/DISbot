@@ -54,4 +54,24 @@ describe('سحب (pull to your voice room)', () => {
       assert.match(sent[0].content, /رتبته أعلى/u);
     }
   });
+
+  test('the staff member needs their own rights on both rooms and the member must be allowed into the room', async () => {
+    const deny = (...denied) => ({ permissionsFor: () => ({ has: (flag) => ![].concat(flag).some((f) => denied.includes(f)) }) });
+    // No Move Members on the room the member is in: silent, nobody moved.
+    let s = setup();
+    s.target.voice.channel = { id: 'B', ...deny(PermissionFlagsBits.MoveMembers) };
+    await pullToVoice(s.message, s.target);
+    assert.equal(s.moved.length, 0);
+    assert.equal(s.sent.length, 0);
+    // The staff member can't connect to their own target room (e.g. a stale room): refused.
+    s = setup({ staffRoom: { id: 'A', ...deny(PermissionFlagsBits.Connect) } });
+    await pullToVoice(s.message, s.target);
+    assert.equal(s.moved.length, 0);
+    // The member is denied the room: refused with a message.
+    const room = { id: 'A', permissionsFor: (who) => ({ has: () => who.id !== '222222222222222222' }) };
+    s = setup({ staffRoom: room });
+    await pullToVoice(s.message, s.target);
+    assert.equal(s.moved.length, 0);
+    assert.match(s.sent[0].content, /ممنوع/u);
+  });
 });
