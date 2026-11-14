@@ -50,7 +50,7 @@ describe('chat filter (reports #146, #147, #151)', () => {
     let { calls, message } = filterMessage('يا ك س م ك');
     assert.equal(await handleChatFilter(message), true);
     assert.deepEqual(calls.slice(0, 2), [['delete'], ['timeout', 60 * 60_000]]);
-    assert.deepEqual(calls.find(([kind]) => kind === 'notice'), ['notice', '<@200000000000000001> كسمين امك خد تايم يبنالمتناكه']);
+    assert.equal(calls.find(([kind]) => kind === 'notice'), undefined);
 
     // ابن ال...: deleted + a warning, no direct timeout.
     ({ calls, message } = filterMessage('ابن الكلب'));

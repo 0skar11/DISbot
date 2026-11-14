@@ -26,8 +26,8 @@ const NOTICE_DELETE_MS = 5_000;
 const HOUR = 60 * 60_000;
 
 const RULES = {
-    // The owner's own reply for this one, instead of the usual notice.
-    kosomak: { label: 'شتيمة (كسمك)', timeoutMs: HOUR, reply: (userId) => `<@${userId}> كسمين امك خد تايم يبنالمتناكه` },
+    // No message is sent for this one (owner request): the message is deleted and the member timed out, quietly.
+    kosomak: { label: 'شتيمة (كسمك)', timeoutMs: HOUR, silent: true },
     ibnAl: { label: 'شتيمة (ابن ال...)', warn: true },
     insult: { label: 'شتيمة', warn: true },
     banned: { label: 'كلمة ممنوعة' },
@@ -88,6 +88,6 @@ export async function handleChatFilter(message) {
         logger.debug('Failed to post chat filter action to automode room:', auditErr);
     }
 
-    await notice(message, rule.reply ? rule.reply(message.author.id) : `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
+    if (!rule.silent) await notice(message, `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
     return true;
 }
