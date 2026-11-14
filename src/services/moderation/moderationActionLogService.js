@@ -6,6 +6,13 @@ import { cardReason, formatDurationMs } from '../../utils/moderationCard.js';
 import { NO_PINGS } from '../../utils/oneLine.js';
 
 export const MODERATION_ACTION_LOG_CHANNEL_ID = '1552347336976498898';
+// The proof/log channel of each server (Zenith has its own).
+export const PROOF_CHANNELS = {
+  '1155236281706627173': MODERATION_ACTION_LOG_CHANNEL_ID,
+  '1569932761471524874': '1571068141746782279',
+};
+export const proofChannelFor = (guildId) => PROOF_CHANNELS[String(guildId)] || null;
+export const isProofChannel = (guildId, channelId) => Boolean(channelId) && proofChannelFor(guildId) === channelId;
 
 const ACTIONS = {
   ban: { title: '🔨 بان', color: 0xe74c3c },
@@ -81,10 +88,12 @@ export function buildModerationActionLogEmbed({
 /** Posts the action in the moderation log channel. Never throws: a missing channel only logs a warning. */
 export async function sendModerationActionLog(guild, details) {
   try {
-    const channel = guild.channels.cache.get(MODERATION_ACTION_LOG_CHANNEL_ID)
-      || await guild.channels.fetch(MODERATION_ACTION_LOG_CHANNEL_ID).catch(() => null);
+    const channelId = proofChannelFor(guild.id);
+    if (!channelId) return false;
+    const channel = guild.channels.cache.get(channelId)
+      || await guild.channels.fetch(channelId).catch(() => null);
     if (!channel?.isTextBased?.()) {
-      logger.warn(`Moderation action log channel ${MODERATION_ACTION_LOG_CHANNEL_ID} was not found in guild ${guild.id}.`);
+      logger.warn(`Moderation action log channel ${channelId} was not found in guild ${guild.id}.`);
       return false;
     }
     const embed = buildModerationActionLogEmbed(details);

@@ -8,10 +8,11 @@
 // normal message.
 
 import { MessageType } from 'discord.js';
-import { MODERATION_ACTION_LOG_CHANNEL_ID } from './moderationActionLogService.js';
+import { PROOF_CHANNELS, isProofChannel } from './moderationActionLogService.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { logger } from '../../utils/logger.js';
 
+const HOME_GUILD_ID = '1155236281706627173';
 export const PROOF_WINDOW_MS = 10 * 60_000;
 const MAX_FILES = 10;
 const MAX_PROOF_TEXT = 1024;
@@ -37,7 +38,7 @@ export function buildMergedPayload(embed, texts, files) {
 
 /** Merges a moderator's proof message into their latest log. Returns true when it did. */
 export async function handleProofMessage(message, { now = Date.now() } = {}) {
-    if (message.channelId !== MODERATION_ACTION_LOG_CHANNEL_ID || !message.guild || message.author?.bot) return false;
+    if (!message.guild || !isProofChannel(message.guild.id, message.channelId) || message.author?.bot) return false;
     const key = `${message.guild.id}:${message.author.id}`;
     const entry = pending.get(key);
     if (!entry) return false;
@@ -81,7 +82,7 @@ export function buildProofGuideEmbed() {
         color: 0x5865f2,
         title: GUIDE_TITLE,
         description: [
-            'كل **بان / تايم / وارن** بيتسجل هنا لوحده.',
+            'كل **بان / تايم / وارن** بيتسجل هنا لوحده، وكمان أي عقوبة **تلقائية** من البوت (زي الشتايم والسبام) بتتسجل هنا.',
             '',
             '**1️⃣** اعمل العقوبة عادي (مثلاً `تايم @member 10m سبام`).',
             '**2️⃣** البوت هيبعت رسالة العقوبة هنا.',
@@ -94,10 +95,17 @@ export function buildProofGuideEmbed() {
     };
 }
 
-/** Posts (once) or edits the pinned guide in the proof channel. */
+/** Posts (once) or edits the pinned guide in every server's proof channel. Zenith's first post pings @everyone. */
 export async function publishProofGuide(client) {
-    const channel = await client.channels.fetch(MODERATION_ACTION_LOG_CHANNEL_ID).catch(() => null);
-    if (!channel?.isTextBased?.() || !channel.guild) return { status: 'missing-channel' };
+    const results = {};
+    // Zenith's guide comes from the security bot; this bot only keeps the home server's.
+    for (const [guildId, channelId] of Object.entries(PROOF_CHANNELS).filter(([guildId]) => guildId === HOME_GUILD_ID)) results[guildId] = await publishGuideIn(client, guildId, channelId);
+    return results;
+}
+
+async function publishGuideIn(client, guildId, channelId) {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased?.() || !channel.guild || channel.guild.id !== guildId) return { status: 'missing-channel' };
     const payload = { embeds: [buildProofGuideEmbed()], allowedMentions: { parse: [] } };
     const isGuide = (message) => message.author?.id === client.user.id && message.embeds[0]?.title === GUIDE_TITLE;
     const existing = await findBoardMessage(channel, GUIDE_KEY, isGuide);
@@ -106,7 +114,8 @@ export async function publishProofGuide(client) {
         if (!existing.pinned) await existing.pin().catch(() => {});
         return { status: 'updated' };
     }
-    const sent = await channel.send(payload);
+    const announce = guildId !== HOME_GUILD_ID;
+    const sent = await channel.send(announce ? { ...payload, content: '@everyone', allowedMentions: { parse: ['everyone'] } } : payload);
     await rememberBoardMessage(channel, GUIDE_KEY, sent.id);
     await sent.pin().catch((error) => logger.warn(`Could not pin the proof guide: ${error.message}`));
     return { status: 'sent' };
@@ -114,7 +123,7 @@ export async function publishProofGuide(client) {
 
 /** Deletes Discord's "pinned a message" notice for our own pin in the proof channel. */
 export async function handleProofPinNotice(message) {
-    if (message.channelId !== MODERATION_ACTION_LOG_CHANNEL_ID || message.type !== MessageType.ChannelPinnedMessage) return false;
+    if (!message.guild || !isProofChannel(message.guild.id, message.channelId) || message.type !== MessageType.ChannelPinnedMessage) return false;
     if (message.author?.id === message.client?.user?.id) await message.delete().catch(() => {});
     return true;
 }

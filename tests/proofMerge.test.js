@@ -4,6 +4,7 @@ import { rememberLogMessage, handleProofMessage, buildMergedPayload, buildProofG
 import { MODERATION_ACTION_LOG_CHANNEL_ID } from '../src/services/moderation/moderationActionLogService.js';
 
 const MOD = '200000000000000001';
+const HOME = '1155236281706627173';
 
 function setup() {
   const deleted = [];
@@ -13,7 +14,7 @@ function setup() {
   const proof = (content, attachments = [], { authorId = MOD } = {}) => ({
     content,
     channelId: MODERATION_ACTION_LOG_CHANNEL_ID,
-    guild: { id: 'g' },
+    guild: { id: HOME },
     author: { id: authorId, bot: false },
     attachments: new Map(attachments.map((name, i) => [String(i), { url: `https://cdn/x/${name}`, name }])),
     channel,
@@ -26,7 +27,7 @@ describe('proof channel (report #156)', () => {
   test('the moderator\'s screenshot and text are merged with their log into one message', async () => {
     const { deleted, sent, log, proof } = setup();
     const embed = { title: '⏳ تايم أوت', description: 'العضو...' };
-    rememberLogMessage('g', MOD, log, embed, 1000);
+    rememberLogMessage(HOME, MOD, log, embed, 1000);
 
     assert.equal(await handleProofMessage(proof('قالي كسمك', ['shot.png']), { now: 2000 }), true);
     assert.deepEqual(deleted, ['log', 'proof:قالي كسمك']);
@@ -40,14 +41,14 @@ describe('proof channel (report #156)', () => {
     assert.equal(await handleProofMessage(proof('وكمان ده', ['two.png']), { now: 3000 }), false);
     assert.equal(sent.length, 1);
     // A new log takes a new proof.
-    rememberLogMessage('g', MOD, log, embed, 4000);
+    rememberLogMessage(HOME, MOD, log, embed, 4000);
     assert.equal(await handleProofMessage(proof('دليل تاني'), { now: 5000 }), true);
     assert.equal(sent.length, 2);
   });
 
   test('other people, other channels, empty messages and late proof are left alone', async () => {
     const { log, proof } = setup();
-    rememberLogMessage('g', MOD, log, { title: 'x' }, 1000);
+    rememberLogMessage(HOME, MOD, log, { title: 'x' }, 1000);
     assert.equal(await handleProofMessage(proof('مش انا', [], { authorId: '999' }), { now: 1500 }), false);
     assert.equal(await handleProofMessage({ ...proof('روم تاني'), channelId: '1' }, { now: 1500 }), false);
     assert.equal(await handleProofMessage(proof('   '), { now: 1500 }), false);
