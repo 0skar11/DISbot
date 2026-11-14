@@ -86,7 +86,19 @@ async function waitForPlayerConnection(player) {
 
 async function startPlayback(player) {
     await waitForPlayerConnection(player);
-    await player.play();
+    try {
+        await player.play();
+    } catch (error) {
+        // A public Lavalink node dropped while the player was bound to it: Riffy throws a plain Error, which used to
+        // surface as "Something went wrong while saving data". Drop the dead player so the next try builds a new
+        // one on a node that is up, and say what happened.
+        try { player.destroy(); } catch { /* the player may already be gone */ }
+        throw new TitanBotError(
+            `Lavalink play failed: ${error?.message || error}`,
+            ErrorTypes.CONFIGURATION,
+            '🎧 سيرفر الموسيقى فصل لحظة. جرّب تكتب الأمر تاني دلوقتي وهيشتغل.',
+        );
+    }
 }
 
 export function getPlayer(client, guildId) {
