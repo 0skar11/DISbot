@@ -2,7 +2,7 @@ import { Events, PermissionFlagsBits } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../services/config/guildConfig.js';
 import { getCommandPrefix } from '../config/bot.js';
 import { isServerOwner } from '../config/serverOwners.js';
-import { refreshTrustedBoard, TRUSTED_BOARD_CHANNEL_ID } from '../services/trustedBoardService.js';
+import { refreshTrustedBoard, TRUSTED_BOARD_CHANNEL_ID, isTrustedBoardChannel } from '../services/trustedBoardService.js';
 
 const TRUST_COMMANDS = new Set(['trust', 'untrust', 'تراست', 'انتراست']);
 const TRUST_MARKER = '__titanbot_trust_handled__';
@@ -26,7 +26,7 @@ function parseTrust(content) {
 // In the trusted board channel the board itself is the answer, so replies there clean up after themselves.
 async function send(message, text) {
   const reply = await message.channel.send({ content: `❌ ${text}`, allowedMentions: { parse: [] } }).catch(() => null);
-  if (reply && message.channelId === TRUSTED_BOARD_CHANNEL_ID) {
+  if (reply && isTrustedBoardChannel(message.channelId)) {
     setTimeout(() => {
       reply.delete().catch(() => {});
       message.delete().catch(() => {});
@@ -73,7 +73,7 @@ async function handleTrust(message, client) {
   else current.delete(id);
   await updateGuildConfig(client, message.guild.id, { [key]: [...current] });
   await refreshTrustedBoard(client, message.guild.id);
-  if (message.channelId === TRUSTED_BOARD_CHANNEL_ID) {
+  if (isTrustedBoardChannel(message.channelId)) {
     await message.delete().catch(() => {});
     return true;
   }

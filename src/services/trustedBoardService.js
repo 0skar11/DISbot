@@ -4,6 +4,11 @@ import { findBoardMessage, rememberBoardMessage } from '../utils/boardMessage.js
 import { getGuildConfig } from './config/guildConfig.js';
 
 export const TRUSTED_BOARD_CHANNEL_ID = '1155236383464628325';
+// The trusted board's room of each other server (Zenith: #bot-status).
+const GUILD_TRUSTED_CHANNELS = { '1569932761471524874': '1571078435927887952' };
+export const trustedBoardChannelFor = (guildId) => GUILD_TRUSTED_CHANNELS[String(guildId)] || TRUSTED_BOARD_CHANNEL_ID;
+/** Whether `channelId` is a server's trusted board room. */
+export const isTrustedBoardChannel = (channelId) => channelId === TRUSTED_BOARD_CHANNEL_ID || Object.values(GUILD_TRUSTED_CHANNELS).includes(channelId);
 const TRUSTED_BOARD_TITLE = '🛡️ قائمة الـ Trusted';
 const BOARD_KEY = 'trusted';
 // Discord caps a field value at 1024 characters, an embed at 25 fields and 6000 characters in total.
@@ -127,25 +132,25 @@ async function buildEmbed(guild) {
   return embed;
 }
 
-async function fetchBoardChannel(client) {
-  const channel = await client.channels.fetch(TRUSTED_BOARD_CHANNEL_ID).catch((error) => {
-    throw new Error(`Channel ${TRUSTED_BOARD_CHANNEL_ID} could not be fetched (is the bot in that server?): ${error.message}`);
+async function fetchBoardChannel(client, channelId = TRUSTED_BOARD_CHANNEL_ID) {
+  const channel = await client.channels.fetch(channelId).catch((error) => {
+    throw new Error(`Channel ${channelId} could not be fetched (is the bot in that server?): ${error.message}`);
   });
   if (!channel?.isTextBased?.() || !channel.messages?.fetch || !channel.guild) {
-    throw new Error(`Channel ${TRUSTED_BOARD_CHANNEL_ID} is not a server text channel`);
+    throw new Error(`Channel ${channelId} is not a server text channel`);
   }
 
   const botMember = channel.guild.members.me || await channel.guild.members.fetchMe().catch(() => null);
   const permissions = botMember ? channel.permissionsFor(botMember) : null;
   const missing = PERMISSION_NAMES.filter(([flag]) => !permissions?.has(flag)).map(([, name]) => name);
   if (missing.length) {
-    throw new Error(`Missing permissions in channel ${TRUSTED_BOARD_CHANNEL_ID}: ${missing.join(', ')}`);
+    throw new Error(`Missing permissions in channel ${channelId}: ${missing.join(', ')}`);
   }
   return channel;
 }
 
-async function publish(client, allowSend) {
-  const channel = await fetchBoardChannel(client);
+async function publish(client, allowSend, channelId = TRUSTED_BOARD_CHANNEL_ID) {
+  const channel = await fetchBoardChannel(client, channelId);
   const embed = await buildEmbed(channel.guild);
   // The channel also holds the saved ideas post, so the board is the bot's embed titled "…Trusted"
   // (the emoji is stripped from EmbedBuilder titles, so match the words).
@@ -155,12 +160,12 @@ async function publish(client, allowSend) {
     return { status: 'updated', channelId: channel.id };
   }
   if (!allowSend) {
-    logger.warn(`Trusted board message not found in channel ${TRUSTED_BOARD_CHANNEL_ID}; use /publish-board trusted to post it`);
+    logger.warn(`Trusted board message not found in channel ${channelId}; use /publish-board trusted to post it`);
     return { status: 'missing', channelId: channel.id };
   }
   const sent = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
   await rememberBoardMessage(channel, BOARD_KEY, sent.id);
-  logger.info(`Published trusted board in channel ${TRUSTED_BOARD_CHANNEL_ID}`);
+  logger.info(`Published trusted board in channel ${channelId}`);
   return { status: 'sent', channelId: channel.id };
 }
 
@@ -171,14 +176,24 @@ async function publish(client, allowSend) {
  * Returns { status, channelId } where status is 'sent', 'updated' or 'missing'; throws on failure.
  */
 export function publishTrustedBoard(client, { allowSend = false } = {}) {
-  const run = queue.then(() => publish(client, allowSend));
+  const run = queue.then(async () => {
+    const result = await publish(client, allowSend);
+    // The other servers' boards are posted once and then kept up to date (startup and the /publish-board command).
+    for (const channelId of Object.values(GUILD_TRUSTED_CHANNELS)) {
+      await publish(client, true, channelId).catch((error) => logger.warn(`Trusted board in ${channelId}: ${error.message}`));
+    }
+    return result;
+  });
   queue = run.catch(() => {});
   return run;
 }
 
 /** Refreshes the board after a trust change in `guildId`; failures are logged, never thrown. */
 export async function refreshTrustedBoard(client, guildId) {
-  const channel = client.channels.cache.get(TRUSTED_BOARD_CHANNEL_ID);
+  const channelId = trustedBoardChannelFor(guildId);
+  const channel = client.channels.cache.get(channelId);
   if (channel?.guild && channel.guild.id !== guildId) return;
-  await publishTrustedBoard(client).catch((error) => logger.error('Failed to refresh trusted board:', error));
+  const run = queue.then(() => publish(client, channelId !== TRUSTED_BOARD_CHANNEL_ID, channelId));
+  queue = run.catch(() => {});
+  await run.catch((error) => logger.error('Failed to refresh trusted board:', error));
 }
