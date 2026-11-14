@@ -7,11 +7,12 @@ import { CLOVER_BOT_ID, GAMES_BOTS_CHANNEL_ID } from '../src/config/games.js';
 import { investReceiptEmbed, sellReceiptEmbed } from '../src/services/cc/bourseUi.js';
 import { ccProfileEmbed } from '../src/commands/Games/cc.js';
 
-function botMessage(channelId, { authorId = CLOVER_BOT_ID, parentId = null, userId = '200000000000000001' } = {}) {
+function botMessage(channelId, { authorId = CLOVER_BOT_ID, parentId = null, userId = '200000000000000001', guildId = 'g' } = {}) {
   const sent = [];
   let deleted = false;
   return {
-    guild: { id: 'g' },
+    guild: { id: guildId, ownerId: '1', client: { db: { get: async (k, f) => f, set: async () => true } }, members: { me: null, fetch: async () => null, cache: new Map() }, roles: { cache: new Map() } },
+    client: { db: { get: async (k, f) => f, set: async () => true }, user: { id: 'me' } },
     channelId,
     channel: { id: channelId, parentId, send: async (payload) => { sent.push(payload); return { delete: async () => {} }; } },
     author: { id: authorId, bot: true },
@@ -116,5 +117,19 @@ describe('CC messages', () => {
     assert.match(embed.description, /💰 الرصيد/u);
     assert.equal(embed.fields, undefined);
     assert.doesNotMatch(embed.description, /الترتيب/u);
+  });
+
+  test('Zenith: Clover plays in its own room for everyone, and anywhere for the trusted (owners)', async () => {
+    const ZENITH = '1569932761471524874';
+    const ROOM = '1570728118182744145';
+    assert.equal(await handleGamesBotOutsideChannel(botMessage(ROOM, { guildId: ZENITH })), false);
+    const stranger = botMessage('777777777777777777', { guildId: ZENITH });
+    assert.equal(await handleGamesBotOutsideChannel(stranger, { now: 90_000_000 }), true);
+    assert.equal(stranger.deleted, true);
+    assert.match(stranger.sent[0].content, new RegExp(`<#${ROOM}>`));
+    assert.doesNotMatch(stranger.sent[0].content, new RegExp(GAMES_BOTS_CHANNEL_ID));
+    const owner = botMessage('888888888888888888', { guildId: ZENITH, userId: '1159601661392715906' });
+    assert.equal(await handleGamesBotOutsideChannel(owner, { now: 95_000_000 }), false);
+    assert.equal(owner.deleted, false);
   });
 });
