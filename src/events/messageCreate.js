@@ -13,6 +13,7 @@ import { enforceAbuseProtection, formatCooldownDuration } from '../utils/abusePr
 import { isCommandEnabled } from '../services/commandAccessService.js';
 import { getCountingGameConfig, saveCountingGameConfig, isValidCountingMessage, recordCorrectCount } from '../services/countingGameService.js';
 import { handleTrustedListCommand } from '../utils/trustedCommand.js';
+import { handleGifCommand, GIF_WORDS } from '../services/gifConverterService.js';
 import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullShortcut } from '../utils/arabicModerationShortcuts.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { handleReportChannelMessage } from '../services/reportChannelService.js';
@@ -156,6 +157,8 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     }
     if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args)) return;
     if ((typedCommand === 'سحب' || typedCommand === 'pull') && await handlePullShortcut(message, args)) return;
+    // `.gif` / `جيف` (everyone): a picture becomes a GIF. Needs the prefix, so the plain word in a chat is left alone.
+    if (parsed.prefixed && GIF_WORDS.has(typedCommand) && await handleGifCommand(message, args)) return;
     if (typedCommand === 'مسح' && args[0] === 'تحذيرات') {
       await handleClearWarningsShortcut(message, args.slice(1));
       return;
