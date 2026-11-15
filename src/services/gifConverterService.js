@@ -104,12 +104,13 @@ export async function handleGifCommand(message, args = [], deps = {}) {
     const now = (deps.now || Date.now)();
     if (now - (lastUse.get(message.author?.id) || 0) < COOLDOWN_MS) return say(message, '⏳ استنى ثواني قبل ما تحوّل صورة تانية.');
     if (running >= MAX_JOBS) return say(message, '⏳ البوت بيحوّل صور كتير دلوقتي، جرّب بعد شوية.');
-    const url = await findImageUrl(message, args);
-    if (!url) return say(message, '🖼️ ابعت صورة مع الأمر، أو اعمل ريبلاي على صورة واكتب `gif`.');
-    if (!(deps.isSafeUrl || isSafeUrl)(url)) return say(message, '❌ بحوّل الصور اللي على ديسكورد بس: ارفع الصورة أو اعمل ريبلاي عليها.');
+    // The slot is taken before the first await, so two messages arriving together can't both slip past the checks.
     lastUse.set(message.author?.id, now);
     running += 1;
     try {
+        const url = await findImageUrl(message, args);
+        if (!url) return await say(message, '🖼️ ابعت صورة مع الأمر، أو اعمل ريبلاي على صورة واكتب `gif`.');
+        if (!(deps.isSafeUrl || isSafeUrl)(url)) return await say(message, '❌ بحوّل الصور اللي على ديسكورد بس: ارفع الصورة أو اعمل ريبلاي عليها.');
         const bytes = await download(url, deps.fetch);
         const gif = await toGif(bytes);
         await message.reply({ files: [{ attachment: gif, name: 'image.gif' }], allowedMentions: { parse: [], repliedUser: false } });

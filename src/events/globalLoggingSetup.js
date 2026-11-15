@@ -4,8 +4,8 @@ import { detectAuditRooms, getEnvAuditChannels } from '../services/logging/audit
 import { logger, startupLog } from '../utils/logger.js';
 
 const GLOBAL_LOG_CHANNEL_ID = '1550564287129456810';
-// Anti-Nuke / Anti-Raid alerts of each other server go to its own room (Zenith: #bot-status).
-const GUILD_LOG_CHANNEL_IDS = { '1569932761471524874': '1571078435927887952' };
+// Anti-Nuke / Anti-Raid alerts of each other server go to its own room (Zenith: #perms).
+const GUILD_LOG_CHANNEL_IDS = { '1569932761471524874': '1571076213705809941' };
 
 export default {
   name: Events.ClientReady,

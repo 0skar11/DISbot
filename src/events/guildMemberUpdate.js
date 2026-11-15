@@ -12,22 +12,28 @@ export default {
       if (!newMember?.guild) return;
 
       if (oldMember.nickname !== newMember.nickname) {
-        await logEvent({
-          client: newMember.client,
-          guildId: newMember.guild.id,
-          eventType: EVENT_TYPES.MEMBER_NAME_CHANGE,
-          data: {
-            title: 'Nickname changed',
-            lines: [
-              `**User:** ${newMember.user.toString()} (${newMember.user.tag})`,
-              `**ID:** \`${newMember.user.id}\``,
-              `**Before:** ${oldMember.nickname || '*(no nickname)*'}`,
-              `**After:** ${newMember.nickname || '*(no nickname)*'}`,
-            ],
-            thumbnail: newMember.user?.displayAvatarURL?.({ dynamic: true }),
-            userId: newMember.user?.id,
-          },
+        const lines = [
+          `**User:** ${newMember.user.toString()} (${newMember.user.tag})`,
+          `**ID:** \`${newMember.user.id}\``,
+          `**Before:** ${oldMember.nickname || '*(no nickname)*'}`,
+          `**After:** ${newMember.nickname || '*(no nickname)*'}`,
+        ];
+        // Nickname changes go to the roles room (not join/leave); without that room they stay where they were.
+        const posted = await postAuditRoom(newMember.guild, 'roles', {
+          color: 0x3498DB,
+          title: 'Nickname changed',
+          description: lines.join('\n'),
+          thumbnail: { url: newMember.user?.displayAvatarURL?.({ dynamic: true }) },
+          timestamp: new Date().toISOString(),
         });
+        if (!posted) {
+          await logEvent({
+            client: newMember.client,
+            guildId: newMember.guild.id,
+            eventType: EVENT_TYPES.MEMBER_NAME_CHANGE,
+            data: { title: 'Nickname changed', lines, thumbnail: newMember.user?.displayAvatarURL?.({ dynamic: true }), userId: newMember.user?.id },
+          });
+        }
       }
 
       const oldTimeout = oldMember.communicationDisabledUntilTimestamp || 0;
