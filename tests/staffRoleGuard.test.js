@@ -59,3 +59,42 @@ describe('staff roles taken off by the untrusted come back (owner\'s request)', 
     assert.deepEqual(added, []);
   });
 });
+
+describe('admin roles in Zenith and edits (owner request)', () => {
+  test('mayChangeRole: only the trusted may change an admin role, anyone an ordinary one', async () => {
+    const { mayChangeRole } = await import('../src/services/moderation/staffRoleGuard.js');
+    const { PermissionsBitField } = await import('discord.js');
+    const ZENITH = '1569932761471524874';
+    const guild = { id: ZENITH, ownerId: '1', client: { user: { id: 'bot' }, db: { get: async (key, fallback) => (key.includes('config') ? { antiNukeTrustedUsers: [TRUSTED] } : fallback) } }, members: { fetch: async () => null } };
+    const adminRole = { id: '500000000000000001', name: 'Mods', managed: false, permissions: new PermissionsBitField(PermissionsBitField.Flags.Administrator) };
+    const plain = { id: '500000000000000002', name: 'Valorant', managed: false, permissions: new PermissionsBitField(0n) };
+    assert.equal(await mayChangeRole(guild, REMOVER, adminRole), false);
+    assert.equal(await mayChangeRole(guild, TRUSTED, adminRole), true);
+    assert.equal(await mayChangeRole(guild, REMOVER, plain), true);
+    assert.equal(await mayChangeRole({ ...guild, id: '999999999999999999' }, REMOVER, adminRole), true);
+  });
+
+  test('an admin role edited by an untrusted member is put back and the editor warned', async () => {
+    const { guardAdminRoleEdit } = await import('../src/services/moderation/staffRoleGuard.js');
+    const { PermissionsBitField } = await import('discord.js');
+    const ZENITH = '1569932761471524874';
+    const edits = [];
+    const warned = [];
+    const oldRole = { id: '500000000000000003', name: 'Mods', color: 1, hoist: true, mentionable: false, managed: false, permissions: new PermissionsBitField(PermissionsBitField.Flags.Administrator) };
+    const newRole = { ...oldRole, name: 'Mods2', permissions: new PermissionsBitField(0n), edit: async (data) => { edits.push(data); } };
+    const members = new Map([[REMOVER, { id: REMOVER, user: { id: REMOVER } }]]);
+    const guild = {
+      id: ZENITH, ownerId: '1',
+      client: { user: { id: 'bot' }, db: { get: async (key, fallback) => (key.includes('config') ? { antiNukeTrustedUsers: [TRUSTED] } : fallback), set: async () => true } },
+      members: { me: { id: 'bot' }, fetch: async (id) => members.get(id) || null },
+      channels: { cache: new Map(), fetch: async () => null },
+      fetchAuditLogs: async () => ({ entries: [{ id: '1', executor: { id: REMOVER, tag: 'x' }, target: { id: oldRole.id }, createdTimestamp: Date.now(), changes: [] }] }),
+    };
+    newRole.guild = guild;
+    const result = await guardAdminRoleEdit(oldRole, newRole, { auditRetryMs: 1, warn: async (args) => { warned.push(args.member.id); return { totalCount: 1 }; } });
+    assert.equal(result.reverted, true);
+    assert.equal(edits[0].name, 'Mods');
+    assert.equal(edits[0].permissions, oldRole.permissions);
+    assert.deepEqual(warned, [REMOVER]);
+  });
+});

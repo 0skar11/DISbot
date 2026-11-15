@@ -88,16 +88,16 @@ describe('anti spam (#144) and owner mentions (#148)', () => {
     delete: async () => {},
   });
 
-  test('6 messages in 5 seconds or the same message 4 times is spam', () => {
+  test('5 messages in 5 seconds or the same message 3 times is spam', () => {
     const t = 1_000_000;
     for (let i = 0; i < FLOOD_MESSAGES - 1; i += 1) assert.equal(trackMessage(message(`m${i}`, { userId: 'a' }), t + i * 100), null);
     assert.equal(trackMessage(message('m5', { userId: 'a' }), t + 600).kind, 'flood');
-    for (let i = 0; i < 3; i += 1) assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + i * 3000), null);
-    assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + 9000).kind, 'duplicate');
+    for (let i = 0; i < 2; i += 1) assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + i * 3000), null);
+    assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + 6000).kind, 'duplicate');
     assert.equal(trackMessage(message('نفس الكلام', { userId: 'c' }), t), null);
   });
 
-  test('spam times the member out for 10 minutes; staff are skipped', async () => {
+  test('spam times the member out for 15 minutes; staff are skipped', async () => {
     const calls = [];
     const member = { id: 'd', moderatable: true, timeout: async (ms) => calls.push(ms), permissions: new PermissionsBitField() };
     let last;
@@ -171,7 +171,7 @@ describe('staff may mention the owner in our server (report #196)', () => {
 
 describe('security cleanup (#145, #149, #150, #152)', () => {
   test('izatona is no longer an owner', () => {
-    assert.deepEqual(SERVER_OWNER_IDS, ['1159601661392715906', '1265049672024854559']);
+    assert.deepEqual(SERVER_OWNER_IDS, ['1159601661392715906']);
   });
 
   test('invites are never deleted on startup or cleanup (owner request)', async () => {

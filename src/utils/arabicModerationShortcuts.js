@@ -7,6 +7,7 @@ import { WarningService } from '../services/moderation/warningService.js';
 import { scheduleNoPermissionDelete } from './noPermissionReply.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { refreshTrustedBoard } from '../services/trustedBoardService.js';
+import { mayChangeRole } from '../services/moderation/staffRoleGuard.js';
 import { issueWarning, warningCard } from '../services/moderation/warnEscalation.js';
 import { moderationCard, cardReason, formatDurationMs, NO_REASON } from './moderationCard.js';
 import { unbanDmLine } from '../services/moderation/punishmentDm.js';
@@ -138,6 +139,7 @@ async function changeRole(message, targetMember, roleName, add) {
   if (!role) return reply(message, `❌ Role ${roleName} Not Found`);
   if (role.managed || !botRole || role.position >= botRole.position) return reply(message, '❌ Role Is Higher Than Mine');
   if (role.position >= actor.roles.highest.position && message.guild.ownerId !== actor.id) return reply(message, '❌ Role Is Higher Than Yours');
+  if (!(await mayChangeRole(message.guild, actor.id, role))) return reply(message, '🚫 No Permission');
   if (add) {
     await targetMember.roles.add(role, `Role shortcut by ${message.author.tag}`);
     return sendCard(message, { emoji: '✅', title: 'ROLE ADDED', fields: [['User', `<@${targetMember.id}>`], ['Role', `${role}`]], moderatorId: message.author.id });

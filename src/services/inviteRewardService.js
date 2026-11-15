@@ -225,6 +225,11 @@ export async function sweepInviteRewards(client, { now = Date.now() } = {}) {
   return paid;
 }
 
+/** A role name without emoji, symbols and case, so the owner's "5 Invites" is the same role as "📨 5 Invites". */
+export function plainRoleName(name) {
+  return String(name || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/gu, ' ').trim();
+}
+
 /**
  * The invite roles: the saved ones, else ones with the tier's name. Returns { [tier count]: roleId }.
  * The bot never creates, edits or deletes a role: a missing tier role is skipped until the owner makes it.
@@ -236,7 +241,7 @@ export async function findInviteTierRoles(client, guild) {
   const missing = [];
   for (const tier of INVITE_REWARDS.tiers) {
     const role = (saved[tier.count] && roles.get(saved[tier.count]))
-      || [...roles.values()].find((candidate) => candidate.name === tier.name && !candidate.managed);
+      || [...roles.values()].find((candidate) => !candidate.managed && (candidate.name === tier.name || plainRoleName(candidate.name) === plainRoleName(tier.name)));
     if (role) roleIds[tier.count] = role.id;
     else missing.push(tier.name);
   }
