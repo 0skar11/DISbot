@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { handleGifCommand, isSafeUrl, toGif, findImageUrl, COOLDOWN_MS } from '../src/services/gifConverterService.js';
+import { handleGifCommand, isSafeUrl, toGif, findImageUrl, isGifCommand, COOLDOWN_MS } from '../src/services/gifConverterService.js';
+import { parseTypedCommand } from '../src/utils/prefixParser.js';
 
 const png = () => sharp({ create: { width: 30, height: 20, channels: 4, background: '#2255ff' } }).png().toBuffer();
 
@@ -56,6 +57,37 @@ test('.gif replies with a GIF file; with no picture it says how to use it; a bad
     const bad = fakeMessage({ attachments: [att] });
     await handleGifCommand(bad, [], { isSafeUrl: () => false, now: () => 3_000_000 });
     assert.match(bad.sent[0].content, /ديسكورد بس/u);
+});
+
+test('`.gif` is the gif command whatever the configured prefix is; the bare word in a chat is not', () => {
+    for (const prefix of ['!', '.', '?']) {
+        for (const content of ['.gif', '.GIF', '!gif', '.جيف', `${prefix}gif`, `${prefix}جيف`]) {
+            assert.equal(isGifCommand(parseTypedCommand(content, prefix)), true, `${content} with prefix ${prefix}`);
+        }
+        for (const content of ['gif', 'جيف', 'gif me', '.gifs', 'هات gif', '..gif']) {
+            assert.equal(isGifCommand(parseTypedCommand(content, prefix)), false, `${content} with prefix ${prefix}`);
+        }
+    }
+});
+
+test('a picture in a replied-to link embed is taken from Discord\'s proxy, so it passes isSafeUrl', async () => {
+    const replied = { attachments: new Map(), content: 'https://i.imgur.com/a.png', embeds: [{ type: 'image', url: 'https://i.imgur.com/a.png', thumbnail: { url: 'https://i.imgur.com/a.png', proxyURL: 'https://images-ext-1.discordapp.net/external/abc/https/i.imgur.com/a.png' } }] };
+    const url = await findImageUrl(fakeMessage({ replied }));
+    assert.equal(url, 'https://images-ext-1.discordapp.net/external/abc/https/i.imgur.com/a.png');
+    assert.equal(isSafeUrl(url), true);
+});
+
+test('a real Discord attachment link (with its ?ex=&is=&hm= query) is accepted', () => {
+    assert.equal(isSafeUrl('https://cdn.discordapp.com/attachments/1/2/photo.png?ex=6740&is=673f&hm=abc123&'), true);
+});
+
+test('when the reply fails, the member is still told in the channel', async () => {
+    const msg = fakeMessage(); msg.author = { id: 'u-fallback' };
+    const channelSent = [];
+    msg.reply = async () => { throw new Error('Unknown Message'); };
+    msg.channel = { send: async (payload) => { channelSent.push(payload); } };
+    await handleGifCommand(msg, [], { now: () => 50_000_000 });
+    assert.match(channelSent[0].content, /ريبلاي/u);
 });
 
 test('a member must wait between conversions', async () => {

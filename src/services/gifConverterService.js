@@ -9,6 +9,17 @@ import sharp from 'sharp';
 import { logger } from '../utils/logger.js';
 
 export const GIF_WORDS = new Set(['gif', 'جيف']);
+// `.gif` is what members type, whatever the bot's configured prefix is (PREFIX defaults to `!`), so a gif word
+// right after one of these symbols counts too. The bare word in a chat is still left alone.
+const GIF_SYMBOL_PREFIX = /^[.!/-]$/u;
+
+/** Whether a parsed typed command (parseTypedCommand) is the gif command: `<prefix>gif`, `.gif`, `!جيف`... */
+export function isGifCommand(parsed) {
+    if (!parsed?.commandName) return false;
+    const name = parsed.commandName.toLowerCase();
+    if (parsed.prefixed) return GIF_WORDS.has(name);
+    return GIF_SYMBOL_PREFIX.test(name.slice(0, 1)) && GIF_WORDS.has(name.slice(1));
+}
 export const MAX_INPUT_BYTES = 12 * 1024 * 1024;
 export const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_SIDE = 1024;
@@ -36,7 +47,8 @@ function imageFromMessage(message) {
     const attachment = [...(message?.attachments?.values?.() || [])].find(isImageAttachment);
     if (attachment) return attachment.url;
     for (const embed of message?.embeds || []) {
-        const url = embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
+        // Prefer Discord's proxy copy: the plain URL of a link embed is the outside site, which isSafeUrl refuses.
+        const url = embed.image?.proxyURL || embed.thumbnail?.proxyURL || embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
         if (url) return url;
     }
     const link = URL_PATTERN.exec(message?.content || '')?.[0];
@@ -94,7 +106,9 @@ export async function toGif(bytes) {
 }
 
 async function say(message, content) {
-    await message.reply({ content, allowedMentions: { parse: [], repliedUser: false } }).catch(() => {});
+    const payload = { content, allowedMentions: { parse: [], repliedUser: false } };
+    // If the reply fails (the message was deleted, say), still tell the member in the channel.
+    await message.reply(payload).catch(() => message.channel?.send?.(payload)).catch((error) => logger.warn(`[GIF] could not answer: ${error.message}`));
     return true;
 }
 
