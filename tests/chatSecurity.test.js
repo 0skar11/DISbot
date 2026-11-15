@@ -88,16 +88,16 @@ describe('anti spam (#144) and owner mentions (#148)', () => {
     delete: async () => {},
   });
 
-  test('5 messages in 5 seconds or the same message 3 times is spam', () => {
+  test('10 messages in 5 seconds or the same message 5 times is spam', () => {
     const t = 1_000_000;
     for (let i = 0; i < FLOOD_MESSAGES - 1; i += 1) assert.equal(trackMessage(message(`m${i}`, { userId: 'a' }), t + i * 100), null);
-    assert.equal(trackMessage(message('m5', { userId: 'a' }), t + 600).kind, 'flood');
-    for (let i = 0; i < 2; i += 1) assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + i * 3000), null);
-    assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + 6000).kind, 'duplicate');
+    assert.equal(trackMessage(message('m10', { userId: 'a' }), t + (FLOOD_MESSAGES - 1) * 100).kind, 'flood');
+    for (let i = 0; i < 4; i += 1) assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + i * 3000), null);
+    assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + 12000).kind, 'duplicate');
     assert.equal(trackMessage(message('نفس الكلام', { userId: 'c' }), t), null);
   });
 
-  test('spam times the member out for 15 minutes; staff are skipped', async () => {
+  test('spam times the member out for 5 minutes; staff are skipped', async () => {
     const calls = [];
     const member = { id: 'd', moderatable: true, timeout: async (ms) => calls.push(ms), permissions: new PermissionsBitField() };
     let last;

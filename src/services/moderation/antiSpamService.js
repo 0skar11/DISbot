@@ -20,11 +20,11 @@ import { isHomeGuild } from '../../config/homeGuild.js';
 import { postAuditRoom } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
 
-export const FLOOD_MESSAGES = 5;
+export const FLOOD_MESSAGES = 10;
 export const FLOOD_WINDOW_MS = 5_000;
-export const DUPLICATE_MESSAGES = 3;
+export const DUPLICATE_MESSAGES = 5;
 export const DUPLICATE_WINDOW_MS = 30_000;
-export const SPAM_TIMEOUT_MS = 15 * 60_000;
+export const SPAM_TIMEOUT_MS = 5 * 60_000;
 
 export const OWNER_PING_ID = '1159601661392715906';
 export const OWNER_MENTION_LIMIT = 3;
