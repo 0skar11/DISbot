@@ -67,6 +67,20 @@ describe('chat filter corpus (owner rules: family / ibn al blacklist / hidden sp
     assert.deepEqual(wrong, []);
   });
 
+  test('links: an insult in the host or around the link is caught; random ids in the path are not', () => {
+    const caught = {
+      'https://ksomak': 'family', 'http://kosomak.com': 'family', 'www.kosomak.com': 'family', 'شوف www.kosomak.com/x': 'family',
+      'discord.gg/ibn el gazma': 'ibnAl', 'https://ebn-el-gazma.com': 'ibnAl', 'https://example.com/كسمك': 'family',
+      'https://youtu.be/abc يا شرموط': 'insult', 'https://sharmota.net/watch?v=1': 'insult',
+    };
+    for (const [text, rule] of Object.entries(caught)) assert.equal(checkText(text), rule, text);
+    for (const text of ['https://youtube.com/watch?v=ksmk123', 'https://discord.gg/kosomak', 'discord.gg/ksmk', 'discord.com/invite/sharmota',
+      'www.google.com/search?q=kasem', 'https://cdn.discordapp.com/attachments/1/2/kosomak.png', 'شوف ده https://x.com/u/ebn_el_kalb',
+      'https://github.com/kasem/repo', 'http://localhost:3000/ksmk']) {
+      assert.equal(checkText(text), null, text);
+    }
+  });
+
   test('corpus size meets the quality bar', () => {
     assert.ok(NEGATIVES.length >= 60);
     assert.ok(Object.values(POSITIVES).flat().length >= 120);

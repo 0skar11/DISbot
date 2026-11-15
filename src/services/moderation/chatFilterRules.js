@@ -242,14 +242,33 @@ const RULE_CHECKS = [
     ['banned', (v) => anyMatch(BANNED_WORDS, [...v.arabic, ...v.latin])],
 ];
 
-// Links (and the random ids inside them) are not words.
-const LINKS = /\b(?:https?:\/\/|www\.|discord(?:\.gg|app\.com\/invite|\.com\/invite)\/)\S+/giu;
+// The path/query of a link holds random ids ("watch?v=ksmk123", invite codes), so a match that lies
+// entirely inside the path of a valid ASCII link is ignored. The host, the text around the link and any
+// non-ASCII path are always checked ("https://ksomak", "www.kosomak.com", "discord.gg/ibn el gazma").
+const LINK = /(?:\bhttps?:\/\/|\bwww\.|\b(?=discord(?:app)?\.(?:gg|com)\/))([^\s/?#]+)([/?#]\S*)?/giu;
+const ASCII_HOST = /^[a-z0-9.-]+(?::\d+)?$/iu;
+const ASCII_PATH = /^[\x21-\x7e]*$/u;
 
-/** Strongest matched rule, without a role bypass or any side effects. */
-export function checkText(text) {
-    const normalized = normalizeForFilter(String(text || '').replace(LINKS, ' '));
+function ruleOf(text) {
+    const normalized = normalizeForFilter(text);
     if (!normalized) return null;
     const views = viewsOf(normalized);
     for (const [rule, matches] of RULE_CHECKS) if (matches(views)) return rule;
     return null;
+}
+
+/** Strongest matched rule, without a role bypass or any side effects. */
+export function checkText(text) {
+    const raw = String(text || '');
+    const paths = [];
+    const stripped = raw.replace(LINK, (link, host, path = '') => {
+        if (!path || !ASCII_HOST.test(host) || !ASCII_PATH.test(path)) return link;
+        paths.push(path);
+        return link.slice(0, link.length - path.length) + ' ';
+    });
+    const rule = ruleOf(stripped);
+    if (rule || !paths.length) return rule;
+    // Only a link path changed the answer: ignore it when that path alone explains the match.
+    const withPaths = ruleOf(raw);
+    return withPaths && !paths.some((path) => ruleOf(path)) ? withPaths : null;
 }
