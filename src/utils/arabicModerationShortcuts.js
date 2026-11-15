@@ -11,6 +11,8 @@ import { mayChangeRole } from '../services/moderation/staffRoleGuard.js';
 import { issueWarning, warningCard } from '../services/moderation/warnEscalation.js';
 import { moderationCard, cardReason, formatDurationMs, NO_REASON } from './moderationCard.js';
 import { unbanDmLine } from '../services/moderation/punishmentDm.js';
+import { assertCanActOn, hierarchyRuleApplies } from '../services/moderation/memberHierarchy.js';
+import { rememberInvoker } from '../services/moderation/commandInvoker.js';
 
 const COMMANDS = new Set([
   'وارن', 'وارنات', 'تايم', 'انتايم', 'بان', 'انبان', 'كلير', 'ان', 'شيل', 'ر', 'رول', 'ب', 'رتبة', 'ازالةرتبة', 'purge', 'تراست', 'انتراست', 'trusted', 'trustedlist', 'warn', 'warnings', 'timeout', 'untimeout', 'ban', 'unban', 'clear', 'remove', 'role', 'roll', 'lock', 'unlock', 'سحب', 'pull',
@@ -53,28 +55,63 @@ function tokenize(content, prefixes = []) {
   return { command, targetId, tail };
 }
 
+const ROLE_BY_ID = /^(?:<@&(\d{17,20})>|(\d{17,20}))$/u;
+
+/** The role a shortcut names: a role mention or ID (`ر @member 1234…`), else its name (exact, then start, then part). */
 function roleFor(guild, roleName) {
-  const normalized = roleName.trim().toLowerCase();
+  const value = String(roleName || '').trim();
+  const byId = value.match(ROLE_BY_ID);
+  if (byId) {
+    const role = guild.roles.cache.get(byId[1] || byId[2]);
+    return role && !role.managed && role.id !== guild.id ? role : null;
+  }
+  const normalized = value.toLowerCase();
   if (!normalized) return null;
-  const roles = guild.roles.cache.filter(role => !role.managed && role.id !== guild.id);
+  const roles = [...guild.roles.cache.values()].filter(role => !role.managed && role.id !== guild.id);
   return roles.find(role => role.name.toLowerCase() === normalized)
     || roles.find(role => role.name.toLowerCase().startsWith(normalized))
     || roles.find(role => role.name.toLowerCase().includes(normalized));
 }
 
-function hasPermission(member, permission) {
-  return member.permissions.has(permission) || member.guild.ownerId === member.id;
+/**
+ * `@member role`, `ID role`, `@member <roleId>`, `ID <roleId>`: the member comes first (a mention, else the first
+ * ID), the rest is the role. Returns `{ targetId, roleQuery }`; targetId is null when no member is written.
+ */
+function parseMemberAndRole(guild, body) {
+  const mention = body.match(/<@!?(\d{17,20})>/u);
+  if (mention) return { targetId: mention[1], roleQuery: body.replace(mention[0], ' ').replace(/\s+/gu, ' ').trim() };
+  const id = body.match(/(?:^|\s)(\d{17,20})(?=\s|$)/u);
+  // A lone role ID (`ر 1234…` as a reply) is the role, not the member.
+  if (!id || guild.roles?.cache?.has?.(id[1])) return { targetId: null, roleQuery: body.trim() };
+  return { targetId: id[1], roleQuery: body.replace(id[0], ' ').replace(/\s+/gu, ' ').trim() };
 }
 
-// Typed shortcuts stay silent for people without permission, except timeout, ban and kick (owner request).
-const KEEPS_DENIAL = /^[^p{L}p{N}]*(?:timeout|time|ban|kick|تايم|بان|كيك|طرد)(?:s|$)/iu;
+function hasPermission(member, permission) {
+  return Boolean(member?.permissions?.has(permission) || member?.guild?.ownerId === member?.id);
+}
+
+// Typed shortcuts stay silent for members without the permission (owner's request): nothing is answered.
 async function reply(message, content) {
-  if (/No Permission|ليس لديك صلاحية/u.test(content) && !KEEPS_DENIAL.test(String(message.content || ''))) return;
+  if (/No Permission|ليس لديك صلاحية/u.test(content)) return;
   await message.channel.send({ content, allowedMentions: { parse: [] } }).then(scheduleNoPermissionDelete).catch(() => {});
 }
 
 async function sendCard(message, card) {
   await message.channel.send(moderationCard(card)).catch(() => {});
+  return true;
+}
+
+/** An error's reply: a 🚫 refusal (the role hierarchy, memberHierarchy.js) is shown as it is, anything else after ❌. */
+function errorText(error) {
+  const text = error?.userMessage || error?.message || 'حدث خطأ أثناء تنفيذ الأمر.';
+  return text.startsWith('🚫') ? text : `❌ ${text}`;
+}
+
+/** Replies with the refusal and returns true when the member may not act on `target` (memberHierarchy.js). */
+async function refusedByHierarchy(message, target, options) {
+  const check = assertCanActOn(message.guild, message.member, target, options);
+  if (check.ok) return false;
+  await reply(message, check.message);
   return true;
 }
 
@@ -130,16 +167,20 @@ async function lockChannel(message) {
   return sendCard(message, { emoji: '🔒', title: 'CHANNEL LOCKED', fields: [['Channel', `${message.channel}`]], moderatorId: message.author.id });
 }
 
-async function changeRole(message, targetMember, roleName, add) {
+/** Gives (`add`) or takes `roleOrName` (a role, or its name / mention / ID) to or from `targetMember`. */
+async function changeRole(message, targetMember, roleOrName, add) {
   if (!hasPermission(message.member, PermissionFlagsBits.ManageRoles)) return reply(message, '🚫 No Permission');
-  if (!targetMember || !roleName) return true;
-  const role = roleFor(message.guild, roleName);
+  if (!targetMember || !roleOrName) return true;
+  if (await refusedByHierarchy(message, targetMember)) return true;
+  const role = typeof roleOrName === 'string' ? roleFor(message.guild, roleOrName) : roleOrName;
   const botRole = message.guild.members.me?.roles.highest;
   const actor = message.member;
-  if (!role) return reply(message, `❌ Role ${roleName} Not Found`);
+  if (!role) return reply(message, `❌ Role ${roleOrName} Not Found`);
   if (role.managed || !botRole || role.position >= botRole.position) return reply(message, '❌ Role Is Higher Than Mine');
   if (role.position >= actor.roles.highest.position && message.guild.ownerId !== actor.id) return reply(message, '❌ Role Is Higher Than Yours');
   if (!(await mayChangeRole(message.guild, actor.id, role))) return reply(message, '🚫 No Permission');
+  // The roles log names the member who typed the shortcut, not the bot (commandInvoker.js).
+  rememberInvoker(message.guild.id, 'roles', targetMember.id, message.author);
   if (add) {
     await targetMember.roles.add(role, `Role shortcut by ${message.author.tag}`);
     return sendCard(message, { emoji: '✅', title: 'ROLE ADDED', fields: [['User', `<@${targetMember.id}>`], ['Role', `${role}`]], moderatorId: message.author.id });
@@ -161,7 +202,10 @@ export async function pullToVoice(message, targetMember) {
   if (!targetMember.voice?.channel) return reply(message, '❌ العضو مش في روم صوتي.');
   if (targetMember.voice.channelId === room.id) return reply(message, '⚠️ هو معاك في نفس الروم.');
   const isOwner = message.guild.ownerId === staff.id || isServerOwner(staff.id);
-  if (!isOwner && (message.guild.ownerId === targetMember.id || targetMember.roles.highest.position >= staff.roles.highest.position)) {
+  // Our server and Zenith use the shared rule (memberHierarchy.js); other servers keep their own check.
+  if (hierarchyRuleApplies(message.guild, staff)) {
+    if (await refusedByHierarchy(message, targetMember)) return true;
+  } else if (!isOwner && (message.guild.ownerId === targetMember.id || targetMember.roles.highest.position >= staff.roles.highest.position)) {
     return reply(message, '❌ ماتقدرش تسحب عضو رتبته أعلى منك أو زيك.');
   }
   // The bot does the move, so the staff member's own rights count on both rooms (a deny on a room is not bypassed).
@@ -171,6 +215,7 @@ export async function pullToVoice(message, targetMember) {
   if (!isOwner && !(allowed(from, staff, PermissionFlagsBits.MoveMembers) && allowed(room, staff, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]))) {
     return reply(message, '🚫 No Permission');
   }
+  rememberInvoker(message.guild.id, 'voice', targetMember.id, message.author);
   await targetMember.voice.setChannel(room, `Pulled by ${message.author.tag}`);
   await message.channel.send({ content: `✅ تم سحب <@${targetMember.id}> إلى ${room}`, allowedMentions: { parse: [] } }).catch(() => {});
   return true;
@@ -206,8 +251,13 @@ const ARABIC_ADD_ROLE_COMMANDS = new Set(['ر', 'رول', 'ان', 'رتبة']);
 const ARABIC_REMOVE_ROLE_COMMANDS = new Set(['ب', 'شيل', 'ازالةرتبة']);
 
 /**
- * Arabic role shortcuts (`ر @member role` / `ب @member role`), with or without the prefix.
- * Only Arabic names are handled here so English words such as `roll` keep their normal commands.
+ * Arabic role shortcuts (`ر @member role` / `ب @member role`), with or without the prefix. The role is a name,
+ * a role mention or a role ID (`ر @member 1234…`); the member is a mention, an ID, or the author of the
+ * message replied to. Only Arabic names are handled here so English words such as `roll` keep their normal commands.
+ *
+ * These words are ordinary chat too (`ب`, `شيل ده`, `ان شاء الله`), so (owner's request) the shortcut stays out
+ * of the way unless the message really is one: without a member, or replying with no role found, it returns
+ * false and the message goes on as chat; a member without Manage Roles gets no answer at all.
  */
 export async function handleArabicRoleShortcut(message, prefixes = []) {
   const parts = stripPrefix(message.content, prefixes).split(/\s+/u).filter(Boolean);
@@ -215,28 +265,29 @@ export async function handleArabicRoleShortcut(message, prefixes = []) {
   const add = ARABIC_ADD_ROLE_COMMANDS.has(command);
   if (!add && !ARABIC_REMOVE_ROLE_COMMANDS.has(command)) return false;
 
-  const body = parts.slice(1).join(' ');
-  const mention = body.match(/<@!?(\d+)>/u);
-  const id = body.match(/(?:^|\s)(\d{17,20})(?:\s|$)/u);
-  const targetId = mention?.[1] || id?.[1] || await getReplyTargetId(message);
-  const roleName = body.replace(/<@!?\d+>/u, '').replace(/(?:^|\s)\d{17,20}(?=\s|$)/u, '').trim();
-  // `ان` is also a very common Arabic word ("ان شاء الله"), so it only reacts when a member is given.
-  if (!targetId && command === 'ان') return false;
-  if (!hasPermission(message.member, PermissionFlagsBits.ManageRoles)) {
-    await reply(message, '🚫 No Permission');
-    return true;
-  }
-  if (!targetId || !roleName) {
+  const { targetId: writtenTargetId, roleQuery } = parseMemberAndRole(message.guild, parts.slice(1).join(' '));
+  const targetId = writtenTargetId || await getReplyTargetId(message);
+  if (!targetId) return false;
+  if (!hasPermission(message.member, PermissionFlagsBits.ManageRoles)) return false;
+  // A member written in the message makes it a command (wrong usage is answered); a bare reply is chat unless it names a role.
+  const explicit = Boolean(writtenTargetId);
+  if (!roleQuery) {
+    if (!explicit) return false;
     await reply(message, `⚠️ ${command} @user role`);
     return true;
   }
+  const role = roleFor(message.guild, roleQuery);
+  if (!role && !explicit) return false;
 
   const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
-  if (!targetMember) return reply(message, '❌ Member Not Found');
+  if (!targetMember) {
+    if (explicit) await reply(message, '❌ Member Not Found');
+    return explicit;
+  }
   try {
-    await changeRole(message, targetMember, roleName, add);
+    await changeRole(message, targetMember, role || roleQuery, add);
   } catch (error) {
-    await reply(message, `❌ ${error.userMessage || error.message || 'حدث خطأ أثناء تنفيذ الأمر.'}`);
+    await reply(message, errorText(error));
   }
   return true;
 }
@@ -255,7 +306,7 @@ export async function handlePullShortcut(message, args = []) {
   try {
     await pullToVoice(message, targetMember);
   } catch (error) {
-    await reply(message, `❌ ${error.userMessage || error.message || 'حدث خطأ أثناء تنفيذ الأمر.'}`);
+    await reply(message, errorText(error));
   }
   return true;
 }
@@ -275,7 +326,7 @@ export async function handleClearWarningsShortcut(message, args) {
     const result = await WarningService.clearWarnings(message.guild.id, targetId);
     return sendCard(message, { emoji: '🧹', title: 'WARNINGS CLEARED', fields: [['User', `<@${targetId}>`], ['Removed', `${result.count}`]], moderatorId: message.author.id });
   } catch (error) {
-    return reply(message, `❌ ${error.userMessage || error.message || 'حدث خطأ أثناء تنفيذ الأمر.'}`);
+    return reply(message, errorText(error));
   }
 }
 
@@ -350,11 +401,12 @@ export async function handleArabicModerationShortcut(message) {
     if (command === 'كلير' || command === 'clear') {
       if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
       if (!targetMember) return true;
+      if (await refusedByHierarchy(message, targetMember)) return true;
       const result = await WarningService.clearWarnings(guild.id, targetId);
       return sendCard(message, { emoji: '🧹', title: 'WARNINGS CLEARED', fields: [['User', `<@${targetId}>`], ['Reason', cardReason(tail)], ['Removed', `${result.count}`]], moderatorId: message.member.id });
     }
   } catch (error) {
-    await reply(message, `❌ ${error.userMessage || error.message || 'حدث خطأ أثناء تنفيذ الأمر.'}`);
+    await reply(message, errorText(error));
   }
   return true;
 }

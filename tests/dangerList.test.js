@@ -2,6 +2,7 @@ import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { AuditLogEvent, PermissionsBitField } from 'discord.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
+import { HIERARCHY_REFUSAL } from '../src/services/moderation/memberHierarchy.js';
 import {
   handleDangerCommand, handleDangerAuditEntry, handleDangerMessage, blockDangerCommand, punishDanger,
   isOnDangerList, resetDangerCooldowns, DANGER_NOTICE_CHANNEL_ID, DANGER_LOG_CHANNEL_ID, DANGER_TIMEOUT_MS,
@@ -37,6 +38,8 @@ function setup(guildId = HOME_GUILD_ID) {
   for (const id of [BAD, STRANGER, OWNER]) {
     members.set(id, { id, timeout: async (ms, reason) => { timeouts.push({ id, ms, reason }); } });
   }
+  // The trusted member is high in the role list (the role hierarchy rule, memberHierarchy.js).
+  members.set(TRUSTED, { id: TRUSTED, roles: { highest: { position: 10 } } });
   const message = (authorId, content, extra = {}) => ({
     guild, author: { id: authorId }, content,
     channel: { send: async (payload) => { sent.reply.push(payload); } },
@@ -141,6 +144,20 @@ describe('خطر: the danger list (reports #218, #219)', () => {
     await handleDangerCommand(message(TRUSTED, `خطر شيل ${BAD}`), ['شيل', BAD]);
     assert.equal(cache.has(MOD.id), true);
     assert.match(sent.reply.at(-1).content, /رجعتله رولات الإدارة/u);
+  });
+
+  test('a trusted member can not list (or unlist) a member of the same or a higher role', async () => {
+    const { guild, sent, message } = setup();
+    const target = await guild.members.fetch(BAD);
+    for (const position of [10, 20]) {
+      target.roles = { highest: { position }, cache: new Map() };
+      await handleDangerCommand(message(TRUSTED, `خطر ${BAD}`), [BAD]);
+      assert.equal(await isOnDangerList(guild.client, guild.id, BAD), false, `position ${position}`);
+      assert.equal(sent.reply.at(-1).content, HIERARCHY_REFUSAL);
+    }
+    target.roles = { highest: { position: 3 }, cache: new Map() };
+    await handleDangerCommand(message(TRUSTED, `خطر ${BAD}`), [BAD]);
+    assert.equal(await isOnDangerList(guild.client, guild.id, BAD), true);
   });
 
   test('another server keeps nothing of this', async () => {

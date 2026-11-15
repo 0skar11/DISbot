@@ -3,6 +3,7 @@ import { logger } from '../../utils/logger.js';
 import { isServerOwner } from '../../config/serverOwners.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { logEvent } from '../../utils/moderation.js';
+import { rememberInvoker } from './commandInvoker.js';
 
 // `purge` wipes the whole channel. Only the server owners can run it, and only after pressing Confirm.
 // In our server (owner's request) it also takes a count and a confirm word, so no confirmation message is
@@ -91,6 +92,8 @@ export function parsePurgeArgs(args = []) {
 
 /** Deletes `limit` messages (or all of them) and logs it. Used by the confirm button and by `purge … تأكيد`. */
 export async function runPurge(channel, { client, guild, executor, limit = null }) {
+  // The bulk delete log shows the owner who ran it (commandInvoker.js).
+  rememberInvoker(guild?.id, 'bulkDelete', channel.id, executor);
   const deletedCount = await purgeChannel(channel, limit);
   await sendPurgeResult(channel, deletedCount, limit);
   await logEvent({

@@ -18,6 +18,8 @@ import { getGuildConfig } from '../config/guildConfig.js';
 import { TRUSTED_BOARD_CHANNEL_ID } from '../trustedBoardService.js';
 import { isTrusted } from '../../utils/antiNukeLogging.js';
 import { staffAndDangerousRoles } from './rejoinRestore.js';
+import { assertCanActOn } from './memberHierarchy.js';
+import { rememberInvoker } from './commandInvoker.js';
 import { logger } from '../../utils/logger.js';
 
 export const DANGER_NOTICE_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
@@ -224,6 +226,16 @@ export async function handleDangerCommand(message, args = []) {
     const list = await getDangerList(guild.client, guild.id);
     const lines = list.map((entry) => `• <@${entry.userId}>`).join('\n');
     return reply(message, list.length ? `☢️ **قائمة الخطر** (${list.length}):\n${lines}` : '☢️ قائمة الخطر فاضية.');
+  }
+
+  // Adding or removing takes or gives back the member's roles: only on a member below you (memberHierarchy.js).
+  // The owners keep their own answer below.
+  if (!isOwner(guild, targetId)) {
+    const executor = message.member || await guild.members.fetch(message.author.id).catch(() => null);
+    const target = await guild.members.fetch(targetId).catch(() => null);
+    const allowed = assertCanActOn(guild, executor, target || targetId);
+    if (!allowed.ok) return reply(message, allowed.message);
+    rememberInvoker(guild.id, 'roles', targetId, message.author);
   }
 
   if (removing) {

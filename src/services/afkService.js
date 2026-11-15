@@ -1,10 +1,9 @@
 import { logger } from '../utils/logger.js';
+import { rememberInvoker } from './moderation/commandInvoker.js';
 
 // AFK: `afk <reason>` marks a member away. Mentioning or replying to them tells the sender they're AFK
 // (no ping), and their next message removes it. AFK members are kept in memory and saved under one key
 // per server ({ userId: { reason, since } }), loaded the first time the server is needed.
-const NOTICE_DELETE_MS = 8_000;
-const WELCOME_BACK_DELETE_MS = 5_000;
 const NICK_PREFIX = '[AFK] ';
 const MAX_NICK = 32;
 
@@ -39,6 +38,8 @@ export async function setAfk(client, member, reason) {
     // Shows [AFK] in front of the name when the bot is allowed to change it.
     const name = member.nickname || member.user.globalName || member.user.username;
     if (!entry.renamed && member.manageable && !name.startsWith(NICK_PREFIX)) {
+        // The nickname log names the member who typed afk, not the bot (commandInvoker.js).
+        rememberInvoker(member.guild.id, 'nickname', member.id, member);
         entry.renamed = await member.setNickname(`${NICK_PREFIX}${name}`.slice(0, MAX_NICK), 'AFK').then(() => true).catch(() => false);
     }
     afk.set(member.id, entry);
@@ -53,6 +54,7 @@ export async function clearAfk(client, member) {
     await save(client, member.guild.id, afk);
     // Only undo our own rename: if the member changed their nickname while AFK, theirs is kept.
     if (!member.manageable || !member.nickname?.startsWith(NICK_PREFIX)) return entry;
+    rememberInvoker(member.guild.id, 'nickname', member.id, member);
     if ('renamed' in entry) {
         if (entry.renamed) await member.setNickname(entry.nickname ?? null, 'Back from AFK').catch(() => {});
     } else {
@@ -62,9 +64,9 @@ export async function clearAfk(client, member) {
     return entry;
 }
 
-async function sendTemporary(channel, payload, ms) {
-    const sent = await channel.send({ ...payload, allowedMentions: { parse: [] } }).catch(() => null);
-    if (sent) setTimeout(() => sent.delete().catch(() => {}), ms);
+// The AFK notices stay in the room (the owner asked for them not to be deleted).
+async function sendNotice(channel, payload) {
+    await channel.send({ ...payload, allowedMentions: { parse: [] } }).catch(() => null);
 }
 
 /** The author's own AFK is removed; people they mention or reply to who are AFK are announced (no ping). */
@@ -74,7 +76,7 @@ export async function handleAfkMessage(message, client, { isAfkCommand = false }
 
         if (!isAfkCommand && afk.has(message.author.id) && message.member) {
             const entry = await clearAfk(client, message.member);
-            await sendTemporary(message.channel, { content: `👋 أهلا بيك تاني ${message.author}، شلت الـ AFK (كنت AFK <t:${Math.floor(entry.since / 1000)}:R>).` }, WELCOME_BACK_DELETE_MS);
+            await sendNotice(message.channel, { content: `👋 أهلا بيك تاني ${message.author}، شلت الـ AFK (كنت AFK <t:${Math.floor(entry.since / 1000)}:R>).` });
         }
 
         const mentioned = new Set(message.mentions?.users?.filter((user) => !user.bot && user.id !== message.author.id).map((user) => user.id) || []);
@@ -87,7 +89,7 @@ export async function handleAfkMessage(message, client, { isAfkCommand = false }
                 const entry = afk.get(userId);
                 return `💤 <@${userId}> AFK <t:${Math.floor(entry.since / 1000)}:R> — ${entry.reason}`;
             });
-        if (lines.length) await sendTemporary(message.channel, { content: lines.join('\n') }, NOTICE_DELETE_MS);
+        if (lines.length) await sendNotice(message.channel, { content: lines.join('\n') });
     } catch (error) {
         logger.error('Error handling AFK for message:', error);
     }

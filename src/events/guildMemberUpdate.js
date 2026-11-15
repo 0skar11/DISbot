@@ -1,6 +1,7 @@
 import { AuditLogEvent, Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
-import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor, executorLine } from '../services/logging/auditRooms.js';
+import { recentInvoker } from '../services/moderation/commandInvoker.js';
 import { logger } from '../utils/logger.js';
 
 export default {
@@ -12,11 +13,15 @@ export default {
       if (!newMember?.guild) return;
 
       if (oldMember.nickname !== newMember.nickname) {
+        // Who changed it: the member who ran `نك`/`afk` through the bot, else the audit log (commandInvoker.js).
+        const nickEntry = recentInvoker(newMember.guild.id, 'nickname', newMember.id) ? null
+          : await fetchAuditEntry(newMember.guild, AuditLogEvent.MemberUpdate, newMember.id, (item) => item.changes?.some((change) => change.key === 'nick'));
         const lines = [
           `**User:** ${newMember.user.toString()} (${newMember.user.tag})`,
           `**ID:** \`${newMember.user.id}\``,
           `**Before:** ${oldMember.nickname || '*(no nickname)*'}`,
           `**After:** ${newMember.nickname || '*(no nickname)*'}`,
+          executorLine(newMember.guild, 'nickname', newMember.id, nickEntry?.executor),
         ];
         // Nickname changes go to the roles room (not join/leave); without that room they stay where they were.
         const posted = await postAuditRoom(newMember.guild, 'roles', {
@@ -56,6 +61,7 @@ export default {
           const lines = [
             `👤 **العضو:** <@${newMember.id}> (${newMember.user?.tag || newMember.user?.username || newMember.id} - ${newMember.id})`,
             `👮 **المشرف:** ${formatExecutor(entry?.executor)}`,
+            executorLine(newMember.guild, 'timeout', newMember.id, entry?.executor),
             `⏱️ **المدة:** ${durationText} (<t:${Math.floor(newTimeout / 1000)}:R>)`,
             `📄 **السبب:** ${reason}`,
           ];
@@ -70,6 +76,7 @@ export default {
           const lines = [
             `👤 **العضو:** <@${newMember.id}> (${newMember.user?.tag || newMember.user?.username || newMember.id} - ${newMember.id})`,
             `👮 **المشرف:** ${formatExecutor(entry?.executor)}`,
+            executorLine(newMember.guild, 'timeout', newMember.id, entry?.executor),
             `📄 **السبب:** ${reason}`,
           ];
 

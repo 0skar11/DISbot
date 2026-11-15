@@ -1,5 +1,5 @@
 import { AuditLogEvent, Events } from 'discord.js';
-import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor, executorLine } from '../services/logging/auditRooms.js';
 import { logger } from '../utils/logger.js';
 
 export default {
@@ -15,6 +15,7 @@ export default {
       const lines = [
         `👤 **العضو:** <@${ban.user.id}> (${ban.user.tag || ban.user.username || ban.user.id} - ${ban.user.id})`,
         `👮 **المشرف:** ${formatExecutor(entry?.executor)}`,
+        executorLine(ban.guild, 'ban', ban.user.id, entry?.executor),
         `📄 **السبب:** ${reason}`,
       ];
 

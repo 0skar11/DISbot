@@ -4,6 +4,7 @@ import { ModerationService } from '../../services/moderation/moderationService.j
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { moderationCard } from '../../utils/moderationCard.js';
+import { ensureCanActOn } from '../../services/moderation/memberHierarchy.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -19,6 +20,10 @@ export default {
     category: "moderation",
 
     async execute(interaction, config, client) {
+        // Our servers: a member of the same or a higher role is refused before the reply is deferred (memberHierarchy.js).
+        const targetMember = interaction.options.getMember("target");
+        if (targetMember) ensureCanActOn(interaction.guild, interaction.member, targetMember);
+
         const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {
             logger.warn(`Untimeout interaction defer failed`, {

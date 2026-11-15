@@ -1,8 +1,12 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { scheduleNoPermissionDelete } from './noPermissionReply.js';
+import { assertCanActOn } from '../services/moderation/memberHierarchy.js';
+import { rememberInvoker } from '../services/moderation/commandInvoker.js';
 
+// `ق` / `ف` lock and unlock the room, `نك` changes a nickname, `font` writes in bold. They are ordinary chat
+// too (`ف البيت`), so (owner's request) they only react to a real command: `ق` / `ف` as the whole message,
+// `font` with a text; a member without the permission gets no answer and the message goes on as chat.
 const COMMANDS = new Set(['ق', 'ف', 'نك', 'font']);
-const NO_PERMISSION = '🚫 No Permission';
 const BOLD_UPPER_START = 0x1d400;
 const BOLD_LOWER_START = 0x1d41a;
 const BOLD_DIGIT_START = 0x1d7ce;
@@ -35,7 +39,7 @@ function toBoldFont(value) {
 }
 
 async function lockChannel(message, locked) {
-  if (!hasPermission(message.member, PermissionFlagsBits.ManageChannels)) return reply(message, NO_PERMISSION);
+  if (!hasPermission(message.member, PermissionFlagsBits.ManageChannels)) return false;
   const channel = message.channel;
   if (!channel?.isTextBased?.() || !channel.permissionOverwrites?.edit) return reply(message, '❌ Text Channels Only');
   try {
@@ -43,6 +47,8 @@ async function lockChannel(message, locked) {
     const currentPermissions = channel.permissionsFor(everyoneRole);
     const alreadyLocked = currentPermissions?.has(PermissionFlagsBits.SendMessages) === false;
     if (locked === alreadyLocked) return reply(message, locked ? `ℹ️ ${channel} Already Locked` : `ℹ️ ${channel} Already Unlocked`);
+    // The channel log names the member who typed it, not the bot (commandInvoker.js).
+    rememberInvoker(message.guild.id, 'channel', channel.id, message.author);
     await channel.permissionOverwrites.edit(everyoneRole, { SendMessages: !locked }, { reason: `${locked ? 'Channel locked' : 'Channel unlocked'} by ${message.author.tag}` });
     return reply(message, locked ? `🔒 ${channel} Locked` : `🔓 ${channel} Unlocked`);
   } catch (error) {
@@ -58,7 +64,7 @@ async function getReplyMember(message) {
 }
 
 async function changeNickname(message, tail) {
-  if (!hasPermission(message.member, PermissionFlagsBits.ManageNicknames)) return reply(message, NO_PERMISSION);
+  if (!hasPermission(message.member, PermissionFlagsBits.ManageNicknames)) return false;
 
   const mention = tail.match(/^<@!?(\d+)>\s*/u);
   const targetId = mention?.[1] || null;
@@ -71,9 +77,11 @@ async function changeNickname(message, tail) {
   const restoreOriginalName = !nickname;
   if (nickname.length > 32) return reply(message, '❌ Max 32 Characters');
 
-  // Manage Nicknames allows targeting members regardless of the requester's
-  // role position. Discord still requires the bot's highest role to be above
+  // Our server and Zenith: someone else's nickname only below your own role (memberHierarchy.js); yours is fine.
+  // Elsewhere Manage Nicknames allows any member. Discord still requires the bot's highest role to be above
   // the target member because this is enforced by Discord itself.
+  const allowed = assertCanActOn(message.guild, message.member, targetMember, { allowSelf: true });
+  if (!allowed.ok) return reply(message, allowed.message);
   const botMember = message.guild.members.me;
   if (targetMember.id !== message.member.id && botMember
     && targetMember.roles.highest.position >= botMember.roles.highest.position) {
@@ -81,6 +89,7 @@ async function changeNickname(message, tail) {
   }
 
   try {
+    rememberInvoker(message.guild.id, 'nickname', targetMember.id, message.author);
     await targetMember.setNickname(restoreOriginalName ? null : nickname, `Nickname ${restoreOriginalName ? 'restored' : 'changed'} by ${message.author.tag}`);
     return reply(message, restoreOriginalName
       ? `↩️ ${targetMember} Nickname Reset`
@@ -93,10 +102,9 @@ async function changeNickname(message, tail) {
 export async function handleArabicUtilityShortcuts(message) {
   const parsed = parseCommand(message.content);
   if (!parsed) return false;
-  if (parsed.command === 'ق') return lockChannel(message, true);
-  if (parsed.command === 'ف') return lockChannel(message, false);
+  if (parsed.command === 'ق' || parsed.command === 'ف') return parsed.tail ? false : lockChannel(message, parsed.command === 'ق');
   if (parsed.command === 'نك') return changeNickname(message, parsed.tail);
-  if (!parsed.tail) return reply(message, '⚠️ font text');
+  if (!parsed.tail) return false;
   return reply(message, toBoldFont(parsed.tail));
 }
 

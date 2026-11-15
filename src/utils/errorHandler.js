@@ -380,7 +380,7 @@ function logInteractionError(error, errorType, logData) {
 }
 
 const NO_PERMISSION_TEXT = 'You do not have permission to use this command.';
-/** Commands that still answer "No Permission" to typed use: timeout, ban and kick. */
+/** Commands whose other permission errors (e.g. "Role Is Higher Than Mine") still answer typed use: timeout, ban and kick. */
 export const KEEPS_NO_PERMISSION_REPLY = new Set(['timeout', 'ban', 'kick']);
 
 /** Errors are shown as a single short line (`🚫 No Permission`, `❌ User not found`). */
@@ -431,8 +431,12 @@ async function sendErrorResponse(interaction, embed, context = {}) {
 
         const errorMessage = toOneLineError(embed);
 
-        // Typed commands stay silent for people without permission, except timeout, ban and kick (owner request).
-        if (interaction._isPrefixCommand && embed?.data?.title === 'Permission Denied' && !KEEPS_NO_PERMISSION_REPLY.has(String(interaction.commandName || '').toLowerCase())) {
+        // Typed commands stay silent for people without the permission, every command (owner's request: the
+        // words are ordinary chat too). Other permission errors are still shown for timeout, ban and kick, and an
+        // error marked `alwaysReply` (the role hierarchy refusal, memberHierarchy.js) is always shown.
+        const lacksPermission = /^🚫 No Permission/u.test(errorMessage.content);
+        if (interaction._isPrefixCommand && embed?.data?.title === 'Permission Denied' && !context.alwaysReply
+            && (lacksPermission || !KEEPS_NO_PERMISSION_REPLY.has(String(interaction.commandName || '').toLowerCase()))) {
             logger.info('[PERMISSION_DENIED] Silent for typed command', { userId: interaction.user?.id, command: interaction.commandName });
             return true;
         }
@@ -545,7 +549,7 @@ export async function handleInteractionError(interaction, error, context = {}) {
         : `${userMessage}\n\n-# Ref: \`${buildErrorReference(resolvedErrorCode, traceId)}\``;
 
     const embed = buildUserErrorEmbed(errorType, description);
-    await sendErrorResponse(interaction, embed, { ...context, traceId });
+    await sendErrorResponse(interaction, embed, { ...context, traceId, alwaysReply: normalizedError?.context?.alwaysReply === true });
 }
 
 /**

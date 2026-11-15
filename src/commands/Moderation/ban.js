@@ -4,6 +4,7 @@ import { ModerationService } from '../../services/moderation/moderationService.j
 import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { moderationCard, cardReason } from '../../utils/moderationCard.js';
 import { fetchRepliedMessage, sendModerationActionLog } from '../../services/moderation/moderationActionLogService.js';
+import { ensureCanActOn } from '../../services/moderation/memberHierarchy.js';
 
 export default {
     data: new SlashCommandBuilder()
@@ -49,6 +50,9 @@ export default {
             );
         }
 
+        // Our servers: a member of the same or a higher role (or an owner) is refused here (memberHierarchy.js).
+        ensureCanActOn(interaction.guild, interaction.member, interaction.options.getMember("target") || user);
+
         const repliedMessage = await fetchRepliedMessage(interaction);
         await ModerationService.banUser({
             guild: interaction.guild,
@@ -60,6 +64,7 @@ export default {
             action: 'ban',
             targetUser: user,
             moderatorUser: interaction.user,
+            executorUser: interaction.user,
             reason,
             channel: interaction.channel,
             repliedMessage,

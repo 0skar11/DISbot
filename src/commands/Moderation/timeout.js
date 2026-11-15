@@ -5,6 +5,7 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { ModerationService } from '../../services/moderation/moderationService.js';
 import { moderationCard, cardReason, formatDurationMs } from '../../utils/moderationCard.js';
 import { fetchRepliedMessage, sendModerationActionLog } from '../../services/moderation/moderationActionLogService.js';
+import { ensureCanActOn } from '../../services/moderation/memberHierarchy.js';
 
 const durationChoices = [
     { name: "5 minutes", value: 5 },
@@ -61,6 +62,11 @@ export default {
     },
 
     async execute(interaction, config, client) {
+        // Our servers: a member of the same or a higher role is refused before the reply is deferred,
+        // so a slash command gets the refusal ephemerally (memberHierarchy.js).
+        const targetMember = interaction.options.getMember("target");
+        if (targetMember) ensureCanActOn(interaction.guild, interaction.member, targetMember);
+
         const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {
             logger.warn(`Timeout interaction defer failed`, {
@@ -128,6 +134,7 @@ export default {
             action: 'timeout',
             targetUser,
             moderatorUser: interaction.user,
+            executorUser: interaction.user,
             reason,
             durationMs,
             channel: interaction.channel,

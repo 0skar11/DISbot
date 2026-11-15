@@ -1,9 +1,11 @@
 // moderationActionLogService.js — every ban / timeout / warn issued by a staff member is posted in one
-// channel: the member, the moderator, the reason, and the message the command replied to (if any).
+// channel: the member, the moderator, who really ran the command (commandInvoker.js), the reason, and the
+// message the command replied to (if any).
 
 import { logger } from '../../utils/logger.js';
 import { cardReason, formatDurationMs } from '../../utils/moderationCard.js';
 import { NO_PINGS } from '../../utils/oneLine.js';
+import { EXECUTOR_LABEL, executorText } from './commandInvoker.js';
 
 export const MODERATION_ACTION_LOG_CHANNEL_ID = '1552347336976498898';
 // The proof/log channel of each server (Zenith has its own).
@@ -57,15 +59,19 @@ function repliedMessageText(message) {
 /**
  * Embed for one moderation action. `action` is one of `ban`, `hardban`, `timeout`, `warn`;
  * `targetUser`/`moderatorUser` are discord.js Users (ids are used when a user could not be fetched).
+ * `executorUser` is the member who typed or ran the command; without one, a log whose moderator is the
+ * bot (`botId`, or any bot user) was the bot acting on its own: `🤖 تلقائي (حماية البوت)`.
  */
 export function buildModerationActionLogEmbed({
-  action, targetUser, targetId, moderatorUser, moderatorId, reason, durationMs, warnings, punishment,
+  action, targetUser, targetId, moderatorUser, moderatorId, executorUser, botId, reason, durationMs, warnings, punishment,
   channel, repliedMessage, timestamp = Date.now(),
 }) {
   const { title, color } = ACTIONS[action] || { title: action, color: 0x95a5a6 };
+  const moderator = moderatorUser || (moderatorId ? { id: moderatorId } : null);
   const lines = [
     `**العضو:** ${userLine(targetUser, targetId)}`,
     `**الإداري:** ${userLine(moderatorUser, moderatorId)}`,
+    `**${EXECUTOR_LABEL}:** ${executorText({ invoker: executorUser, actor: moderator, botId })}`,
     `**السبب:** ${cardReason(reason)}`,
   ];
   if (durationMs) lines.push(`**المدة:** ${formatDurationMs(durationMs)}`);
@@ -96,7 +102,7 @@ export async function sendModerationActionLog(guild, details) {
       logger.warn(`Moderation action log channel ${channelId} was not found in guild ${guild.id}.`);
       return false;
     }
-    const embed = buildModerationActionLogEmbed(details);
+    const embed = buildModerationActionLogEmbed({ botId: guild.client?.user?.id || null, ...details });
     const posted = await channel.send({ embeds: [embed], allowedMentions: NO_PINGS });
     // The moderator's proof sent next in this channel is merged into this log (proofMergeService.js).
     const moderatorId = details.moderatorUser?.id || details.moderatorId;

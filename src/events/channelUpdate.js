@@ -1,5 +1,5 @@
 import { AuditLogEvent, Events } from 'discord.js';
-import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor, executorLine } from '../services/logging/auditRooms.js';
 import { logger } from '../utils/logger.js';
 
 function checkOverwritesChanged(oldChannel, newChannel) {
@@ -54,6 +54,8 @@ export default {
         `🏷️ **الروم:** <#${newChannel.id}> (${newChannel.name})`,
         ...lines,
         `👮 **بواسطة:** ${formatExecutor(entry?.executor)}`,
+        // Lock/unlock run through the bot name the member who ran it (commandInvoker.js).
+        executorLine(newChannel.guild, 'channel', newChannel.id, entry?.executor),
       ].join('\n');
 
       await postAuditRoom(newChannel.guild, 'channels', {

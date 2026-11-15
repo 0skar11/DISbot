@@ -6,7 +6,7 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { getGuildBirthdays, deleteBirthday } from '../utils/database.js';
 import { deleteUserLevelData } from '../services/leveling/leveling.js';
-import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor, executorLine } from '../services/logging/auditRooms.js';
 import { logger } from '../utils/logger.js';
 import { isHomeGuild } from '../config/homeGuild.js';
 
@@ -86,6 +86,7 @@ export default {
                 const lines = [
                     `👤 **العضو:** <@${user.id}> (${user.tag || user.username || user.id} - ${user.id})`,
                     `👮 **المشرف:** ${formatExecutor(kickEntry.executor)}`,
+                    executorLine(guild, 'kick', user.id, kickEntry.executor),
                     `📄 **السبب:** ${kickEntry.reason || 'بدون سبب'}`,
                 ];
                 await postAuditRoom(guild, 'ban', {

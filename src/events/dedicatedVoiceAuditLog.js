@@ -1,5 +1,6 @@
 import { AuditLogEvent, Events } from 'discord.js';
-import { postAuditRoom, fetchAuditEntry, formatExecutor } from '../services/logging/auditRooms.js';
+import { postAuditRoom, fetchAuditEntry, formatExecutor, executorLine } from '../services/logging/auditRooms.js';
+import { recentInvoker } from '../services/moderation/commandInvoker.js';
 import { logger } from '../utils/logger.js';
 
 const changed = (before, after) => typeof before === 'boolean' && typeof after === 'boolean' && before !== after;
@@ -51,11 +52,14 @@ export default {
         return;
       }
 
+      // A move or mute done by a staff member through the bot (`سحب`) or from the audit log (commandInvoker.js).
+      const invoker = recentInvoker(guild.id, 'voice', member.id);
       const lines = [
         `👤 **العضو:** ${member} (${member.user?.tag || member.user?.username || member.id} - ${member.id})`,
         `⚡ **الحدث:** ${action}`,
         voiceChannel ? `📁 **الروم:** ${voiceChannel}` : null,
         executor ? `👮 **بواسطة:** ${formatExecutor(executor)}` : null,
+        executor || invoker ? executorLine(guild, 'voice', member.id, executor) : null,
         `⏱️ **الوقت:** <t:${Math.floor(Date.now() / 1000)}:F>`,
       ].filter(Boolean);
 

@@ -1,7 +1,10 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { scheduleNoPermissionDelete } from './noPermissionReply.js';
+import { rememberInvoker } from '../services/moderation/commandInvoker.js';
 
-const SHORTCUT_PATTERN = /^م(?:\s+(.*))?$/u;
+// `م 10` deletes the last 10 messages. `م` is ordinary chat too, so (owner's request) only `م <number>` is the
+// command, and a member without Manage Messages gets no answer: the message goes on as chat.
+const SHORTCUT_PATTERN = /^م\s+([0-9٠-٩]+)$/u;
 const MIN_AMOUNT = 1;
 const MAX_AMOUNT = 100;
 const CONFIRMATION_DELETE_DELAY_MS = 4_000;
@@ -17,12 +20,9 @@ async function reply(message, content) {
 export async function handleMessageDeleteShortcut(message) {
   const match = String(message?.content || '').trim().match(SHORTCUT_PATTERN);
   if (!match) return false;
-  if (!message.member?.permissions?.has(PermissionFlagsBits.ManageMessages)) {
-    await reply(message, '🚫 No Permission');
-    return true;
-  }
+  if (!message.member?.permissions?.has(PermissionFlagsBits.ManageMessages)) return false;
 
-  const amount = /^[0-9٠-٩]+$/u.test(match[1] || '') ? Number(toWesternDigits(match[1])) : NaN;
+  const amount = Number(toWesternDigits(match[1]));
   if (!Number.isInteger(amount) || amount < MIN_AMOUNT || amount > MAX_AMOUNT) {
     await reply(message, '⚠️ م 1-100');
     return true;
@@ -34,6 +34,8 @@ export async function handleMessageDeleteShortcut(message) {
 
   try {
     const fetched = await message.channel.messages.fetch({ limit: amount });
+    // The bulk delete log names the member who typed it, not the bot (commandInvoker.js).
+    rememberInvoker(message.guild?.id, 'bulkDelete', message.channel.id, message.author);
     const deleted = await message.channel.bulkDelete(fetched, true);
     const confirmation = await reply(message, `🧹 Deleted ${deleted.size} Messages`);
     if (confirmation) setTimeout(() => confirmation.delete().catch(() => {}), CONFIRMATION_DELETE_DELAY_MS);

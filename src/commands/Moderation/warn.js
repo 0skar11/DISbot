@@ -7,6 +7,7 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { issueWarning, warningCard, warningPunishment } from '../../services/moderation/warnEscalation.js';
 import { fetchRepliedMessage, sendModerationActionLog } from '../../services/moderation/moderationActionLogService.js';
+import { ensureCanActOn } from '../../services/moderation/memberHierarchy.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("warn")
@@ -27,6 +28,10 @@ export default {
     category: "moderation",
 
     async execute(interaction, config, client) {
+        // Our servers: a member of the same or a higher role is refused before the reply is deferred (memberHierarchy.js).
+        const targetMember = interaction.options.getMember("target");
+        if (targetMember) ensureCanActOn(interaction.guild, interaction.member, targetMember);
+
         const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {
             logger.warn(`Warn interaction defer failed`, {
@@ -94,6 +99,7 @@ export default {
             action: 'warn',
             targetUser: target,
             moderatorUser: moderator,
+            executorUser: interaction.user,
             reason: result.reason,
             warnings: totalCount,
             punishment: warningPunishment(result),

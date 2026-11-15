@@ -11,6 +11,8 @@ import { groupLeadingUsers } from '../../utils/prefixArgs.js';
 import { addHardBans, canLiftHardBan } from '../../services/moderation/hardBanService.js';
 import { sendModerationActionLog } from '../../services/moderation/moderationActionLogService.js';
 import { sendPunishmentDm } from '../../services/moderation/punishmentDm.js';
+import { assertCanActOn } from '../../services/moderation/memberHierarchy.js';
+import { rememberInvoker } from '../../services/moderation/commandInvoker.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("massban")
@@ -98,7 +100,14 @@ export default {
                     }
 
                     const member = await interaction.guild.members.fetch(userId).catch(() => null);
-                    
+
+                    // Our servers: a member of the same or a higher role, or an owner (even by ID), is skipped (memberHierarchy.js).
+                    const allowed = assertCanActOn(interaction.guild, interaction.member, member || userId);
+                    if (!allowed.ok) {
+                        results.skipped.push({ user: user.tag, userId, reason: allowed.message });
+                        continue;
+                    }
+
                     if (member) {
                         const modCheck = ModerationService.validateHierarchy(interaction.member, member, 'ban');
                         if (!modCheck.valid) {
@@ -123,6 +132,7 @@ export default {
 
                     // Only members still in the server can be told (the bot must share a server to DM).
                     if (member) await sendPunishmentDm(interaction.guild, user, 'ban', reason, interaction.user);
+                    rememberInvoker(interaction.guild.id, 'ban', userId, interaction.user);
                     await interaction.guild.members.ban(userId, {
                         reason: reason,
                         deleteMessageSeconds: deleteDays * 24 * 60 * 60
@@ -136,6 +146,7 @@ export default {
                         action: 'hardban',
                         targetUser: user,
                         moderatorUser: interaction.user,
+                        executorUser: interaction.user,
                         reason,
                         channel: interaction.channel,
                     });

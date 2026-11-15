@@ -114,6 +114,18 @@ async function applyReplyTarget(message, commandData, args) {
   return [referenced.author.id, ...args];
 }
 
+/**
+ * Whether typed arguments look like a real use of the command: a member (mention or ID, or the replied-to
+ * author added by applyReplyTarget) where the first option is a member, no extra words for a command that takes
+ * none, and every required option given.
+ */
+export function isWrittenAsCommand(commandData, args) {
+  const options = (commandData?.toJSON ? commandData.toJSON() : commandData)?.options || [];
+  if (!options.length) return args.length === 0;
+  if (options[0]?.type === 6 && args.length && !USER_ARG.test(args[0] || '')) return false;
+  return mapArgumentsToOptions(args, commandData).validateRequired().valid;
+}
+
 /** Whether the message would run one of the bot's commands (same parsing as handlePrefixCommand). */
 async function isBotCommand(message, client) {
   const guildConfig = await getGuildConfig(client, message.guild.id);
@@ -194,8 +206,11 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
     const restriction = getPrefixRestriction(command, args, resolveSubcommandAlias);
     if (restriction.blocked || !supportsPrefixExecution(command)) return;
     if (!(await isCommandEnabled(client, message.guild.id, resolvePrefixAccessKey(command.data, args), command.category))) return;
+    // Without the prefix the command words are ordinary chat too (`بان عليه`, `مسح الرسالة`, `قفل الباب`), so
+    // (owner's request) they only run when written as a command; anything else is left alone, unanswered.
+    if (!parsed.prefixed && !isWrittenAsCommand(command.data, args)) return;
 
-    // Wrong usage (e.g. `تايم الغداء`) only shows the permission/usage reply and must not start a cooldown.
+    // Wrong usage (e.g. `.تايم الغداء`) only shows the permission/usage reply and must not start a cooldown.
     if (!mapArgumentsToOptions(args, command.data).validateRequired().valid) {
       await executePrefixCommand(command, message, args, client, prefix, guildConfig);
       return;

@@ -4,6 +4,7 @@ import { logEvent as logAuditEvent, EVENT_TYPES } from '../services/loggingServi
 import { formatLogLine } from './logging/logEmbeds.js';
 import { logger } from './logger.js';
 import { getFromDb, setInDb } from './database.js';
+import { EXECUTOR_LABEL, executorText } from '../services/moderation/commandInvoker.js';
 
 const ACTION_TO_EVENT_TYPE = {
   'Member Banned': EVENT_TYPES.MODERATION_BAN,
@@ -24,15 +25,25 @@ const ACTION_TO_EVENT_TYPE = {
   'Case Updated': EVENT_TYPES.MODERATION_CONFIG,
 };
 
-function buildModerationLogData(event) {
+/**
+ * The log of one moderation event. `event.executor` is `tag (id)` of whoever the command ran as (the
+ * moderator); `event.executorUser`, when given, is the member who typed or ran the command. `botId` is our
+ * bot: an event it did on its own shows `🤖 تلقائي (حماية البوت)` as the executor (commandInvoker.js).
+ */
+export function buildModerationLogData(event, botId = null) {
   const targetIdMatch = event.target?.match(/\((\d+)\)/);
   const targetId = targetIdMatch?.[1];
   const executorIdMatch = event.executor?.match(/\((\d+)\)/);
   const executorTag = event.executor?.split(' (')[0] || 'Moderator';
+  const executorId = event.metadata?.moderatorId || executorIdMatch?.[1] || null;
+  const actor = executorId ? { id: String(executorId), tag: executorIdMatch ? executorTag : null } : null;
 
   const lines = [];
   if (event.target) {
     lines.push(formatLogLine('User', event.target));
+  }
+  if (event.executorUser || actor) {
+    lines.push(formatLogLine(EXECUTOR_LABEL, executorText({ invoker: event.executorUser, actor, botId })));
   }
   if (event.reason) {
     const reason = event.reason.length > 900
@@ -81,7 +92,7 @@ export async function logEvent({ client, guild, guildId, event }) {
     }
 
     const eventType = ACTION_TO_EVENT_TYPE[event.action] || EVENT_TYPES.MODERATION_CONFIG;
-    const data = buildModerationLogData(event);
+    const data = buildModerationLogData(event, client?.user?.id || guild.client?.user?.id || null);
 
     await logAuditEvent({
       client,

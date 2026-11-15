@@ -1,12 +1,14 @@
 // roleLogs.js — the `roles` room of the Logs category (auditLogChannelsService.js), in our server only:
 // roles given to or taken from members, and roles created, deleted or changed, with who did it from the
 // audit log. The bot's own role changes (level roles, the store, giving roles back on rejoin) are left
-// out, and one audit log request is shared by every log within a second, so bursts stay light.
+// out, unless a member ran a role command through the bot (then the log names them), and one audit log
+// request is shared by every log within a second, so bursts stay light.
 
 import { AuditLogEvent, PermissionsBitField } from 'discord.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { getAuditLogChannelId, AUDIT_LOG_CATEGORY_ID } from '../auditLogChannelsService.js';
 import { resolveAuditRoom, postAuditRoom } from './auditRooms.js';
+import { EXECUTOR_LABEL, executorText, recentInvoker } from '../moderation/commandInvoker.js';
 import { logger } from '../../utils/logger.js';
 
 // The audit entry can land a moment after the gateway event; tests set this to 0.
@@ -80,7 +82,10 @@ async function auditEntry(guild, type, targetId, filter = () => true, { retry = 
 const byLine = (entry) => (entry?.executor ? `👮 بواسطة: ${userLine(entry.executor)}` : null);
 const isBot = (guild, entry) => Boolean(entry?.executor?.id && entry.executor.id === guild.client?.user?.id);
 
-/** Roles given to or taken from a member (not by the bot). */
+/**
+ * Roles given to or taken from a member. Not by the bot on its own; a role command a member ran through
+ * the bot (`ر`/`ب`, `خطر`) is logged with who ran it (commandInvoker.js).
+ */
 export async function logMemberRoles(oldMember, newMember) {
     const guild = newMember?.guild;
     if (!guild || !oldMember?.roles?.cache || oldMember.partial) return false;
@@ -90,7 +95,9 @@ export async function logMemberRoles(oldMember, newMember) {
     const ids = new Set([...added, ...removed].map((role) => role.id));
     const entry = await auditEntry(guild, AuditLogEvent.MemberRoleUpdate, newMember.id,
         (item) => item.changes?.some((change) => change.new?.some?.((role) => ids.has(role.id))));
-    if (isBot(guild, entry)) return false;
+    const invoker = recentInvoker(guild.id, 'roles', newMember.id);
+    if (isBot(guild, entry) && !invoker) return false;
+    const executor = `${EXECUTOR_LABEL}: ${executorText({ invoker, actor: entry?.executor, botId: guild.client?.user?.id || null })}`;
     return post(guild, embed({
         color: added.length && !removed.length ? COLORS.green : removed.length && !added.length ? COLORS.red : COLORS.blue,
         title: '🎭 رولات عضو اتغيرت',
@@ -99,6 +106,7 @@ export async function logMemberRoles(oldMember, newMember) {
             added.length ? `➕ اتضافت: ${added.map((role) => `<@&${role.id}>`).join('، ')}` : null,
             removed.length ? `➖ اتشالت: ${removed.map((role) => `<@&${role.id}>`).join('، ')}` : null,
             byLine(entry),
+            executor,
         ],
     }));
 }
