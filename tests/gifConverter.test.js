@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { handleGifCommand, isPrivateAddress, isSafeUrl, toGif, findImageUrl } from '../src/services/gifConverterService.js';
+import { handleGifCommand, isSafeUrl, toGif, findImageUrl, COOLDOWN_MS } from '../src/services/gifConverterService.js';
 
 const png = () => sharp({ create: { width: 30, height: 20, channels: 4, background: '#2255ff' } }).png().toBuffer();
 
@@ -20,20 +20,9 @@ function fakeMessage({ attachments = [], content = '.gif', replied = null, menti
     };
 }
 
-test('private and local addresses are refused, public ones are fine', () => {
-    for (const address of ['127.0.0.1', '10.1.2.3', '192.168.0.5', '172.20.1.1', '169.254.169.254', '::1', 'fd00::1', '::ffff:10.0.0.1']) assert.equal(isPrivateAddress(address), true, address);
-    for (const address of ['8.8.8.8', '104.18.1.1', '2606:4700::1']) assert.equal(isPrivateAddress(address), false, address);
-});
-
-test('isSafeUrl: https + public host only', async () => {
-    const lookupTo = (address) => async () => [{ address }];
-    assert.equal(await isSafeUrl('https://cdn.discordapp.com/a.png', lookupTo('104.18.1.1')), true);
-    assert.equal(await isSafeUrl('http://cdn.discordapp.com/a.png', lookupTo('104.18.1.1')), false);
-    assert.equal(await isSafeUrl('https://127.0.0.1/a.png', lookupTo('127.0.0.1')), false);
-    assert.equal(await isSafeUrl('https://localhost/a.png', lookupTo('127.0.0.1')), false);
-    assert.equal(await isSafeUrl('https://evil.example.com/a.png', lookupTo('10.0.0.8')), false);
-    assert.equal(await isSafeUrl('https://user:pw@x.example.com/a.png', lookupTo('8.8.8.8')), false);
-    assert.equal(await isSafeUrl('https://nope.example.com/a.png', async () => { throw new Error('ENOTFOUND'); }), false);
+test('isSafeUrl: only https on the Discord image hosts', () => {
+    for (const ok of ['https://cdn.discordapp.com/a.png', 'https://media.discordapp.net/a.png?x=1', 'https://images-ext-1.discordapp.net/external/a/b.png']) assert.equal(isSafeUrl(ok), true, ok);
+    for (const bad of ['http://cdn.discordapp.com/a.png', 'https://evil.example.com/a.png', 'https://cdn.discordapp.com.evil.com/a.png', 'https://127.0.0.1/a.png', 'https://localhost/a.png', 'https://user:pw@cdn.discordapp.com/a.png', 'https://cdn.discordapp.com:8443/a.png', 'https://169.254.169.254/latest', 'not a url']) assert.equal(isSafeUrl(bad), false, bad);
 });
 
 test('toGif makes a real GIF and refuses a non-picture', async () => {
@@ -56,15 +45,27 @@ test('.gif replies with a GIF file; with no picture it says how to use it; a bad
     const bytes = await png();
     const ok = fakeMessage({ attachments: [att] });
     const fetchStub = async () => ({ ok: true, headers: { get: () => String(bytes.length) }, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
-    assert.equal(await handleGifCommand(ok, [], { isSafeUrl: async () => true, fetch: fetchStub }), true);
+    assert.equal(await handleGifCommand(ok, [], { isSafeUrl: () => true, fetch: fetchStub, now: () => 1_000_000 }), true);
     assert.equal(ok.sent[0].files[0].name, 'image.gif');
     assert.equal(ok.sent[0].files[0].attachment.subarray(0, 3).toString(), 'GIF');
 
     const none = fakeMessage();
-    await handleGifCommand(none, [], { isSafeUrl: async () => true });
+    await handleGifCommand(none, [], { isSafeUrl: () => true, now: () => 2_000_000 });
     assert.match(none.sent[0].content, /ريبلاي/u);
 
     const bad = fakeMessage({ attachments: [att] });
-    await handleGifCommand(bad, [], { isSafeUrl: async () => false });
-    assert.match(bad.sent[0].content, /مش مقبول/u);
+    await handleGifCommand(bad, [], { isSafeUrl: () => false, now: () => 3_000_000 });
+    assert.match(bad.sent[0].content, /ديسكورد بس/u);
+});
+
+test('a member must wait between conversions', async () => {
+    const att = { url: 'https://cdn.discordapp.com/x.png', contentType: 'image/png', name: 'x.png' };
+    const bytes = await png();
+    const fetchStub = async () => ({ ok: true, headers: { get: () => '0' }, arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) });
+    const first = fakeMessage({ attachments: [att] }); first.author = { id: 'u-cool' };
+    await handleGifCommand(first, [], { isSafeUrl: () => true, fetch: fetchStub, now: () => 10_000_000 });
+    assert.equal(first.sent[0].files[0].name, 'image.gif');
+    const second = fakeMessage({ attachments: [att] }); second.author = { id: 'u-cool' };
+    await handleGifCommand(second, [], { isSafeUrl: () => true, fetch: fetchStub, now: () => 10_000_000 + COOLDOWN_MS - 1 });
+    assert.match(second.sent[0].content, /استنى/u);
 });

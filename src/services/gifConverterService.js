@@ -2,9 +2,9 @@
 //
 // The picture comes from (first match): an image attached to the message, an image in the message being replied to
 // (attachment, embed picture or link), a link in the command, or the avatar of a mentioned member.
-// Only public https links are downloaded (never a local or private address), at most MAX_INPUT_BYTES.
-import dns from 'node:dns/promises';
-import net from 'node:net';
+// Only pictures hosted by Discord itself are downloaded (attachments and its image proxy), so the bot can never be
+// pointed at another server or an internal address; at most MAX_INPUT_BYTES, streamed. One job per member per
+// COOLDOWN_MS and MAX_JOBS at a time.
 import sharp from 'sharp';
 import { logger } from '../utils/logger.js';
 
@@ -13,33 +13,21 @@ export const MAX_INPUT_BYTES = 12 * 1024 * 1024;
 export const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const MAX_SIDE = 1024;
 const FETCH_TIMEOUT_MS = 10_000;
+export const COOLDOWN_MS = 5_000;
+export const MAX_JOBS = 3;
+const lastUse = new Map(); // userId -> time
+let running = 0;
 const URL_PATTERN = /https:\/\/[^\s<>]+/iu;
 const IMAGE_NAME = /\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?|$)/iu;
 
-const PRIVATE_V4 = [/^10\./u, /^127\./u, /^0\./u, /^169\.254\./u, /^192\.168\./u, /^172\.(?:1[6-9]|2\d|3[01])\./u, /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./u, /^192\.0\.0\./u];
+const DISCORD_IMAGE_HOSTS = [/^cdn\.discordapp\.com$/u, /^media\.discordapp\.net$/u, /^images-ext-\d+\.discordapp\.net$/u, /^cdn\.discordapp\.net$/u];
 
-/** Whether an IP address is private, local or otherwise not a public internet address. */
-export function isPrivateAddress(address) {
-    if (net.isIPv4(address)) return PRIVATE_V4.some((pattern) => pattern.test(address));
-    const lower = String(address).toLowerCase();
-    if (lower === '::1' || lower === '::' || /^f[cd]/u.test(lower) || lower.startsWith('fe80')) return true;
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/u.exec(lower);
-    return mapped ? isPrivateAddress(mapped[1]) : false;
-}
-
-/** A link we may download: https, a normal host name (not an address or a local name) that resolves to public addresses only. */
-export async function isSafeUrl(value, lookup = dns.lookup) {
+/** A link we may download: https on one of Discord's own image hosts, no credentials, no custom port. */
+export function isSafeUrl(value) {
     let url;
     try { url = new URL(value); } catch { return false; }
-    if (url.protocol !== 'https:' || url.username || url.password) return false;
-    const host = url.hostname.toLowerCase();
-    if (net.isIP(host) || host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal') || !host.includes('.')) return false;
-    try {
-        const addresses = await lookup(host, { all: true });
-        return addresses.length > 0 && addresses.every((entry) => !isPrivateAddress(entry.address));
-    } catch {
-        return false;
-    }
+    if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) return false;
+    return DISCORD_IMAGE_HOSTS.some((pattern) => pattern.test(url.hostname.toLowerCase()));
 }
 
 const isImageAttachment = (attachment) => Boolean(attachment?.contentType?.startsWith('image/') || IMAGE_NAME.test(attachment?.name || attachment?.url || ''));
@@ -73,11 +61,24 @@ export async function findImageUrl(message, args = []) {
 async function download(url, fetchImpl = fetch) {
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'error' });
     if (!response.ok) throw new Error(`download failed (${response.status})`);
-    const length = Number(response.headers.get('content-length') || 0);
-    if (length > MAX_INPUT_BYTES) throw new Error('too big');
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > MAX_INPUT_BYTES) throw new Error('too big');
-    return bytes;
+    if (Number(response.headers.get('content-length') || 0) > MAX_INPUT_BYTES) throw new Error('too big');
+    // Count the bytes as they arrive and stop at the limit, whatever the server claims.
+    if (!response.body?.getReader) {
+        const whole = Buffer.from(await response.arrayBuffer());
+        if (whole.length > MAX_INPUT_BYTES) throw new Error('too big');
+        return whole;
+    }
+    const reader = response.body.getReader();
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > MAX_INPUT_BYTES) { await reader.cancel().catch(() => {}); throw new Error('too big'); }
+        chunks.push(value);
+    }
+    return Buffer.concat(chunks);
 }
 
 /** Converts picture bytes to a GIF (an animated picture stays animated). Throws when the bytes are not a picture. */
@@ -100,9 +101,14 @@ async function say(message, content) {
 /** `.gif` handler. Returns true when the message was a gif command. */
 export async function handleGifCommand(message, args = [], deps = {}) {
     if (!message.guild) return false;
+    const now = (deps.now || Date.now)();
+    if (now - (lastUse.get(message.author?.id) || 0) < COOLDOWN_MS) return say(message, '⏳ استنى ثواني قبل ما تحوّل صورة تانية.');
+    if (running >= MAX_JOBS) return say(message, '⏳ البوت بيحوّل صور كتير دلوقتي، جرّب بعد شوية.');
     const url = await findImageUrl(message, args);
     if (!url) return say(message, '🖼️ ابعت صورة مع الأمر، أو اعمل ريبلاي على صورة واكتب `gif`.');
-    if (!(await (deps.isSafeUrl || isSafeUrl)(url))) return say(message, '❌ اللينك ده مش مقبول، استخدم صورة مرفقة أو لينك https عادي.');
+    if (!(deps.isSafeUrl || isSafeUrl)(url)) return say(message, '❌ بحوّل الصور اللي على ديسكورد بس: ارفع الصورة أو اعمل ريبلاي عليها.');
+    lastUse.set(message.author?.id, now);
+    running += 1;
     try {
         const bytes = await download(url, deps.fetch);
         const gif = await toGif(bytes);
@@ -110,6 +116,8 @@ export async function handleGifCommand(message, args = [], deps = {}) {
     } catch (error) {
         logger.warn(`[GIF] conversion failed: ${error.message}`);
         await say(message, error.message === 'too big' ? '❌ الصورة كبيرة أوي.' : '❌ معرفتش أحوّل الملف ده، لازم يكون صورة.');
+    } finally {
+        running -= 1;
     }
     return true;
 }
