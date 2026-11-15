@@ -1,16 +1,22 @@
 // chatFilterService.js — automatic punishment for insults and banned words (reports #146, #147, #151).
 //
-// Each rule has a punishment, from the strongest:
-//   • kosomak   — "كسمك" and anything with the same meaning, even hidden ("ك س م ك", "كـسـمـك",
-//                 "kosomak", "k$mk"): message deleted + 1 hour timeout.
-//   • ibnAl     — "ابن ال..." with any word ("ابن الكلب", "يا ابن ال...", "ebn el ..."): message deleted
-//                 + a warning (the owner changed it from a 15 minute timeout). A few friendly phrases
-//                 are left alone (IBN_AL_ALLOWED).
-//   • insult    — strong insults (INSULTS in chatFilterRules): message deleted + a warning (3 warnings = timeout).
-//   • banned    — words that are only deleted, with no punishment ("الحفره").
+// The message is ALWAYS deleted, whatever the rule. Rules, checked in this order (the first match wins):
+//   • ibnAl  — "ابن ال..." / "بنت ال..." only with a real insult after it (IBN_AL_INSULTS: الجزمة,
+//              الكلب, الحمار, الوسخة, المتناكة, الشرموطة, القحبة, الزانية, الحرام, الزبالة, الخنزير...;
+//              "ebn el gazma", "ibn el kalb", "ebn el 7mar"): deleted + a warning every time.
+//              "ابن الناس", "ابن الحلال", "ابن البلد", "ابن عمي", "ابن الكلية"... are normal words.
+//   • insult — strong insults (INSULTS / INSULTS_LATIN: شرموط, متناك, خول, عرص, طيز, ديوث...; "sharmoota",
+//              "khawal", "3ars"): deleted + a warning every time (unchanged).
+//   • family — insults aimed at the family or its religion: كسمك / كس امك / كس اختك, زانية, دين امك,
+//              يلعن دينك / يلعن ابوك, ميتين امك / ميتين ابو / ميتين دين / ميتين اهل ("ksomak", "zanya",
+//              "meteen omak"). The bare number "ميتين" is fine. Deleted every time, no timeout; the 3rd hit
+//              by the same member within 30 minutes gives ONE warning and the count starts again.
+//   • banned — words that are only deleted, with no punishment (none at the moment).
+// A warning goes through warnEscalation, so 3 warnings still give the automatic timeout.
+// Hidden spellings count too (dots/spaces/symbols between letters, tashkeel, tatweel, zero-width,
+// repeated letters, mixed Arabic/Latin, look-alike letters, leetspeak, franco): see chatFilterRules.js.
 // Owners, trusted staff (the Anti-Nuke trusted list, members or roles), bots and the report channel
-// (reports quote insults) are never checked. Edit the lists
-// in chatFilterRules.js to add or remove words.
+// (reports quote insults) are never checked. Edit the lists in chatFilterRules.js to add or remove words.
 
 import { isServerOwner } from '../../config/serverOwners.js';
 import { canLiftHardBan } from './hardBanService.js';
@@ -20,14 +26,15 @@ import { sendModerationActionLog } from './moderationActionLogService.js';
 import { postAuditRoom } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
 import { checkText } from './chatFilterRules.js';
-export { checkText, normalizeForFilter, IBN_AL_ALLOWED, INSULTS, BANNED_WORDS } from './chatFilterRules.js';
+import { recordRepeat } from './chatFilterRepeats.js';
+export { checkText, normalizeForFilter, IBN_AL_ALLOWED, IBN_AL_INSULTS, INSULTS, BANNED_WORDS } from './chatFilterRules.js';
 
 const NOTICE_DELETE_MS = 5_000;
-const HOUR = 60 * 60_000;
+export const FAMILY_REPEAT = { limit: 3, windowMs: 30 * 60_000 };
 
 const RULES = {
-    // No message is sent for this one (owner request): the message is deleted and the member timed out, quietly.
-    kosomak: { label: 'شتيمة (كسمك)', timeoutMs: HOUR, silent: true },
+    // Quiet (owner request): only the deletion, unless the repeat gives a warning.
+    family: { label: 'شتيمة للأهل', repeat: FAMILY_REPEAT, silent: true },
     ibnAl: { label: 'شتيمة (ابن ال...)', warn: true },
     insult: { label: 'شتيمة', warn: true },
     banned: { label: 'كلمة ممنوعة' },
@@ -38,8 +45,11 @@ async function notice(message, text) {
     if (sent) setTimeout(() => sent.delete().catch(() => {}), NOTICE_DELETE_MS).unref?.();
 }
 
-/** Deletes and punishes a message that breaks a rule. Returns true when the message was handled. */
-export async function handleChatFilter(message) {
+/**
+ * Deletes and punishes a message that breaks a rule. Returns true when the message was handled.
+ * `now` and `warn` are for tests.
+ */
+export async function handleChatFilter(message, { now = Date.now(), warn = issueWarning } = {}) {
     if (!message.guild || message.author?.bot || isServerOwner(message.author?.id)) return false;
     // Reports quote what someone else said, so the report channel is never filtered.
     if (message.channelId === REPORT_CHANNEL_ID) return false;
@@ -54,14 +64,16 @@ export async function handleChatFilter(message) {
     const me = message.guild.members.me;
     const reason = `فلتر الشات: ${rule.label}`;
     let punishment = '🗑️ الرسالة اتمسحت';
+    let shouldWarn = Boolean(rule.warn);
+    if (rule.repeat) {
+        const { count, reached } = recordRepeat(`${message.guild.id}:${message.author.id}`, rule.repeat, now);
+        shouldWarn = reached;
+        if (!reached) punishment += ` (${count}/${rule.repeat.limit})`;
+    }
 
     try {
-        if (rule.timeoutMs && member?.moderatable) {
-            await member.timeout(rule.timeoutMs, reason);
-            punishment = `⏳ تايم ${rule.timeoutMs >= HOUR ? 'ساعة' : `${rule.timeoutMs / 60_000} دقيقة`}`;
-            await sendModerationActionLog(message.guild, { action: 'timeout', targetUser: message.author, moderatorUser: message.client.user, reason, durationMs: rule.timeoutMs, channel: message.channel, repliedMessage: message });
-        } else if (rule.warn && member && me) {
-            const result = await issueWarning({ guild: message.guild, member, moderator: me, reason });
+        if (shouldWarn && member && me) {
+            const result = await warn({ guild: message.guild, member, moderator: me, reason });
             punishment = `⚠️ وارن (${result.totalCount})${result.timeoutApplied ? ' + تايم' : ''}`;
             await sendModerationActionLog(message.guild, { action: 'warn', targetUser: message.author, moderatorUser: message.client.user, reason, warnings: result.totalCount, channel: message.channel, repliedMessage: message });
         }
@@ -88,6 +100,6 @@ export async function handleChatFilter(message) {
         logger.debug('Failed to post chat filter action to automode room:', auditErr);
     }
 
-    if (!rule.silent) await notice(message, `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
+    if (!rule.silent || shouldWarn) await notice(message, `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
     return true;
 }

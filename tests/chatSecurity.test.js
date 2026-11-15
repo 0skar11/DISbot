@@ -12,8 +12,8 @@ import { ROLE_DEFINITIONS } from '../src/services/staffRoleHierarchyService.js';
 
 describe('chat filter (reports #146, #147, #151)', () => {
   const cases = {
-    kosomak: ['كسمك', 'كس امك', 'كـسـمـك', 'ك س م ك', 'ك.س.م.ك', 'كسسسمك', 'يا كسمك', 'كس اختك', 'ksmk', 'kosomak', 'kos omak', 'k$mk', 'KOSOMK', 'كسومك'],
-    ibnAl: ['ابن الكلب', 'يا ابن الوسخه', 'ابن ال***', 'يابن الجزمه', 'ebn el kalb', 'إبن الكلب'],
+    family: ['كسمك', 'كس امك', 'كـسـمـك', 'ك س م ك', 'ك.س.م.ك', 'كسسسمك', 'يا كسمك', 'كس اختك', 'ksmk', 'kosomak', 'kos omak', 'k$mk', 'KOSOMK', 'كسومك', 'زانية', 'ميتين امك'],
+    ibnAl: ['ابن الكلب', 'يا ابن الوسخه', 'يابن الجزمه', 'ebn el kalb', 'إبن الكلب', 'ابن الجزمة', 'ebn el gazma'],
     insult: ['يا شرموط', 'متناك', 'انت خول', 'يا عرص', 'معرص', 'طيزك', 'يا منيوك', 'ya khawal', 'sharmota', 'خوووول'],
   };
   for (const [rule, texts] of Object.entries(cases)) {
@@ -23,20 +23,20 @@ describe('chat filter (reports #146, #147, #151)', () => {
   }
 
   test('leaves normal words alone', () => {
-    for (const text of ['ابن الحلال', 'ابن عمي', 'ابن العم', 'خوله صاحبتي', 'دخول', 'بوكس مان', 'مكس مصر', 'كسبت', 'كسرت الكوباية', 'اكسسوار', 'نيكون', 'زبادي', 'زبون', 'زبيب', 'حفره في الشارع', 'kosmos', 'kiss me', 'كسول', 'مكسيكو', 'نيكول', 'احا', 'hello', 'تعالوا الحفره', 'الحفرة احسن', 'el7ofra']) {
+    for (const text of ['ابن الحلال', 'ابن عمي', 'ابن العم', 'ابن الناس', 'ابن البلد', 'ابن الكلية', 'ابن ال***', 'ميتين جنيه', 'خوله صاحبتي', 'دخول', 'بوكس مان', 'مكس مصر', 'كسبت', 'كسرت الكوباية', 'اكسسوار', 'نيكون', 'زبادي', 'زبون', 'زبيب', 'حفره في الشارع', 'kosmos', 'kiss me', 'كسول', 'مكسيكو', 'نيكول', 'احا', 'hello', 'تعالوا الحفره', 'الحفرة احسن', 'el7ofra']) {
       assert.equal(checkText(text), null, text);
     }
     assert.ok(INSULTS.length > 10 && IBN_AL_ALLOWED.includes('الحلال'));
   });
 
-  function filterMessage(content, { authorId = '200000000000000001' } = {}) {
+  function filterMessage(content, { authorId = '200000000000000001', me = null } = {}) {
     const calls = [];
     const member = { id: authorId, moderatable: true, timeout: async (ms) => calls.push(['timeout', ms]) };
     return {
       calls,
       message: {
         content,
-        guild: { id: 'g', ownerId: '1', client: { db: { get: async (key, fallback) => (key.includes('config') ? { antiNukeTrustedUsers: ['200000000000000077'] } : fallback), set: async () => true } }, members: { me: null, fetch: async () => member }, channels: { cache: new Map(), fetch: async () => null } },
+        guild: { id: 'g', ownerId: '1', client: { db: { get: async (key, fallback) => (key.includes('config') ? { antiNukeTrustedUsers: ['200000000000000077'] } : fallback), set: async () => true } }, members: { me, fetch: async () => member }, channels: { cache: new Map(), fetch: async () => null } },
         member,
         author: { id: authorId, bot: false },
         client: { user: { id: 'bot' } },
@@ -46,17 +46,48 @@ describe('chat filter (reports #146, #147, #151)', () => {
     };
   }
 
-  test('kosomak: deleted + 1 hour timeout; ibn al: deleted + warning; owners are skipped', async () => {
-    let { calls, message } = filterMessage('يا ك س م ك');
-    assert.equal(await handleChatFilter(message), true);
-    assert.deepEqual(calls.slice(0, 2), [['delete'], ['timeout', 60 * 60_000]]);
-    assert.equal(calls.find(([kind]) => kind === 'notice'), undefined);
+  test('family insults: always deleted, never a timeout, one warning on the 3rd hit in 30 minutes', async () => {
+    const me = { id: 'bot' };
+    const warnings = [];
+    const warn = async ({ member }) => { warnings.push(member.id); return { totalCount: warnings.length, timeoutApplied: false }; };
+    const send = (content, now, authorId = '200000000000000011') => {
+      const fixture = filterMessage(content, { authorId, me });
+      return handleChatFilter(fixture.message, { now, warn }).then((handled) => ({ handled, ...fixture }));
+    };
+    const t = 10_000_000;
+    for (const [i, text] of ['يا ك س م ك', 'زانية', 'ksomak'].entries()) {
+      const { handled, calls } = await send(text, t + i * 60_000);
+      assert.equal(handled, true, text);
+      assert.deepEqual(calls[0], ['delete'], text);
+      assert.ok(!calls.some(([kind]) => kind === 'timeout'), text);
+      if (i < 2) assert.equal(calls.find(([kind]) => kind === 'notice'), undefined, 'quiet until the warning');
+    }
+    assert.deepEqual(warnings, ['200000000000000011'], 'one warning on the 3rd hit');
+    // The counter starts again: two more hits give nothing, the third warns again.
+    await send('كسمك', t + 4 * 60_000);
+    await send('كسمك', t + 5 * 60_000);
+    assert.equal(warnings.length, 1);
+    await send('كسمك', t + 6 * 60_000);
+    assert.equal(warnings.length, 2);
 
-    // ابن ال...: deleted + a warning, no direct timeout.
-    ({ calls, message } = filterMessage('ابن الكلب'));
-    assert.equal(await handleChatFilter(message), true);
+    // Hits more than 30 minutes apart never add up.
+    for (let i = 0; i < 4; i += 1) await send('كسمك', t + i * 31 * 60_000, '200000000000000012');
+    assert.equal(warnings.length, 2);
+  });
+
+  test('ibn al insults: deleted + a warning every time; ordinary ابن ال... is not touched; owners are skipped', async () => {
+    const me = { id: 'bot' };
+    let warned = 0;
+    const warn = async () => ({ totalCount: ++warned, timeoutApplied: false });
+    let { calls, message } = filterMessage('ابن الجزمة', { me });
+    assert.equal(await handleChatFilter(message, { warn }), true);
     assert.deepEqual(calls[0], ['delete']);
     assert.ok(!calls.some(([kind]) => kind === 'timeout'));
+    assert.equal(warned, 1);
+
+    ({ calls, message } = filterMessage('ابن الناس', { me }));
+    assert.equal(await handleChatFilter(message, { warn }), false);
+    assert.equal(calls.length, 0);
 
     ({ calls, message } = filterMessage('الحفره'));
     assert.equal(await handleChatFilter(message), false);
