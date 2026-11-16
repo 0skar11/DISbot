@@ -202,7 +202,7 @@ describe('staff may mention the owner in our server (report #196)', () => {
 
 describe('security cleanup (#145, #149, #150, #152)', () => {
   test('izatona is no longer an owner', () => {
-    assert.deepEqual(SERVER_OWNER_IDS, ['1159601661392715906']);
+    assert.deepEqual(SERVER_OWNER_IDS, ['1159601661392715906', '626263734704275487']);
   });
 
   test('invites are never deleted on startup or cleanup (owner request)', async () => {

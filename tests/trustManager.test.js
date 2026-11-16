@@ -6,10 +6,10 @@ import { TRUSTED_BOARD_CHANNEL_ID } from '../src/services/trustedBoardService.js
 
 const MANAGER = '626263734704275487';
 
-test('a trust manager can give and take back trust but is not a server owner', () => {
+test('a trust manager can give and take back trust (this id is now also a server owner)', () => {
     assert.deepEqual(TRUST_MANAGER_IDS, [MANAGER]);
     assert.equal(isTrustManager(MANAGER), true);
-    assert.equal(isServerOwner(MANAGER), false);
+    assert.equal(isServerOwner(MANAGER), true);
     assert.equal(isTrustManager('1159601661392715906'), true, 'the owner still can');
     assert.equal(isTrustManager('111111111111111111'), false);
 });
