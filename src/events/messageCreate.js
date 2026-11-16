@@ -38,6 +38,13 @@ import { handleQr } from '../services/chat/qrReply.js';
 import { handleMentionGroupCommand } from '../services/mentionGroup.js';
 import { handleStreakCommand, handleStreakMessage, isStreakChannel } from '../services/cc/streakService.js';
 import { handleDangerCommand, handleDangerMessage, punishDanger, blockDangerCommand, DANGER_COMMAND_WORD } from '../services/moderation/dangerList.js';
+import { isHomeGuild } from '../config/homeGuild.js';
+import { getCommandDefaultPermissions, memberMeetsCommandPermissions } from '../utils/permissionGuard.js';
+import { assertCanActOn } from '../services/moderation/memberHierarchy.js';
+import { resolveMemberByName, remainingText } from '../utils/memberNameResolver.js';
+import {
+  askNameConfirmation, FULL_NAME_COMMAND_WORDS, nameTargetsEnabled, pressMessage, replyCandidates, replyNotFound, replyRefusal,
+} from '../services/moderation/nameConfirmation.js';
 
 const AFK_COMMAND = /^\s*[^\p{L}\p{N}\s]{0,3}(?:afk|افك|أفك)(?:\s|$)/iu;
 
@@ -142,7 +149,8 @@ async function isBotCommand(message, client) {
   return isSilentCommand(name) || Boolean(client.commands.get(name));
 }
 
-async function handlePrefixCommand(message, client, gamesOnly = false) {
+/** The typed-command part of a message (also driven directly by tests). */
+export async function handlePrefixCommand(message, client, gamesOnly = false) {
   try {
     const guildConfig = await getGuildConfig(client, message.guild.id);
     const prefix = guildConfig?.prefix || getCommandPrefix();
@@ -189,46 +197,152 @@ async function handlePrefixCommand(message, client, gamesOnly = false) {
       args = [musicPrefixShortcut, ...args];
     }
 
-    const resolvedCommandName = resolveCommandAlias(commandName);
+    const resolvedCommandName = homeOnlyCommandAlias(message.guild.id, commandName) || resolveCommandAlias(commandName);
     if (isSilentCommand(resolvedCommandName)) return;
     const command = client.commands.get(resolvedCommandName);
     if (!command) return;
-    if (isMaintenanceMode() && !isBotOwner(message.author.id)) {
-      await message.channel.send('🛠️ Maintenance Mode').catch(() => {});
-      return;
-    }
-    if (!isCommandCategoryEnabled(command.category)) return;
-    if (await blockDangerCommand(message.guild, message.author.id, resolvedCommandName)) {
-      await message.channel.send({ content: `🚫 <@${message.author.id}> انت في قائمة الخطر.`, allowedMentions: { parse: [] } }).catch(() => {});
-      return;
-    }
-
-    args = await applyReplyTarget(message, command.data, args);
-    if (typeof command.normalizePrefixArgs === 'function') args = command.normalizePrefixArgs(args);
-
-    const restriction = getPrefixRestriction(command, args, resolveSubcommandAlias);
-    if (restriction.blocked || !supportsPrefixExecution(command)) return;
-    if (!(await isCommandEnabled(client, message.guild.id, resolvePrefixAccessKey(command.data, args), command.category))) return;
-    // Without the prefix the command words are ordinary chat too (`بان عليه`, `مسح الرسالة`, `قفل الباب`), so
-    // (owner's request) they only run when written as a command; anything else is left alone, unanswered.
-    if (!parsed.prefixed && !isWrittenAsCommand(command.data, args)) return;
-
-    // Wrong usage (e.g. `.تايم الغداء`) only shows the permission/usage reply and must not start a cooldown.
-    if (!mapArgumentsToOptions(args, command.data).validateRequired().valid) {
-      await executePrefixCommand(command, message, args, client, prefix, guildConfig);
-      return;
-    }
-
-    const abuseProtection = await enforceAbuseProtection({ guildId: message.guild.id, user: message.author }, command, resolvedCommandName);
-    if (!abuseProtection.allowed) {
-      await message.channel.send(`⏱️ Wait ${formatCooldownDuration(abuseProtection.remainingMs)}`).catch(() => {});
-      return;
-    }
-    await executePrefixCommand(command, message, args, client, prefix, guildConfig);
+    await runTypedCommand(message, client, {
+      command, resolvedCommandName, typedCommand, args, prefix, guildConfig, prefixed: parsed.prefixed,
+    });
   } catch (error) {
     logger.error('Error handling prefix command:', error);
     await message.channel.send({ content: `❌ ${error.userMessage || error.message || 'Something went wrong'}`, allowedMentions: { parse: [] } }).catch(() => {});
   }
+}
+
+// Our server only: `كيك` is the kick command too (other servers keep their words).
+const HOME_ONLY_COMMAND_ALIASES = { كيك: 'kick' };
+
+function homeOnlyCommandAlias(guildId, commandName) {
+  return isHomeGuild(guildId) ? HOME_ONLY_COMMAND_ALIASES[String(commandName || '').toLowerCase()] || null : null;
+}
+
+/**
+ * Typed commands whose member may be written by name in our server (memberNameResolver.js): the ones that
+ * punish never act at once (`confirm`: a ✅ / ❌ question, nameConfirmation.js); viewing warnings acts directly.
+ */
+const NAME_TARGET_COMMANDS = new Map([
+  ['ban', { confirm: true }],
+  ['kick', { confirm: true }],
+  ['timeout', { confirm: true }],
+  ['untimeout', { confirm: true }],
+  ['warn', { confirm: true }],
+  ['warnings', { confirm: false }],
+]);
+
+/** Whether the member who typed `message` may run `command` at all (Discord permission or the moderator role). */
+function mayRunCommand(message, command, guildConfig) {
+  if (isBotOwner(message.author?.id)) return true;
+  return memberMeetsCommandPermissions(message.member, getCommandDefaultPermissions(command.data), {
+    guildConfig, commandCategory: command.category ?? null,
+  });
+}
+
+const wordsOfText = (text) => (text ? text.split(' ') : []);
+
+/**
+ * Our server: `بان محمد سبام`, `تايم احمد 10m`, `وارنات محمد`: the member by name (memberNameResolver.js) when
+ * no mention, ID or reply names one. Only for a member who may run the command (anyone else: no answer and no
+ * lookup), and without the prefix only for the full command words (FULL_NAME_COMMAND_WORDS). Resolves to
+ * `{ args }` for the command to go on with (the member's ID first, the name's words taken out like a mention),
+ * or `{ handled: true }` when it was answered here: asked to confirm, several members listed, a refusal, or
+ * `❌ Member Not Found`.
+ */
+async function nameTargetForCommand(message, client, context) {
+  const { command, resolvedCommandName, typedCommand, args, prefixed, guildConfig } = context;
+  const rule = NAME_TARGET_COMMANDS.get(resolvedCommandName);
+  if (!rule || !nameTargetsEnabled(message.guild) || !args.length) return { args };
+  const firstOption = (command.data?.toJSON ? command.data.toJSON() : command.data)?.options?.[0];
+  if (firstOption?.type !== 6) return { args };
+  // A mention or an ID anywhere wins over a name (a reply target is already the first argument then).
+  if (args.some((arg) => USER_ARG.test(arg))) return { args };
+  if (!prefixed && !FULL_NAME_COMMAND_WORDS.has(typedCommand)) return { args };
+  if (!mayRunCommand(message, command, guildConfig)) return { args };
+
+  const text = args.join(' ');
+  const found = await resolveMemberByName(message.guild, text);
+  if (found.status === 'none') {
+    if (found.reason !== 'not_found') return { args };
+    await replyNotFound(message);
+    return { handled: true };
+  }
+  const argsFor = (candidate) => [candidate.member.id, ...wordsOfText(remainingText(text, candidate.usedWords))];
+  if (!rule.confirm) {
+    if (found.status === 'many') {
+      await replyCandidates(message, found.candidates);
+      return { handled: true };
+    }
+    return { args: argsFor(found) };
+  }
+
+  // Punishing commands never act on a name at once. One member you may not act on is refused right away.
+  if (found.status === 'one') {
+    const allowed = await assertCanActOn(message.guild, message.member, found.member);
+    if (!allowed.ok) {
+      await replyRefusal(message, allowed.message);
+      return { handled: true };
+    }
+  }
+  await askNameConfirmation(message, {
+    candidates: found.status === 'one' ? [found] : found.candidates,
+    // A press runs the same command with the same words through the whole normal path, as the presser now.
+    run: async ({ candidate, member, user }) => {
+      const pressed = pressMessage(message, member, user);
+      const freshConfig = await getGuildConfig(client, message.guild.id).catch(() => guildConfig);
+      await runTypedCommand(pressed, client, { ...context, args: argsFor(candidate), guildConfig: freshConfig, resolveNames: false });
+    },
+  });
+  return { handled: true };
+}
+
+/**
+ * Runs a typed command found in `client.commands`: maintenance, the danger list, the reply target, the
+ * member by name (our server), the prefix rules, the usage check, the cooldown, then the command itself
+ * (which checks the permission and the role hierarchy). A confirmed name runs this again with the member's ID.
+ */
+async function runTypedCommand(message, client, context) {
+  const { command, resolvedCommandName, prefix, guildConfig, prefixed, resolveNames = true } = context;
+  let { args } = context;
+  if (isMaintenanceMode() && !isBotOwner(message.author.id)) {
+    await message.channel.send('🛠️ Maintenance Mode').catch(() => {});
+    return;
+  }
+  if (!isCommandCategoryEnabled(command.category)) return;
+  if (await blockDangerCommand(message.guild, message.author.id, resolvedCommandName)) {
+    await message.channel.send({ content: `🚫 <@${message.author.id}> انت في قائمة الخطر.`, allowedMentions: { parse: [] } }).catch(() => {});
+    return;
+  }
+
+  args = await applyReplyTarget(message, command.data, args);
+  if (typeof command.normalizePrefixArgs === 'function') args = command.normalizePrefixArgs(args);
+
+  const restriction = getPrefixRestriction(command, args, resolveSubcommandAlias);
+  if (restriction.blocked || !supportsPrefixExecution(command)) return;
+  if (!(await isCommandEnabled(client, message.guild.id, resolvePrefixAccessKey(command.data, args), command.category))) return;
+  if (resolveNames) {
+    const named = await nameTargetForCommand(message, client, { ...context, args });
+    if (named.handled) return;
+    if (named.args !== args) {
+      args = named.args;
+      if (typeof command.normalizePrefixArgs === 'function') args = command.normalizePrefixArgs(args);
+    }
+  }
+  // Without the prefix the command words are ordinary chat too (`بان عليه`, `مسح الرسالة`, `قفل الباب`), so
+  // (owner's request) they only run when written as a command; anything else is left alone, unanswered.
+  if (!prefixed && !isWrittenAsCommand(command.data, args)) return;
+
+  // Wrong usage (e.g. `.تايم الغداء`) only shows the permission/usage reply and must not start a cooldown.
+  if (!mapArgumentsToOptions(args, command.data).validateRequired().valid) {
+    await executePrefixCommand(command, message, args, client, prefix, guildConfig);
+    return;
+  }
+
+  const abuseProtection = await enforceAbuseProtection({ guildId: message.guild.id, user: message.author }, command, resolvedCommandName);
+  if (!abuseProtection.allowed) {
+    await message.channel.send(`⏱️ Wait ${formatCooldownDuration(abuseProtection.remainingMs)}`).catch(() => {});
+    return;
+  }
+  await executePrefixCommand(command, message, args, client, prefix, guildConfig);
 }
 
 async function handleCountingGame(message, client) {

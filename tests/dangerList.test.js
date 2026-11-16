@@ -78,11 +78,15 @@ describe('خطر: the danger list (reports #218, #219)', () => {
   test('a stranger or a normal sentence is just chat; owners cannot be added', async () => {
     const { guild, sent, message } = setup();
     assert.equal(await handleDangerCommand(message(STRANGER, `خطر <@${BAD}>`), [`<@${BAD}>`]), false);
-    assert.equal(await handleDangerCommand(message(TRUSTED, 'خطر جدا'), ['جدا']), false);
+    assert.equal(sent.reply.length, 0, 'a stranger gets no answer');
+    // `خطر` is a full command word: a trusted member whose words name nobody gets `❌ Member Not Found`
+    // (owner's rule for typed commands by name, nameConfirmation.js); nothing is listed.
+    assert.equal(await handleDangerCommand(message(TRUSTED, 'خطر جدا'), ['جدا']), true);
+    assert.equal(sent.reply.at(-1).content, '❌ Member Not Found');
     assert.equal(await isOnDangerList(guild.client, guild.id, BAD), false);
     await handleDangerCommand(message(TRUSTED, `خطر ${OWNER}`), [OWNER]);
     assert.equal(await isOnDangerList(guild.client, guild.id, OWNER), false);
-    assert.match(sent.reply[0].content, /صاحب السيرفر/u);
+    assert.match(sent.reply.at(-1).content, /صاحب السيرفر/u);
   });
 
   test('a dangerous audit-log action by a listed member: a week of timeout and a log line', async () => {

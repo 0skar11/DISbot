@@ -20,6 +20,8 @@ import { isTrusted } from '../../utils/antiNukeLogging.js';
 import { staffAndDangerousRoles } from './rejoinRestore.js';
 import { assertCanActOn, lookupMember } from './memberHierarchy.js';
 import { forgetInvoker, withInvoker } from './commandInvoker.js';
+import { resolveMemberByName } from '../../utils/memberNameResolver.js';
+import { askNameConfirmation, pressMessage, replyNotFound, replyRefusal } from './nameConfirmation.js';
 import { logger } from '../../utils/logger.js';
 
 export const DANGER_NOTICE_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
@@ -221,13 +223,52 @@ export async function handleDangerCommand(message, args = []) {
   const targetId = await targetFrom(message, targetWord);
 
   if (!targetId) {
+    if (await dangerByName(message, removing ? args.slice(1) : args, removing)) return true;
     if (args.length && !(removing && args.length === 1)) return false;
     if (removing) return reply(message, '⚠️ اكتب `خطر شيل @عضو`.');
     const list = await getDangerList(guild.client, guild.id);
     const lines = list.map((entry) => `• <@${entry.userId}>`).join('\n');
     return reply(message, list.length ? `☢️ **قائمة الخطر** (${list.length}):\n${lines}` : '☢️ قائمة الخطر فاضية.');
   }
+  return applyDangerCommand(message, { targetId, removing });
+}
 
+/**
+ * `خطر محمد` / `خطر شيل محمد` (our server): the member by name (memberNameResolver.js), never at once. The
+ * bot asks `هل تقصد @member؟` (or lists the members with the name, a button each); a press runs
+ * applyDangerCommand as the presser, who must still be trusted and above the member then (nameConfirmation.js).
+ * A name nobody has is `❌ Member Not Found`. A reply keeps its old meaning (its words are not a name).
+ * Returns false when the words name nobody at all.
+ */
+async function dangerByName(message, words, removing) {
+  if (!words.length || message.reference?.messageId) return false;
+  const found = await resolveMemberByName(message.guild, words.join(' '));
+  if (found.status === 'none') {
+    if (found.reason !== 'not_found') return false;
+    await replyNotFound(message);
+    return true;
+  }
+  // One member: a member you may not act on (an owner, your role or higher) is refused before asking.
+  if (found.status === 'one') {
+    const executor = message.member || (await lookupMember(message.guild, message.author.id)).member;
+    const allowed = await assertCanActOn(message.guild, executor, found.member);
+    if (!allowed.ok) return replyRefusal(message, allowed.message);
+  }
+  await askNameConfirmation(message, {
+    candidates: found.status === 'one' ? [found] : found.candidates,
+    run: async ({ candidate, member, user }) => {
+      // The presser must still be trusted now; someone who is not any more gets no answer (as when typing it).
+      const config = await getGuildConfig(message.guild.client, message.guild.id).catch(() => null);
+      if (!(await isTrusted(message.guild, config, user.id))) return false;
+      return applyDangerCommand(pressMessage(message, member, user), { targetId: candidate.member.id, removing });
+    },
+  });
+  return true;
+}
+
+/** Adds (or with `removing`, removes) `targetId`: the member who typed `message` was found trusted. */
+async function applyDangerCommand(message, { targetId, removing }) {
+  const guild = message.guild;
   // Adding or removing takes or gives back the member's roles: only on a member below you (memberHierarchy.js),
   // looked up from Discord when not cached (a member Discord couldn't look up is refused). The owners keep
   // their own answer below.
