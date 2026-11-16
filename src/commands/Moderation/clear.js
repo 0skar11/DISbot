@@ -7,7 +7,7 @@ import { getColor } from '../../config/bot.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { moderationCard } from '../../utils/moderationCard.js';
-import { rememberInvoker } from '../../services/moderation/commandInvoker.js';
+import { forgetInvoker, withInvoker } from '../../services/moderation/commandInvoker.js';
 // Admins with Manage Messages delete a set number of messages (`clear 10` / `مسح 10` / `م 10`).
 // Wiping the whole channel is `purge`, which only the owner can run.
 export default {
@@ -45,10 +45,11 @@ export default {
 
     try {
       const fetched = await channel.messages.fetch({ limit: amount });
-      // The bulk delete log shows the member who ran the command (commandInvoker.js).
-      rememberInvoker(interaction.guild.id, 'bulkDelete', channel.id, interaction.user);
-      const deleted = await channel.bulkDelete(fetched, true);
+      // The bulk delete log shows the member who ran the command; a failed (or empty) delete leaves nothing
+      // behind (commandInvoker.js).
+      const deleted = await withInvoker(interaction.guild.id, 'bulkDelete', channel.id, interaction.user, () => channel.bulkDelete(fetched, true));
       const deletedCount = deleted.size;
+      if (!deletedCount) forgetInvoker(interaction.guild.id, 'bulkDelete', channel.id, interaction.user);
 
       await logEvent({
         client,

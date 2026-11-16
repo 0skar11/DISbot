@@ -36,7 +36,8 @@ describe('ban / kick DM (report #133)', () => {
       ...guild,
       ownerId: moderator.id,
       client: { db: { get: async (k, f) => f, set: async () => true } },
-      members: { fetch: async () => null, ban: async () => order.push('ban') },
+      // Not in the server: Discord answers Unknown Member (memberHierarchy.js), so it is a ban by ID.
+      members: { fetch: async () => { throw Object.assign(new Error('Unknown Member'), { code: 10007 }); }, ban: async () => order.push('ban') },
       channels: { cache: new Map() },
     };
     await ModerationService.banUser({ guild: g, user, moderator, reason: 'r' }).catch(() => {});

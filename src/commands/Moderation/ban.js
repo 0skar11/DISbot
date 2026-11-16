@@ -51,7 +51,8 @@ export default {
         }
 
         // Our servers: a member of the same or a higher role (or an owner) is refused here (memberHierarchy.js).
-        ensureCanActOn(interaction.guild, interaction.member, interaction.options.getMember("target") || user);
+        // Without the member in hand they are looked up; only Discord's Unknown Member counts as "not in the server".
+        await ensureCanActOn(interaction.guild, interaction.member, interaction.options.getMember("target") || user);
 
         const repliedMessage = await fetchRepliedMessage(interaction);
         await ModerationService.banUser({

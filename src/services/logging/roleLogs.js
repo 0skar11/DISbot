@@ -8,7 +8,7 @@ import { AuditLogEvent, PermissionsBitField } from 'discord.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { getAuditLogChannelId, AUDIT_LOG_CATEGORY_ID } from '../auditLogChannelsService.js';
 import { resolveAuditRoom, postAuditRoom } from './auditRooms.js';
-import { EXECUTOR_LABEL, executorText, recentInvoker } from '../moderation/commandInvoker.js';
+import { EXECUTOR_LABEL, executorText, takeInvoker } from '../moderation/commandInvoker.js';
 import { logger } from '../../utils/logger.js';
 
 // The audit entry can land a moment after the gateway event; tests set this to 0.
@@ -95,9 +95,13 @@ export async function logMemberRoles(oldMember, newMember) {
     const ids = new Set([...added, ...removed].map((role) => role.id));
     const entry = await auditEntry(guild, AuditLogEvent.MemberRoleUpdate, newMember.id,
         (item) => item.changes?.some((change) => change.new?.some?.((role) => ids.has(role.id))));
-    const invoker = recentInvoker(guild.id, 'roles', newMember.id);
+    // Actor guard (commandInvoker.js): the member who ran `ر`/`ب`/`خطر` is only used (and taken) when the audit
+    // log names our bot or nobody; a change an admin made by hand is always theirs, and a change by the bot
+    // with no command behind it (a failed command forgets its invoker) is the bot's own: not logged.
+    const botId = guild.client?.user?.id || null;
+    const invoker = takeInvoker(guild.id, 'roles', newMember.id, { actor: entry?.executor, botId });
     if (isBot(guild, entry) && !invoker) return false;
-    const executor = `${EXECUTOR_LABEL}: ${executorText({ invoker, actor: entry?.executor, botId: guild.client?.user?.id || null })}`;
+    const executor = `${EXECUTOR_LABEL}: ${executorText({ invoker, actor: entry?.executor, botId })}`;
     return post(guild, embed({
         color: added.length && !removed.length ? COLORS.green : removed.length && !added.length ? COLORS.red : COLORS.blue,
         title: '🎭 رولات عضو اتغيرت',

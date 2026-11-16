@@ -1,7 +1,7 @@
 import { Events, PermissionFlagsBits } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../services/config/guildConfig.js';
 import { getCommandPrefix } from '../config/bot.js';
-import { isServerOwner } from '../config/serverOwners.js';
+import { isTrustManager } from '../config/serverOwners.js';
 import { refreshTrustedBoard, TRUSTED_BOARD_CHANNEL_ID, isTrustedBoardChannel } from '../services/trustedBoardService.js';
 
 const TRUST_COMMANDS = new Set(['trust', 'untrust', 'تراست', 'انتراست']);
@@ -39,7 +39,7 @@ async function handleTrust(message, client) {
   if (!parsed) return false;
   message.content = TRUST_MARKER;
 
-  if (!isServerOwner(message.author.id)) {
+  if (!isTrustManager(message.author.id)) {
     // The protected channel guard already deletes the message and warns the author there.
     if (message.channelId !== TRUSTED_BOARD_CHANNEL_ID) await message.channel.send('🚫 Owner Only').catch(() => {});
     return true;

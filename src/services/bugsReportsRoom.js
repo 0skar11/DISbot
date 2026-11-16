@@ -6,6 +6,7 @@
 // post and pin. It is made at startup only when missing (the saved ID, then the name, are looked up first, so
 // it is never made twice), in the category of the staff log rooms when there is one. The bot posts one short
 // Arabic + English explanation there, pins it, and edits that same message on later startups.
+// Every message posted there becomes a numbered report with a GitHub issue (bugsReportsInbox.js).
 
 import { ChannelType, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import { isProtectedGuild } from '../config/homeGuild.js';
@@ -60,6 +61,20 @@ function staffCategory(guild) {
     return null;
 }
 
+// The rooms found or made this run, so each message is matched by ID without reading the config.
+const knownRoomIds = new Set();
+
+/** Whether the channel is the saved #bugs-reports room of its server (by ID, never by name alone). */
+export async function isBugsReportsRoom(client, channel) {
+    if (!channel?.id || !channel.guild?.id) return false;
+    if (knownRoomIds.has(channel.id)) return true;
+    if (channel.name !== BUGS_REPORTS_CHANNEL_NAME) return false;
+    const config = await getGuildConfig(client, channel.guild.id).catch(() => null);
+    if (config?.[CONFIG_KEY] !== channel.id) return false;
+    knownRoomIds.add(channel.id);
+    return true;
+}
+
 const isRoom = (channel) => channel?.type === ChannelType.GuildText && channel.name === BUGS_REPORTS_CHANNEL_NAME;
 
 /** Finds the room (saved ID, then name) or makes it. Returns `{ channel, created }`. */
@@ -84,6 +99,7 @@ export async function ensureBugsReportsRoom(client, guild) {
         created = true;
         logger.info(`Created the bugs-reports room ${channel.id} in ${guild.name}`);
     }
+    knownRoomIds.add(channel.id);
     if (savedId !== channel.id) await updateGuildConfig(client, guild.id, { [CONFIG_KEY]: channel.id }).catch(() => {});
     return { channel, created };
 }
@@ -95,6 +111,10 @@ export function buildBugsReportsGuide() {
         description: [
             'الروم ده للإدارة بس: لو البوت عمل حاجة غلط أو فيه حاجة مش شغالة، اكتبها هنا وهنتابعها.',
             'Staff only: if the bot did something wrong or something is broken, report it here.',
+            '',
+            '🔢 كل رسالة تتكتب هنا بتبقى بلاغ برقم (🐞 بلاغ #رقم — مفتوح)، والبوت بيتابعه ولما يتحل بيقفله ويكتب هنا إنه اتحل.',
+            'Every message posted here becomes a numbered report: the bot tracks it and marks it closed here once it is fixed.',
+            'الرد على بلاغ = كلام عادي، مش بلاغ جديد. Replies to a report are just chat.',
         ].join('\n'),
         fields: [
             {

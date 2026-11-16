@@ -1,6 +1,6 @@
 import { TRUSTED_BOARD_CHANNEL_ID } from './trustedBoardService.js';
 import { MODERATION_COMMANDS_CHANNEL_ID, EXTRA_COMMANDS_CHANNEL_IDS } from './moderationCommandsBoardService.js';
-import { isServerOwner } from '../config/serverOwners.js';
+import { isServerOwner, isTrustManager } from '../config/serverOwners.js';
 
 // Board channels where only the owners and this bot may write.
 const PROTECTED_CHANNEL_IDS = new Set([TRUSTED_BOARD_CHANNEL_ID, MODERATION_COMMANDS_CHANNEL_ID, ...EXTRA_COMMANDS_CHANNEL_IDS, '1571076213705809941']);
@@ -16,6 +16,8 @@ const SERVERS_BOARD_FOOTER = '🔄 بيتحدث تلقائي كل 5 دقايق �
 export async function handleProtectedChannelMessage(message) {
   if (!PROTECTED_CHANNEL_IDS.has(message.channelId) || !message.guild) return false;
   if (isServerOwner(message.author?.id) || message.author?.id === message.client.user?.id) return false;
+  // Trust managers may write in the trusted board (where the trust commands are typed), and nowhere else here.
+  if (message.channelId === TRUSTED_BOARD_CHANNEL_ID && isTrustManager(message.author?.id)) return false;
   const [embed] = message.embeds || [];
   if (message.channelId === TRUSTED_BOARD_CHANNEL_ID && message.author?.bot
       && SERVERS_BOARD_BOTS.has(message.author.id) && !message.webhookId

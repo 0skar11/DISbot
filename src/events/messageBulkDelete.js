@@ -1,7 +1,7 @@
 import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { formatLogLine } from '../utils/logging/logEmbeds.js';
-import { EXECUTOR_LABEL, executorText, recentInvoker } from '../services/moderation/commandInvoker.js';
+import { EXECUTOR_LABEL, executorText, takeInvoker } from '../services/moderation/commandInvoker.js';
 import { logger } from '../utils/logger.js';
 
 export default {
@@ -17,8 +17,8 @@ export default {
         formatLogLine('Channel', channel ? `${channel.name} ${channel.toString()}` : 'Unknown'),
         formatLogLine('Messages deleted', String(count)),
       ];
-      // `clear`/`purge` run through the bot name the member who ran it (commandInvoker.js).
-      const invoker = recentInvoker(channel.guild.id, 'bulkDelete', channel.id);
+      // `clear`/`purge` run through the bot name the member who ran it; one entry per bulk delete (commandInvoker.js).
+      const invoker = takeInvoker(channel.guild.id, 'bulkDelete', channel.id);
       if (invoker) metaLines.push(formatLogLine(EXECUTOR_LABEL, executorText({ invoker })));
 
       await logEvent({

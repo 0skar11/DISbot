@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger.js';
-import { rememberInvoker } from './moderation/commandInvoker.js';
+import { withInvoker } from './moderation/commandInvoker.js';
 
 // AFK: `afk <reason>` marks a member away. Mentioning or replying to them tells the sender they're AFK
 // (no ping), and their next message removes it. AFK members are kept in memory and saved under one key
@@ -38,9 +38,9 @@ export async function setAfk(client, member, reason) {
     // Shows [AFK] in front of the name when the bot is allowed to change it.
     const name = member.nickname || member.user.globalName || member.user.username;
     if (!entry.renamed && member.manageable && !name.startsWith(NICK_PREFIX)) {
-        // The nickname log names the member who typed afk, not the bot (commandInvoker.js).
-        rememberInvoker(member.guild.id, 'nickname', member.id, member);
-        entry.renamed = await member.setNickname(`${NICK_PREFIX}${name}`.slice(0, MAX_NICK), 'AFK').then(() => true).catch(() => false);
+        // The nickname log names the member who typed afk, not the bot; a failed rename leaves nothing behind (commandInvoker.js).
+        entry.renamed = await withInvoker(member.guild.id, 'nickname', member.id, member,
+            () => member.setNickname(`${NICK_PREFIX}${name}`.slice(0, MAX_NICK), 'AFK')).then(() => true).catch(() => false);
     }
     afk.set(member.id, entry);
     await save(client, member.guild.id, afk);
@@ -54,12 +54,12 @@ export async function clearAfk(client, member) {
     await save(client, member.guild.id, afk);
     // Only undo our own rename: if the member changed their nickname while AFK, theirs is kept.
     if (!member.manageable || !member.nickname?.startsWith(NICK_PREFIX)) return entry;
-    rememberInvoker(member.guild.id, 'nickname', member.id, member);
+    const rename = (nickname) => withInvoker(member.guild.id, 'nickname', member.id, member, () => member.setNickname(nickname, 'Back from AFK')).catch(() => {});
     if ('renamed' in entry) {
-        if (entry.renamed) await member.setNickname(entry.nickname ?? null, 'Back from AFK').catch(() => {});
+        if (entry.renamed) await rename(entry.nickname ?? null);
     } else {
         // AFK set before the original nickname was saved: drop the prefix from the current name.
-        await member.setNickname(member.nickname.slice(NICK_PREFIX.length) || null, 'Back from AFK').catch(() => {});
+        await rename(member.nickname.slice(NICK_PREFIX.length) || null);
     }
     return entry;
 }

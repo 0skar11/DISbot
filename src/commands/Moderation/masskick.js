@@ -9,8 +9,8 @@ import { TitanBotError, replyUserError, ErrorTypes } from '../../utils/errorHand
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { groupLeadingUsers } from '../../utils/prefixArgs.js';
 import { sendPunishmentDm } from '../../services/moderation/punishmentDm.js';
-import { assertCanActOn } from '../../services/moderation/memberHierarchy.js';
-import { rememberInvoker } from '../../services/moderation/commandInvoker.js';
+import { assertCanActOn, lookupMember, LOOKUP_FAILED_MESSAGE } from '../../services/moderation/memberHierarchy.js';
+import { withInvoker } from '../../services/moderation/commandInvoker.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("masskick")
@@ -76,21 +76,23 @@ export default {
 
             for (const userId of userIds) {
                 try {
-                    const member = await interaction.guild.members.fetch(userId).catch(() => null);
-                    
+                    // Only Discord's Unknown Member means "not in the server" (memberHierarchy.js).
+                    const lookup = await lookupMember(interaction.guild, userId);
+                    const member = lookup.member;
+
                     if (!member) {
-                        results.failed.push({ userId, reason: "User not in server" });
+                        results.failed.push({ userId, reason: lookup.absent ? "User not in server" : LOOKUP_FAILED_MESSAGE });
                         continue;
                     }
 
                     // Our servers: a member of the same or a higher role, or an owner, is skipped (memberHierarchy.js).
-                    const allowed = assertCanActOn(interaction.guild, interaction.member, member);
+                    const allowed = await assertCanActOn(interaction.guild, interaction.member, member, { lookup });
                     if (!allowed.ok) {
                         results.skipped.push({ user: member.user.tag, userId, reason: allowed.message });
                         continue;
                     }
 
-                    const modCheck = ModerationService.validateHierarchy(interaction.member, member, 'kick');
+                    const modCheck = await ModerationService.validateHierarchy(interaction.member, member, 'kick');
                     if (!modCheck.valid) {
                         results.skipped.push({
                             user: member.user.tag,
@@ -120,8 +122,7 @@ export default {
                     }
 
                     await sendPunishmentDm(interaction.guild, member.user, 'kick', reason, interaction.user);
-                    rememberInvoker(interaction.guild.id, 'kick', member.id, interaction.user);
-                    await member.kick(reason);
+                    await withInvoker(interaction.guild.id, 'kick', member.id, interaction.user, () => member.kick(reason));
 
                     results.successful.push({
                         user: member.user.tag,

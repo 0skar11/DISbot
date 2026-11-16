@@ -4,8 +4,8 @@ import { TitanBotError, ErrorTypes } from '../../utils/errorHandler.js';
 import { logModerationAction } from '../../utils/moderation.js';
 import { canLiftHardBan, isHardBanned, removeHardBan } from './hardBanService.js';
 import { sendPunishmentDm } from './punishmentDm.js';
-import { assertCanActOn, hierarchyError, hierarchyRuleApplies } from './memberHierarchy.js';
-import { rememberInvoker } from './commandInvoker.js';
+import { assertCanActOn, hierarchyError, hierarchyRuleApplies, lookupMember, LOOKUP_FAILED_MESSAGE } from './memberHierarchy.js';
+import { withInvoker } from './commandInvoker.js';
 
 function getTargetLabel(target) {
   return target?.id ? `<@${target.id}>` : 'this user';
@@ -37,12 +37,12 @@ export class ModerationService {
     return `Your role **${modRole.name}** is too low for **${targetRole.name}** — move your role higher`;
   }
 
-  static validateHierarchy(moderator, target, action) {
+  static async validateHierarchy(moderator, target, action) {
     if (!moderator || !target) return { valid: false, error: '❌ Member Not Found' };
     // Our server and Zenith: the member who ran the command must be above the target (memberHierarchy.js).
     const guild = moderator.guild || target.guild;
     if (hierarchyRuleApplies(guild, moderator)) {
-      const check = assertCanActOn(guild, moderator, target);
+      const check = await assertCanActOn(guild, moderator, target);
       return check.ok ? { valid: true } : { valid: false, error: check.message, hierarchy: check };
     }
     if (moderator.guild?.ownerId === moderator.id || moderator.permissions?.has(PermissionFlagsBits.Administrator)) return { valid: true };
@@ -66,29 +66,39 @@ export class ModerationService {
     return { valid: true };
   }
 
-  static assertModerationHierarchy(moderator, target, action) {
+  static async assertModerationHierarchy(moderator, target, action) {
     // Our servers check the member who ran the command first, so they are told why they were refused.
-    const modCheck = this.validateHierarchy(moderator, target, action);
+    const modCheck = await this.validateHierarchy(moderator, target, action);
     if (modCheck.hierarchy) throw hierarchyError(modCheck.hierarchy);
     const botCheck = this.validateBotHierarchy(target, action);
     if (!botCheck.valid) throw new TitanBotError(botCheck.error, ErrorTypes.PERMISSION, botCheck.error);
     if (!modCheck.valid) throw new TitanBotError(modCheck.error, ErrorTypes.PERMISSION, modCheck.error);
   }
 
-  /** The hierarchy check for a target that may not be in the server (ban or unban by ID): owners stay off limits. */
-  static assertCanActOnUser(guild, moderator, user) {
-    const check = assertCanActOn(guild, moderator, user?.id);
+  /**
+   * The hierarchy check for a target that may not be in the server (ban or unban by ID): owners stay off
+   * limits, and a member Discord couldn't look up is refused (memberHierarchy.js). `options.lookup` reuses a
+   * `lookupMember` result for this user.
+   */
+  static async assertCanActOnUser(guild, moderator, user, options = {}) {
+    const check = await assertCanActOn(guild, moderator, user?.id, options);
     if (!check.ok) throw hierarchyError(check);
   }
 
   static async banUser({ guild, user, moderator, reason = 'No reason provided', deleteDays = 0 }) {
     if (!guild || !user || !moderator) throw new TitanBotError('Missing required parameters', ErrorTypes.VALIDATION, '❌ Member Not Found');
-    const targetMember = await guild.members.fetch(user.id).catch(() => null);
+    // Only Discord's Unknown Member means "not in the server"; any other lookup failure is not a ban by ID.
+    const lookup = await lookupMember(guild, user.id);
+    const targetMember = lookup.member;
     if (targetMember) {
-      this.assertModerationHierarchy(moderator, targetMember, 'حظر');
+      await this.assertModerationHierarchy(moderator, targetMember, 'حظر');
       if (!targetMember.bannable) throw new TitanBotError('Member not bannable', ErrorTypes.PERMISSION, '❌ Can\'t Ban This Member');
     } else {
-      this.assertCanActOnUser(guild, moderator, user);
+      // Our servers refuse a member who couldn't be looked up here (only the owners get past it).
+      await this.assertCanActOnUser(guild, moderator, user, { lookup });
+      if (!lookup.absent && !hierarchyRuleApplies(guild, moderator)) {
+        throw new TitanBotError(`Member lookup failed: ${lookup.error?.message || 'unknown'}`, ErrorTypes.DISCORD_API, LOOKUP_FAILED_MESSAGE);
+      }
       if (guild.ownerId !== moderator.id && !moderator.permissions?.has([PermissionFlagsBits.BanMembers, PermissionFlagsBits.Administrator])) {
         throw new TitanBotError('Missing ban permission', ErrorTypes.PERMISSION, '🚫 No Permission');
       }
@@ -97,11 +107,10 @@ export class ModerationService {
     // Told by DM before the ban: after it the bot shares no server with them and can't DM.
     await sendPunishmentDm(guild, user, 'ban', reason, moderator);
     // The ban log names the bot; it shows the member who ran the command instead (commandInvoker.js).
-    rememberInvoker(guild.id, 'ban', user.id, moderator);
-    await guild.members.ban(user.id, {
+    await withInvoker(guild.id, 'ban', user.id, moderator, () => guild.members.ban(user.id, {
       reason,
       deleteMessageSeconds: Math.min(Math.max(Number(deleteDays) || 0, 0) * 86400, 7 * 86400),
-    });
+    }));
     const caseId = await logModerationAction({ client: guild.client, guild, event: {
       action: 'Member Banned', target: `${user.tag} (${user.id})`, executor: `${moderator.user?.tag || moderator.id} (${moderator.id})`, reason,
       metadata: { userId: user.id, moderatorId: moderator.id, permanent: true, deleteDays },
@@ -112,12 +121,11 @@ export class ModerationService {
 
   static async kickUser({ guild, member, moderator, reason = 'No reason provided' }) {
     if (!guild || !member || !moderator) throw new TitanBotError('Missing required parameters', ErrorTypes.VALIDATION, '❌ Member Not Found');
-    this.assertModerationHierarchy(moderator, member, 'طرد');
+    await this.assertModerationHierarchy(moderator, member, 'طرد');
     if (!member.kickable) throw new TitanBotError('Member not kickable', ErrorTypes.PERMISSION, '❌ Can\'t Kick This Member');
 
     await sendPunishmentDm(guild, member.user, 'kick', reason, moderator);
-    rememberInvoker(guild.id, 'kick', member.id, moderator);
-    await member.kick(reason);
+    await withInvoker(guild.id, 'kick', member.id, moderator, () => member.kick(reason));
     const caseId = await logModerationAction({ client: guild.client, guild, event: {
       action: 'Member Kicked', target: `${member.user.tag} (${member.id})`, executor: `${moderator.user?.tag || moderator.id} (${moderator.id})`, reason,
       metadata: { userId: member.id, moderatorId: moderator.id },
@@ -128,11 +136,10 @@ export class ModerationService {
 
   static async timeoutUser({ guild, member, moderator, durationMs, reason = 'No reason provided' }) {
     if (!guild || !member || !moderator || !durationMs) throw new TitanBotError('Missing required parameters', ErrorTypes.VALIDATION, '❌ Member Or Duration Missing');
-    this.assertModerationHierarchy(moderator, member, 'إعطاء تايم أوت لـ');
+    await this.assertModerationHierarchy(moderator, member, 'إعطاء تايم أوت لـ');
     if (!member.moderatable) throw new TitanBotError('Member not moderatable', ErrorTypes.PERMISSION, '❌ Can\'t Timeout This Member');
 
-    rememberInvoker(guild.id, 'timeout', member.id, moderator);
-    await member.timeout(durationMs, reason);
+    await withInvoker(guild.id, 'timeout', member.id, moderator, () => member.timeout(durationMs, reason));
     const durationMinutes = Math.floor(durationMs / 60000);
     const caseId = await logModerationAction({ client: guild.client, guild, event: {
       action: 'Member Timed Out', target: `${member.user.tag} (${member.id})`, executor: `${moderator.user?.tag || moderator.id} (${moderator.id})`, reason,
@@ -145,12 +152,12 @@ export class ModerationService {
 
   static async removeTimeoutUser({ guild, member, moderator, reason = 'Timeout removed by moderator' }) {
     if (!guild || !member || !moderator) throw new TitanBotError('Missing required parameters', ErrorTypes.VALIDATION, '❌ Member Not Found');
-    this.assertModerationHierarchy(moderator, member, 'إزالة التايم أوت عن');
+    await this.assertModerationHierarchy(moderator, member, 'إزالة التايم أوت عن');
     if (!member.moderatable) throw new TitanBotError('Member not moderatable', ErrorTypes.PERMISSION, '❌ Can\'t Edit This Member');
     if (!member.isCommunicationDisabled()) throw new TitanBotError('User not timed out', ErrorTypes.VALIDATION, `❌ ${member} Is Not Timed Out`);
 
-    rememberInvoker(guild.id, 'timeout', member.id, moderator);
-    await member.timeout(null, reason);
+    // Lifting is its own kind, so a timeout set through the bot is never put on whoever lifts it (commandInvoker.js).
+    await withInvoker(guild.id, 'untimeout', member.id, moderator, () => member.timeout(null, reason));
     await logModerationAction({ client: guild.client, guild, event: {
       action: 'Member Untimeouted', target: `${member.user.tag} (${member.id})`, executor: `${moderator.user?.tag || moderator.id} (${moderator.id})`, reason,
       metadata: { userId: member.id, moderatorId: moderator.id },
@@ -161,7 +168,7 @@ export class ModerationService {
 
   static async unbanUser({ guild, user, moderator, reason = 'No reason provided' }) {
     if (!guild || !user || !moderator) throw new TitanBotError('Missing required parameters', ErrorTypes.VALIDATION, '❌ Member Not Found');
-    this.assertCanActOnUser(guild, moderator, user);
+    await this.assertCanActOnUser(guild, moderator, user);
     const banInfo = await guild.bans.fetch(user.id).catch(() => null);
     const hardBanned = await isHardBanned(guild.client, guild.id, user.id);
     if (hardBanned && !(await canLiftHardBan(guild, moderator.id))) {
@@ -174,8 +181,7 @@ export class ModerationService {
 
     // Drop the hard ban first so the unban isn't reverted by the GuildBanRemove guard.
     if (hardBanned) await removeHardBan(guild.client, guild.id, user.id);
-    rememberInvoker(guild.id, 'unban', user.id, moderator);
-    await guild.members.unban(user.id, reason);
+    await withInvoker(guild.id, 'unban', user.id, moderator, () => guild.members.unban(user.id, reason));
     // Tell them the ban was lifted (often refused by Discord: they no longer share a server with the bot).
     const dmSent = await sendPunishmentDm(guild, user, 'unban', reason, moderator);
     const caseId = await logModerationAction({ client: guild.client, guild, event: {

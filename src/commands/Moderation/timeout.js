@@ -65,7 +65,7 @@ export default {
         // Our servers: a member of the same or a higher role is refused before the reply is deferred,
         // so a slash command gets the refusal ephemerally (memberHierarchy.js).
         const targetMember = interaction.options.getMember("target");
-        if (targetMember) ensureCanActOn(interaction.guild, interaction.member, targetMember);
+        if (targetMember) await ensureCanActOn(interaction.guild, interaction.member, targetMember);
 
         const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {

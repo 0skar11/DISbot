@@ -3,7 +3,7 @@ import { logger } from '../../utils/logger.js';
 import { isServerOwner } from '../../config/serverOwners.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
 import { logEvent } from '../../utils/moderation.js';
-import { rememberInvoker } from './commandInvoker.js';
+import { forgetInvoker, withInvoker } from './commandInvoker.js';
 
 // `purge` wipes the whole channel. Only the server owners can run it, and only after pressing Confirm.
 // In our server (owner's request) it also takes a count and a confirm word, so no confirmation message is
@@ -47,15 +47,20 @@ export function isPurgeConfirmationExpired(expiresAt) {
 
 /**
  * Bulk-deletes messages Discord allows (messages older than 14 days can't be bulk deleted): every message,
- * or the latest `limit` ones.
+ * or the latest `limit` ones. With `executor`, each batch's bulk delete log names them (commandInvoker.js):
+ * one remembered entry per batch, forgotten when the batch fails or deletes nothing.
  */
-export async function purgeChannel(channel, limit = null) {
+export async function purgeChannel(channel, limit = null, { executor = null, guildId = channel?.guild?.id } = {}) {
   let deletedCount = 0;
   let left = limit || Infinity;
+  const remembered = executor && guildId;
   while (left > 0) {
     const batch = await channel.messages.fetch({ limit: Math.min(100, left) });
     if (!batch.size) break;
-    const deleted = await channel.bulkDelete(batch, true);
+    const deleted = remembered
+      ? await withInvoker(guildId, 'bulkDelete', channel.id, executor, () => channel.bulkDelete(batch, true))
+      : await channel.bulkDelete(batch, true);
+    if (remembered && !deleted.size) forgetInvoker(guildId, 'bulkDelete', channel.id, executor);
     deletedCount += deleted.size;
     left -= batch.size;
     if (!deleted.size || batch.size < 100) break;
@@ -92,9 +97,8 @@ export function parsePurgeArgs(args = []) {
 
 /** Deletes `limit` messages (or all of them) and logs it. Used by the confirm button and by `purge … تأكيد`. */
 export async function runPurge(channel, { client, guild, executor, limit = null }) {
-  // The bulk delete log shows the owner who ran it (commandInvoker.js).
-  rememberInvoker(guild?.id, 'bulkDelete', channel.id, executor);
-  const deletedCount = await purgeChannel(channel, limit);
+  // The bulk delete log shows the owner who ran it, batch by batch (commandInvoker.js).
+  const deletedCount = await purgeChannel(channel, limit, { executor, guildId: guild?.id });
   await sendPurgeResult(channel, deletedCount, limit);
   await logEvent({
     client,

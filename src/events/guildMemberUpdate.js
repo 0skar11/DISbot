@@ -1,7 +1,6 @@
 import { AuditLogEvent, Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { postAuditRoom, fetchAuditEntry, formatExecutor, executorLine } from '../services/logging/auditRooms.js';
-import { recentInvoker } from '../services/moderation/commandInvoker.js';
 import { logger } from '../utils/logger.js';
 
 export default {
@@ -13,9 +12,10 @@ export default {
       if (!newMember?.guild) return;
 
       if (oldMember.nickname !== newMember.nickname) {
-        // Who changed it: the member who ran `نك`/`afk` through the bot, else the audit log (commandInvoker.js).
-        const nickEntry = recentInvoker(newMember.guild.id, 'nickname', newMember.id) ? null
-          : await fetchAuditEntry(newMember.guild, AuditLogEvent.MemberUpdate, newMember.id, (item) => item.changes?.some((change) => change.key === 'nick'));
+        // Who changed it: the audit log is always read. When it names our bot (or nobody), the member who ran
+        // `نك`/`afk` through the bot is shown; someone who changed it by hand is always shown (commandInvoker.js).
+        const nickEntry = await fetchAuditEntry(newMember.guild, AuditLogEvent.MemberUpdate, newMember.id,
+          (item) => item.changes?.some((change) => change.key === 'nick'));
         const lines = [
           `**User:** ${newMember.user.toString()} (${newMember.user.tag})`,
           `**ID:** \`${newMember.user.id}\``,
@@ -46,7 +46,9 @@ export default {
 
       if (oldTimeout !== newTimeout) {
         const isTimeoutSet = newTimeout > Date.now();
-        const entry = await fetchAuditEntry(newMember.guild, AuditLogEvent.MemberUpdate, newMember.id);
+        // The audit entry of this change: a timeout set, or one lifted (no new end date).
+        const entry = await fetchAuditEntry(newMember.guild, AuditLogEvent.MemberUpdate, newMember.id,
+          (item) => item.changes?.some((change) => change.key === 'communication_disabled_until' && Boolean(change.new) === isTimeoutSet));
         const reason = entry?.reason || 'بدون سبب';
 
         if (isTimeoutSet) {
@@ -76,7 +78,8 @@ export default {
           const lines = [
             `👤 **العضو:** <@${newMember.id}> (${newMember.user?.tag || newMember.user?.username || newMember.id} - ${newMember.id})`,
             `👮 **المشرف:** ${formatExecutor(entry?.executor)}`,
-            executorLine(newMember.guild, 'timeout', newMember.id, entry?.executor),
+            // Lifting has its own kind: a timeout set through the bot is never put on whoever lifts it.
+            executorLine(newMember.guild, 'untimeout', newMember.id, entry?.executor),
             `📄 **السبب:** ${reason}`,
           ];
 

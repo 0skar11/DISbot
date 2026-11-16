@@ -5,7 +5,7 @@
 import { ChannelType, PermissionFlagsBits } from 'discord.js';
 import { getGuildConfig, updateGuildConfig } from '../config/guildConfig.js';
 import { logger } from '../../utils/logger.js';
-import { EXECUTOR_EMOJI, EXECUTOR_TITLE, executorText, recentInvoker } from '../moderation/commandInvoker.js';
+import { EXECUTOR_EMOJI, EXECUTOR_TITLE, executorText, takeInvoker } from '../moderation/commandInvoker.js';
 
 export const ROOM_KEYS = [
   'message',
@@ -245,12 +245,14 @@ export function formatExecutor(executor) {
 
 /**
  * The `🧑‍💻 اللي نفّذ الأمر` line of a moderation log: the member who ran the command through the bot
- * (remembered under `kind` and `targetId`, commandInvoker.js), else `actor` from the audit log, else
+ * (remembered under `kind` and `targetId`, commandInvoker.js) when `actor` from the audit log is our bot or
+ * unknown, and the entry is then taken (used once); else `actor` (someone who did it by hand); else
  * `🤖 تلقائي (حماية البوت)` when the bot did it on its own.
  */
 export function executorLine(guild, kind, targetId, actor = null) {
-  const invoker = recentInvoker(guild?.id, kind, targetId);
-  return `${EXECUTOR_EMOJI} **${EXECUTOR_TITLE}:** ${executorText({ invoker, actor, botId: guild?.client?.user?.id || null })}`;
+  const botId = guild?.client?.user?.id || null;
+  const invoker = takeInvoker(guild?.id, kind, targetId, { actor, botId });
+  return `${EXECUTOR_EMOJI} **${EXECUTOR_TITLE}:** ${executorText({ invoker, actor, botId })}`;
 }
 
 /** Clears cached rooms and missing warnings (useful for tests). */

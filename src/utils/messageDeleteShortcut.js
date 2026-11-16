@@ -1,6 +1,6 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { scheduleNoPermissionDelete } from './noPermissionReply.js';
-import { rememberInvoker } from '../services/moderation/commandInvoker.js';
+import { forgetInvoker, withInvoker } from '../services/moderation/commandInvoker.js';
 
 // `م 10` deletes the last 10 messages. `م` is ordinary chat too, so (owner's request) only `م <number>` is the
 // command, and a member without Manage Messages gets no answer: the message goes on as chat.
@@ -34,9 +34,10 @@ export async function handleMessageDeleteShortcut(message) {
 
   try {
     const fetched = await message.channel.messages.fetch({ limit: amount });
-    // The bulk delete log names the member who typed it, not the bot (commandInvoker.js).
-    rememberInvoker(message.guild?.id, 'bulkDelete', message.channel.id, message.author);
-    const deleted = await message.channel.bulkDelete(fetched, true);
+    // The bulk delete log names the member who typed it, not the bot; a failed (or empty) delete leaves nothing
+    // behind (commandInvoker.js).
+    const deleted = await withInvoker(message.guild?.id, 'bulkDelete', message.channel.id, message.author, () => message.channel.bulkDelete(fetched, true));
+    if (!deleted?.size) forgetInvoker(message.guild?.id, 'bulkDelete', message.channel.id, message.author);
     const confirmation = await reply(message, `🧹 Deleted ${deleted.size} Messages`);
     if (confirmation) setTimeout(() => confirmation.delete().catch(() => {}), CONFIRMATION_DELETE_DELAY_MS);
   } catch (error) {

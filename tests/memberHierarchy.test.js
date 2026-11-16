@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { PermissionsBitField, PermissionFlagsBits } from 'discord.js';
 import { HOME_GUILD_ID, ZENITH_GUILD_ID } from '../src/config/homeGuild.js';
 import { SERVER_OWNER_IDS } from '../src/config/serverOwners.js';
-import { assertCanActOn, HIERARCHY_REFUSAL, hierarchyRuleApplies } from '../src/services/moderation/memberHierarchy.js';
+import {
+  assertCanActOn, HIERARCHY_REFUSAL, hierarchyRuleApplies, lookupMember, LOOKUP_FAILED_MESSAGE,
+} from '../src/services/moderation/memberHierarchy.js';
 import { ModerationService } from '../src/services/moderation/moderationService.js';
 import { clearInvokers, recentInvoker } from '../src/services/moderation/commandInvoker.js';
 import { executePrefixCommand } from '../src/utils/messageAdapter.js';
@@ -17,6 +19,7 @@ import timeoutCommand from '../src/commands/Moderation/timeout.js';
 import untimeoutCommand from '../src/commands/Moderation/untimeout.js';
 import warnCommand from '../src/commands/Moderation/warn.js';
 import masskickCommand from '../src/commands/Moderation/masskick.js';
+import massbanCommand from '../src/commands/Moderation/massban.js';
 
 const GUILD_OWNER = '900000000000000001';
 const SERVER_OWNER = SERVER_OWNER_IDS[0];
@@ -61,7 +64,14 @@ function setup({ guildId = HOME_GUILD_ID, staffPos = 5, targetPos = 3, staffPerm
   guild.members = {
     cache: members,
     me: { id: 'bot', roles: { highest: { position: 100 } }, user: client.user },
-    fetch: async (id) => members.get(typeof id === 'object' ? id.user : id) || null,
+    fetches: [],
+    // Like discord.js: someone who isn't in the server is Discord's Unknown Member (10007).
+    fetch: async (id) => {
+      const key = typeof id === 'object' ? id.user : id;
+      guild.members.fetches.push(key);
+      if (members.has(key)) return members.get(key);
+      throw discordError(10007, 'Unknown Member', 404);
+    },
     ban: async (id) => { sent.push({ banned: id }); },
   };
   const channel = { id: '700000000000000001', send: async (payload) => { sent.push(payload); return { delete: async () => {} }; } };
@@ -88,50 +98,200 @@ function setup({ guildId = HOME_GUILD_ID, staffPos = 5, targetPos = 3, staffPerm
 
 const refused = (error) => error?.userMessage === HIERARCHY_REFUSAL;
 
+/** A discord.js-like API error (`code` is Discord's JSON error code). */
+function discordError(code, message, status = 500) {
+  return Object.assign(new Error(message), { name: 'DiscordAPIError', code, status });
+}
+
+/** Takes the target out of the member cache; Discord still knows them (or answers `fetchError`). */
+function uncache(s, fetchError = null) {
+  s.members.delete(TARGET);
+  const fetchFromDiscord = s.guild.members.fetch;
+  s.guild.members.fetch = async (id) => {
+    if (fetchError && (typeof id === 'object' ? id.user : id) === TARGET) {
+      s.guild.members.fetches.push(TARGET);
+      throw fetchError;
+    }
+    if ((typeof id === 'object' ? id.user : id) === TARGET) {
+      s.guild.members.fetches.push(TARGET);
+      return s.target;
+    }
+    return fetchFromDiscord(id);
+  };
+}
+
 describe('role hierarchy for admin commands (owner\'s request)', () => {
   beforeEach(() => clearInvokers());
 
-  test('the executor\'s highest role must be strictly above the target\'s', () => {
+  test('the executor\'s highest role must be strictly above the target\'s', async () => {
     for (const [staffPos, targetPos, ok] of [[5, 3, true], [5, 5, false], [3, 5, false]]) {
       const { guild, staff, target } = setup({ staffPos, targetPos });
-      const check = assertCanActOn(guild, staff, target);
+      const check = await assertCanActOn(guild, staff, target);
       assert.equal(check.ok, ok, `${staffPos} vs ${targetPos}`);
       if (!ok) assert.equal(check.message, HIERARCHY_REFUSAL);
     }
   });
 
-  test('owners act on anyone; nobody acts on an owner or on themselves', () => {
+  test('owners act on anyone; nobody acts on an owner or on themselves', async () => {
     const { guild, target, member } = setup({ targetPos: 50 });
-    assert.equal(assertCanActOn(guild, member(GUILD_OWNER, 1), target).ok, true, 'guild owner');
-    assert.equal(assertCanActOn(guild, member(SERVER_OWNER, 1), target).ok, true, 'server owner');
+    assert.equal((await assertCanActOn(guild, member(GUILD_OWNER, 1), target)).ok, true, 'guild owner');
+    assert.equal((await assertCanActOn(guild, member(SERVER_OWNER, 1), target)).ok, true, 'server owner');
     const high = member('200000000000000003', 99);
-    assert.equal(assertCanActOn(guild, high, member(GUILD_OWNER, 1)).reason, 'owner');
-    assert.equal(assertCanActOn(guild, high, SERVER_OWNER).reason, 'owner');
-    assert.equal(assertCanActOn(guild, member(GUILD_OWNER, 1), SERVER_OWNER).reason, 'owner');
-    assert.equal(assertCanActOn(guild, high, high).reason, 'self');
-    assert.equal(assertCanActOn(guild, high, high, { allowSelf: true }).ok, true);
+    assert.equal((await assertCanActOn(guild, high, member(GUILD_OWNER, 1))).reason, 'owner');
+    assert.equal((await assertCanActOn(guild, high, SERVER_OWNER)).reason, 'owner');
+    assert.equal((await assertCanActOn(guild, member(GUILD_OWNER, 1), SERVER_OWNER)).reason, 'owner');
+    assert.equal((await assertCanActOn(guild, high, high)).reason, 'self');
+    assert.equal((await assertCanActOn(guild, high, high, { allowSelf: true })).ok, true);
   });
 
-  test('a target outside the server (ban by ID) is allowed unless it is an owner', () => {
+  test('a target outside the server (Discord: Unknown Member, 10007) is allowed unless it is an owner', async () => {
     const { guild, staff } = setup();
-    assert.equal(assertCanActOn(guild, staff, '300000000000000001').ok, true);
-    assert.equal(assertCanActOn(guild, staff, { id: GUILD_OWNER }).ok, false);
+    assert.equal((await assertCanActOn(guild, staff, '300000000000000001')).ok, true);
+    assert.deepEqual(guild.members.fetches, ['300000000000000001'], 'Discord was asked');
+    assert.equal((await assertCanActOn(guild, staff, { id: GUILD_OWNER })).ok, false);
   });
 
-  test('our server and Zenith only; the bot acting on its own is not checked', () => {
+  test('a cached member of the same or a higher role is refused, by member, user or ID', async () => {
+    const s = setup({ staffPos: 3, targetPos: 5 });
+    for (const target of [s.target, s.target.user, TARGET]) {
+      const check = await assertCanActOn(s.guild, s.staff, target);
+      assert.equal(check.reason, 'hierarchy');
+      assert.equal(check.message, HIERARCHY_REFUSAL);
+    }
+    assert.equal(s.guild.members.fetches.length, 0, 'the cache answered');
+  });
+
+  test('a member missing from the cache is fetched from Discord and refused', async () => {
+    const s = setup({ staffPos: 3, targetPos: 5 });
+    uncache(s);
+    const check = await assertCanActOn(s.guild, s.staff, TARGET);
+    assert.equal(check.ok, false);
+    assert.equal(check.reason, 'hierarchy');
+    assert.deepEqual(s.guild.members.fetches, [TARGET]);
+    // Below the staff member, the fetched member is allowed.
+    const below = setup({ staffPos: 5, targetPos: 3 });
+    uncache(below);
+    assert.equal((await assertCanActOn(below.guild, below.staff, TARGET)).ok, true);
+  });
+
+  test('a member Discord answers Unknown Member (10007) for is allowed, unless an owner', async () => {
+    const s = setup({ staffPos: 3, targetPos: 5 });
+    uncache(s, discordError(10007, 'Unknown Member', 404));
+    assert.equal((await assertCanActOn(s.guild, s.staff, TARGET)).ok, true);
+    assert.equal((await assertCanActOn(s.guild, s.staff, GUILD_OWNER)).reason, 'owner');
+  });
+
+  test('any other lookup failure (500, 429, timeout, Unknown User) is refused: fail-closed', async () => {
+    const failures = [
+      discordError(0, 'Internal Server Error', 500),
+      Object.assign(new Error('You are being rate limited.'), { name: 'RateLimitError', status: 429 }),
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'AbortError', code: 20 }),
+      discordError(10013, 'Unknown User', 404),
+    ];
+    for (const failure of failures) {
+      const s = setup({ staffPos: 9, targetPos: 1 });
+      uncache(s, failure);
+      const check = await assertCanActOn(s.guild, s.staff, TARGET);
+      assert.equal(check.ok, false, failure.message);
+      assert.equal(check.reason, 'hierarchy', failure.message);
+      assert.equal(check.lookupFailed, true, failure.message);
+      assert.equal(check.message, HIERARCHY_REFUSAL);
+      // The owners stay exempt as executors.
+      assert.equal((await assertCanActOn(s.guild, s.member(GUILD_OWNER, 1), TARGET)).ok, true, failure.message);
+    }
+    // A fetch that resolves with nothing, or no way to fetch at all, is no answer either.
+    const empty = setup({ staffPos: 9, targetPos: 1 });
+    empty.members.delete(TARGET);
+    empty.guild.members.fetch = async () => null;
+    assert.equal((await assertCanActOn(empty.guild, empty.staff, TARGET)).reason, 'hierarchy');
+    delete empty.guild.members.fetch;
+    assert.equal((await assertCanActOn(empty.guild, empty.staff, TARGET)).reason, 'hierarchy');
+  });
+
+  test('a target whose ID can not be determined is refused', async () => {
+    const { guild, staff } = setup();
+    for (const target of [null, undefined, '', {}, { user: {} }]) {
+      const check = await assertCanActOn(guild, staff, target);
+      assert.equal(check.ok, false, JSON.stringify(target));
+      assert.equal(check.message, HIERARCHY_REFUSAL);
+    }
+  });
+
+  test('lookupMember: only 10007 is "not in the server"; a lookup for another ID is not reused', async () => {
+    const s = setup({ staffPos: 3, targetPos: 5 });
+    uncache(s, discordError(0, 'Bad Gateway', 502));
+    const failed = await lookupMember(s.guild, TARGET);
+    assert.equal(failed.member, null);
+    assert.equal(failed.absent, false);
+    assert.equal(failed.error.status, 502);
+    const absent = await lookupMember(s.guild, '300000000000000001');
+    assert.deepEqual({ absent: absent.absent, member: absent.member }, { absent: true, member: null });
+    // An Unknown Member answer about someone else does not clear this target.
+    assert.equal((await assertCanActOn(s.guild, s.staff, TARGET, { lookup: absent })).ok, false);
+    assert.equal((await assertCanActOn(s.guild, s.staff, '300000000000000001', { lookup: absent })).ok, true);
+  });
+
+  test('our server and Zenith only; the bot acting on its own is not checked', async () => {
     assert.equal(hierarchyRuleApplies({ id: HOME_GUILD_ID }), true);
     assert.equal(hierarchyRuleApplies({ id: ZENITH_GUILD_ID }), true);
     const other = setup({ guildId: OTHER_GUILD, staffPos: 1, targetPos: 9 });
-    assert.equal(assertCanActOn(other.guild, other.staff, other.target).ok, true);
+    assert.equal((await assertCanActOn(other.guild, other.staff, other.target)).ok, true);
     const home = setup({ targetPos: 9 });
-    assert.equal(assertCanActOn(home.guild, home.guild.members.me, home.target).ok, true);
+    assert.equal((await assertCanActOn(home.guild, home.guild.members.me, home.target)).ok, true);
   });
 
-  test('an administrator below the target is refused in our server, still allowed elsewhere (old rule)', () => {
+  test('an administrator below the target is refused in our server, still allowed elsewhere (old rule)', async () => {
     const home = setup({ staffPos: 3, targetPos: 5 });
-    assert.equal(ModerationService.validateHierarchy(home.staff, home.target, 'ban').error, HIERARCHY_REFUSAL);
+    assert.equal((await ModerationService.validateHierarchy(home.staff, home.target, 'ban')).error, HIERARCHY_REFUSAL);
     const other = setup({ guildId: OTHER_GUILD, staffPos: 3, targetPos: 5 });
-    assert.equal(ModerationService.validateHierarchy(other.staff, other.target, 'ban').valid, true);
+    assert.equal((await ModerationService.validateHierarchy(other.staff, other.target, 'ban')).valid, true);
+  });
+
+  test('banUser: a member Discord could not look up is refused before any DM or ban', async () => {
+    const s = setup({ staffPos: 9, targetPos: 1 });
+    let dms = 0;
+    s.target.user.send = async () => { dms += 1; };
+    uncache(s, discordError(0, 'Internal Server Error', 500));
+    await assert.rejects(ModerationService.banUser({ guild: s.guild, user: s.target.user, moderator: s.staff }), refused);
+    assert.equal(s.sent.length + dms, 0, 'nothing was done');
+    assert.equal(recentInvoker(s.guild.id, 'ban', TARGET), null, 'no invoker left behind');
+    // Other servers have no role rule, but a member who couldn't be looked up isn't banned blind either.
+    const other = setup({ guildId: OTHER_GUILD, staffPos: 9, targetPos: 1 });
+    uncache(other, discordError(0, 'Internal Server Error', 500));
+    await assert.rejects(
+      ModerationService.banUser({ guild: other.guild, user: other.target.user, moderator: other.staff }),
+      (error) => error?.userMessage === LOOKUP_FAILED_MESSAGE,
+    );
+    assert.equal(other.sent.length, 0);
+  });
+
+  test('banUser: an uncached member is fetched and refused; one not in the server is banned by ID', async () => {
+    const s = setup({ staffPos: 3, targetPos: 5 });
+    uncache(s);
+    await assert.rejects(ModerationService.banUser({ guild: s.guild, user: s.target.user, moderator: s.staff }), refused);
+    assert.equal(s.sent.length, 0);
+
+    const away = setup({ staffPos: 3, targetPos: 5 });
+    uncache(away, discordError(10007, 'Unknown Member', 404));
+    // Stops right after the ban (the case log needs the database).
+    away.guild.members.ban = async (id) => { away.sent.push({ banned: id }); throw new Error('stop here'); };
+    await ModerationService.banUser({ guild: away.guild, user: away.target.user, moderator: away.staff }).catch(() => {});
+    assert.deepEqual(away.sent, [{ banned: TARGET }]);
+    assert.equal(recentInvoker(away.guild.id, 'ban', TARGET), null, 'a ban that threw forgets its invoker');
+  });
+
+  test('massban: a member Discord could not look up is listed as skipped with the refusal, not banned', async () => {
+    const s = setup({ staffPos: 9, targetPos: 1 });
+    s.client.db.get = async (key, fallback) => (key.includes(':config') ? { antiNukeTrustedUsers: [STAFF] } : fallback);
+    uncache(s, discordError(0, 'Service Unavailable', 503));
+    const interaction = s.interaction({ users: `<@${TARGET}>` });
+    await massbanCommand.execute(interaction, null, s.client);
+    assert.equal(s.sent.some((entry) => entry.banned), false, 'nobody was banned');
+    const description = s.sent.at(-1).embeds[0].data.description;
+    assert.match(description, /Skipped \(1\)/u);
+    // The embed drops emoji: the refusal's text without its 🚫.
+    assert.ok(description.includes(HIERARCHY_REFUSAL.replace(/^🚫\s*/u, '')), description);
+    assert.doesNotMatch(description, /Successfully Banned/u);
   });
 
   test('ModerationService refuses before acting: ban, ban by owner ID, kick, timeout, untimeout, unban of an owner', async () => {
@@ -153,6 +313,19 @@ describe('role hierarchy for admin commands (owner\'s request)', () => {
     s.target.kick = async () => { invokerAtKick = recentInvoker(s.guild.id, 'kick', s.target.id); throw new Error('stop here'); };
     await ModerationService.kickUser({ guild: s.guild, member: s.target, moderator: s.staff, reason: 'x' }).catch(() => {});
     assert.equal(invokerAtKick?.id, STAFF);
+    assert.equal(recentInvoker(s.guild.id, 'kick', s.target.id), null, 'the kick threw: its invoker is forgotten');
+  });
+
+  test('lifting a timeout is remembered as `untimeout`, setting one as `timeout`', async () => {
+    const s = setup();
+    const seen = [];
+    s.target.timeout = async (ms) => {
+      seen.push([ms === null ? 'lift' : 'set', recentInvoker(s.guild.id, 'timeout', TARGET)?.id || null, recentInvoker(s.guild.id, 'untimeout', TARGET)?.id || null]);
+      throw new Error('stop here');
+    };
+    await ModerationService.timeoutUser({ guild: s.guild, member: s.target, moderator: s.staff, durationMs: 60_000 }).catch(() => {});
+    await ModerationService.removeTimeoutUser({ guild: s.guild, member: s.target, moderator: s.staff }).catch(() => {});
+    assert.deepEqual(seen, [['set', STAFF, null], ['lift', null, STAFF]]);
   });
 
   test('slash ban, kick, timeout, untimeout and warn refuse a member of the same or a higher role', async () => {

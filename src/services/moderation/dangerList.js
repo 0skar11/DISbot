@@ -18,8 +18,8 @@ import { getGuildConfig } from '../config/guildConfig.js';
 import { TRUSTED_BOARD_CHANNEL_ID } from '../trustedBoardService.js';
 import { isTrusted } from '../../utils/antiNukeLogging.js';
 import { staffAndDangerousRoles } from './rejoinRestore.js';
-import { assertCanActOn } from './memberHierarchy.js';
-import { rememberInvoker } from './commandInvoker.js';
+import { assertCanActOn, lookupMember } from './memberHierarchy.js';
+import { forgetInvoker, withInvoker } from './commandInvoker.js';
 import { logger } from '../../utils/logger.js';
 
 export const DANGER_NOTICE_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
@@ -228,18 +228,25 @@ export async function handleDangerCommand(message, args = []) {
     return reply(message, list.length ? `☢️ **قائمة الخطر** (${list.length}):\n${lines}` : '☢️ قائمة الخطر فاضية.');
   }
 
-  // Adding or removing takes or gives back the member's roles: only on a member below you (memberHierarchy.js).
-  // The owners keep their own answer below.
-  if (!isOwner(guild, targetId)) {
-    const executor = message.member || await guild.members.fetch(message.author.id).catch(() => null);
-    const target = await guild.members.fetch(targetId).catch(() => null);
-    const allowed = assertCanActOn(guild, executor, target || targetId);
+  // Adding or removing takes or gives back the member's roles: only on a member below you (memberHierarchy.js),
+  // looked up from Discord when not cached (a member Discord couldn't look up is refused). The owners keep
+  // their own answer below.
+  const remembers = !isOwner(guild, targetId);
+  if (remembers) {
+    const executor = message.member || (await lookupMember(guild, message.author.id)).member;
+    const allowed = await assertCanActOn(guild, executor, targetId);
     if (!allowed.ok) return reply(message, allowed.message);
-    rememberInvoker(guild.id, 'roles', targetId, message.author);
   }
+  // The roles log names who ran it; forgotten when no role was changed or it failed (commandInvoker.js).
+  const changeRoles = async (action, rolesChanged) => {
+    if (!remembers) return action();
+    const result = await withInvoker(guild.id, 'roles', targetId, message.author, action);
+    if (!rolesChanged(result)) forgetInvoker(guild.id, 'roles', targetId, message.author);
+    return result;
+  };
 
   if (removing) {
-    const removed = await removeFromDangerList(guild, targetId);
+    const removed = await changeRoles(() => removeFromDangerList(guild, targetId), (result) => result?.restored?.length > 0);
     if (!removed) return reply(message, `⚠️ <@${targetId}> مش في قائمة الخطر.`);
     const rolesLines = [
       ...(removed.restored.length ? [`🛡️ رجعتله رولات الإدارة: ${roleMentions(removed.restored)}`] : []),
@@ -249,7 +256,7 @@ export async function handleDangerCommand(message, args = []) {
     return reply(message, [`✅ <@${targetId}> اتشال من قائمة الخطر.`, ...rolesLines].join('\n'));
   }
 
-  const added = await addToDangerList(guild, targetId, message.author.id);
+  const added = await changeRoles(() => addToDangerList(guild, targetId, message.author.id), (result) => result?.ok && result.removed.length > 0);
   if (!added.ok) {
     const why = { owner: '🚫 مينفعش تضيف صاحب السيرفر.', bot: '🚫 مينفعش تضيف البوت.', already: `⚠️ <@${targetId}> في قائمة الخطر أصلاً.` };
     return reply(message, why[added.reason]);

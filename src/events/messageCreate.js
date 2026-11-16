@@ -17,6 +17,7 @@ import { handleGifCommand, isGifCommand } from '../services/gifConverterService.
 import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullShortcut } from '../utils/arabicModerationShortcuts.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { handleReportChannelMessage } from '../services/reportChannelService.js';
+import { handleBugsReportsMessage } from '../services/bugsReportsInbox.js';
 import { handleProtectedChannelMessage } from '../services/protectedChannelsService.js';
 import { handleEveryoneMention } from '../services/everyoneMentionGuardService.js';
 import { handleProofMessage, handleProofPinNotice } from '../services/moderation/proofMergeService.js';
@@ -73,6 +74,8 @@ export default {
       }
       if (await handleOwnerMentionSpam(message)) return;
       if (await handleForeignInviteLink(message)) return;
+      // #bugs-reports (staff): every message becomes a numbered report with a GitHub issue.
+      if (await handleBugsReportsMessage(message, client)) return;
       if (await handleImageOnlyChannelMessage(message)) return;
       // The streak room takes everyone's daily picture, so the media role guard skips it.
       if (!isStreakChannel(message.channelId) && await handleMediaMessage(message)) return;

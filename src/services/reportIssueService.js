@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 // Every report is also opened as an issue (label 'بلاغ') in the bot's GitHub repo, so reports can be
 // searched and followed up there. Closing the issue marks the report as solved: the
 // watcher below then edits the report message in Discord and pings the reporter with a
-// short reply that deletes itself after 5 seconds.
+// short reply that deletes itself after 5 seconds (in #bugs-reports the reply stays: notifyClosedBugReport).
 //   GITHUB_TOKEN   fine-grained token with Issues read/write on REPORTS_REPO
 //   REPORTS_REPO   owner/name of the repo the report issues go to
 // The repo was renamed from 0skar11/- to 0skar11/DISbot; the old name now belongs to another repo,
@@ -30,6 +30,9 @@ const SOLVED_COLOR = 0x2ecc71;
 const CLOSED_COLOR = 0x95a5a6;
 const WATCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const MENTION_DELETE_MS = 5_000;
+// Reports from the staff #bugs-reports room (bugsReportsRoom.js) carry this second label. Their close notice
+// stays in the room for good, so nobody works on a closed bug again.
+export const BUGS_REPORTS_LABEL = 'bugs-reports';
 const DISCORD_MARKER = /<!-- discord:(\d+)\/(\d+)\/(\d+)\/(\d+) -->/u;
 
 function github() {
@@ -67,7 +70,9 @@ function oneLine(text, max) {
 }
 
 // Opens the issue for a report already posted in Discord. Returns the issue number, or null.
-export async function openReportIssue({ reportMessage, reporter, reportedUser, content, sourceChannel, attachmentUrls = [] }) {
+export async function openReportIssue({
+  reportMessage, reporter, reportedUser, content, sourceChannel, attachmentUrls = [], extraLabels = [], guildName, originalUrl,
+}) {
   const api = github();
   if (!api) {
     logger.warn('GITHUB_TOKEN is not set: report was posted in Discord but not saved to GitHub.');
@@ -78,9 +83,11 @@ export async function openReportIssue({ reportMessage, reporter, reportedUser, c
   const lines = [
     `**المُبلِّغ:** ${reporter.tag} (\`${reporter.id}\`)`,
     reportedUser && `**المُبلَّغ عنه:** ${reportedUser.tag} (\`${reportedUser.id}\`)`,
+    guildName && `**السيرفر:** ${guildName} (\`${reportMessage.guildId}\`)`,
     sourceChannel && `**الروم:** #${sourceChannel.name} (\`${sourceChannel.id}\`)`,
     `**الوقت:** ${new Date().toISOString()}`,
     `**الرسالة في ديسكورد:** ${reportMessage.url}`,
+    originalUrl && `**الرسالة الأصلية:** ${originalUrl}`,
     '',
     '### المشكلة',
     content?.trim() || '*(بدون نص)*',
@@ -94,7 +101,7 @@ export async function openReportIssue({ reportMessage, reporter, reportedUser, c
     const { data } = await api.post('/issues', {
       title: `بلاغ من ${reporter.tag}: ${summary}`,
       body: lines.join('\n'),
-      labels: [REPORT_LABEL],
+      labels: [REPORT_LABEL, ...extraLabels],
     });
     return data.number;
   } catch (error) {
@@ -103,12 +110,44 @@ export async function openReportIssue({ reportMessage, reporter, reportedUser, c
   }
 }
 
+// #bugs-reports: the embed shows the result and the date, and the reply pinging the reporter is never deleted.
+// The report message may be gone (deleted by someone): the notice is then posted in the room on its own.
+async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved) {
+  const date = new Date(issue.closed_at || Date.now()).toISOString().slice(0, 10);
+  const content = solved
+    ? `<@${reporterId}> ✅ البلاغ #${issue.number} اتقفل واتحل، متتحلش تاني.`
+    : `<@${reporterId}> 🔒 البلاغ #${issue.number} اتقفل من غير حل، متشتغلش عليه تاني.`;
+  const payload = { content, allowedMentions: { users: [reporterId] } };
+  if (!reportMessage) {
+    await channel?.send?.(payload).catch(() => null);
+    return;
+  }
+  const [embed] = reportMessage.embeds;
+  const data = embed?.toJSON?.() || embed || {};
+  const closedLine = solved ? `✅ اتحل في ${date}` : `🔒 اتقفل في ${date}`;
+  await reportMessage.edit({
+    embeds: [{
+      ...data,
+      color: solved ? SOLVED_COLOR : CLOSED_COLOR,
+      title: solved ? `✅ بلاغ #${issue.number} — اتقفل (اتحل)` : `🔒 بلاغ #${issue.number} — اتقفل`,
+      footer: { ...(data.footer || {}), text: [data.footer?.text, closedLine].filter(Boolean).join(' • ') },
+    }],
+  }).catch((error) => logger.error(`Failed to update bug report #${issue.number} in Discord:`, error));
+  await reportMessage.reply(payload).catch(() => channel?.send?.(payload).catch(() => null));
+}
+
 async function notifyClosedReport(client, api, issue) {
   const marker = issue.body?.match(DISCORD_MARKER);
   const solved = issue.state_reason === 'completed';
   const label = solved ? SOLVED_LABEL : CLOSED_LABEL;
+  const fromBugsRoom = (issue.labels || []).some((entry) => (entry?.name ?? entry) === BUGS_REPORTS_LABEL);
 
-  if (marker) {
+  if (marker && fromBugsRoom) {
+    const [, , channelId, messageId, reporterId] = marker;
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    const reportMessage = channel?.isTextBased?.() ? await channel.messages.fetch(messageId).catch(() => null) : null;
+    if (channel?.isTextBased?.()) await notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved);
+  } else if (marker) {
     const [, , channelId, messageId, reporterId] = marker;
     const channel = await client.channels.fetch(channelId).catch(() => null);
     const reportMessage = channel?.isTextBased?.() ? await channel.messages.fetch(messageId).catch(() => null) : null;
@@ -153,7 +192,7 @@ export async function checkClosedReports(client) {
 
   for (const issue of issues) {
     if (issue.pull_request) continue;
-    if (issue.labels.some((label) => [SOLVED_LABEL, CLOSED_LABEL].includes(label.name))) continue;
+    if ((issue.labels || []).some((label) => [SOLVED_LABEL, CLOSED_LABEL].includes(label.name))) continue;
     await notifyClosedReport(client, api, issue).catch((error) => {
       logger.error(`Failed to handle closed report #${issue.number}:`, error.response?.data || error);
     });

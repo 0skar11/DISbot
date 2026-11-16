@@ -1,7 +1,9 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { scheduleNoPermissionDelete } from './noPermissionReply.js';
-import { assertCanActOn } from '../services/moderation/memberHierarchy.js';
-import { rememberInvoker } from '../services/moderation/commandInvoker.js';
+import {
+  assertCanActOn, hierarchyRuleApplies, lookupMember, HIERARCHY_REFUSAL, LOOKUP_FAILED_MESSAGE,
+} from '../services/moderation/memberHierarchy.js';
+import { withInvoker } from '../services/moderation/commandInvoker.js';
 
 // `ق` / `ف` lock and unlock the room, `نك` changes a nickname, `font` writes in bold. They are ordinary chat
 // too (`ف البيت`), so (owner's request) they only react to a real command: `ق` / `ف` as the whole message,
@@ -47,20 +49,21 @@ async function lockChannel(message, locked) {
     const currentPermissions = channel.permissionsFor(everyoneRole);
     const alreadyLocked = currentPermissions?.has(PermissionFlagsBits.SendMessages) === false;
     if (locked === alreadyLocked) return reply(message, locked ? `ℹ️ ${channel} Already Locked` : `ℹ️ ${channel} Already Unlocked`);
-    // The channel log names the member who typed it, not the bot (commandInvoker.js).
-    rememberInvoker(message.guild.id, 'channel', channel.id, message.author);
-    await channel.permissionOverwrites.edit(everyoneRole, { SendMessages: !locked }, { reason: `${locked ? 'Channel locked' : 'Channel unlocked'} by ${message.author.tag}` });
+    // The channel log names the member who typed it, not the bot; a failed edit leaves nothing behind (commandInvoker.js).
+    await withInvoker(message.guild.id, 'channel', channel.id, message.author,
+      () => channel.permissionOverwrites.edit(everyoneRole, { SendMessages: !locked }, { reason: `${locked ? 'Channel locked' : 'Channel unlocked'} by ${message.author.tag}` }));
     return reply(message, locked ? `🔒 ${channel} Locked` : `🔓 ${channel} Unlocked`);
   } catch (error) {
     return reply(message, `❌ ${error.message}`);
   }
 }
 
-async function getReplyMember(message) {
+/** The lookup (memberHierarchy.js) of the author of the message replied to, or null without a reply. */
+async function getReplyLookup(message) {
   if (!message.reference?.messageId) return null;
   const referencedMessage = await message.fetchReference().catch(() => null);
   if (!referencedMessage?.author?.id) return null;
-  return message.guild.members.fetch(referencedMessage.author.id).catch(() => null);
+  return lookupMember(message.guild, referencedMessage.author.id);
 }
 
 async function changeNickname(message, tail) {
@@ -69,9 +72,12 @@ async function changeNickname(message, tail) {
   const mention = tail.match(/^<@!?(\d+)>\s*/u);
   const targetId = mention?.[1] || null;
   const nickname = (mention ? tail.slice(mention[0].length) : tail).trim();
-  const targetMember = targetId
-    ? await message.guild.members.fetch(targetId).catch(() => null)
-    : await getReplyMember(message) || message.member;
+  // Only Discord's Unknown Member is "not found"; a lookup Discord couldn't answer is refused (memberHierarchy.js).
+  const lookup = targetId ? await lookupMember(message.guild, targetId) : await getReplyLookup(message);
+  if (lookup?.error) {
+    return reply(message, hierarchyRuleApplies(message.guild, message.member) ? HIERARCHY_REFUSAL : LOOKUP_FAILED_MESSAGE);
+  }
+  const targetMember = targetId ? lookup.member : lookup?.member || message.member;
   if (!targetMember) return reply(message, '❌ Member Not Found');
 
   const restoreOriginalName = !nickname;
@@ -80,7 +86,7 @@ async function changeNickname(message, tail) {
   // Our server and Zenith: someone else's nickname only below your own role (memberHierarchy.js); yours is fine.
   // Elsewhere Manage Nicknames allows any member. Discord still requires the bot's highest role to be above
   // the target member because this is enforced by Discord itself.
-  const allowed = assertCanActOn(message.guild, message.member, targetMember, { allowSelf: true });
+  const allowed = await assertCanActOn(message.guild, message.member, targetMember, { allowSelf: true });
   if (!allowed.ok) return reply(message, allowed.message);
   const botMember = message.guild.members.me;
   if (targetMember.id !== message.member.id && botMember
@@ -89,8 +95,9 @@ async function changeNickname(message, tail) {
   }
 
   try {
-    rememberInvoker(message.guild.id, 'nickname', targetMember.id, message.author);
-    await targetMember.setNickname(restoreOriginalName ? null : nickname, `Nickname ${restoreOriginalName ? 'restored' : 'changed'} by ${message.author.tag}`);
+    // The nickname log names the member who typed it; a failed rename leaves nothing behind (commandInvoker.js).
+    await withInvoker(message.guild.id, 'nickname', targetMember.id, message.author,
+      () => targetMember.setNickname(restoreOriginalName ? null : nickname, `Nickname ${restoreOriginalName ? 'restored' : 'changed'} by ${message.author.tag}`));
     return reply(message, restoreOriginalName
       ? `↩️ ${targetMember} Nickname Reset`
       : `✏️ ${targetMember} Nickname Changed`);

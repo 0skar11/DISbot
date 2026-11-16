@@ -11,8 +11,8 @@ import { groupLeadingUsers } from '../../utils/prefixArgs.js';
 import { addHardBans, canLiftHardBan } from '../../services/moderation/hardBanService.js';
 import { sendModerationActionLog } from '../../services/moderation/moderationActionLogService.js';
 import { sendPunishmentDm } from '../../services/moderation/punishmentDm.js';
-import { assertCanActOn } from '../../services/moderation/memberHierarchy.js';
-import { rememberInvoker } from '../../services/moderation/commandInvoker.js';
+import { assertCanActOn, hierarchyRuleApplies, lookupMember, LOOKUP_FAILED_MESSAGE } from '../../services/moderation/memberHierarchy.js';
+import { withInvoker } from '../../services/moderation/commandInvoker.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("massban")
@@ -99,17 +99,25 @@ export default {
                         continue;
                     }
 
-                    const member = await interaction.guild.members.fetch(userId).catch(() => null);
+                    // Only Discord's Unknown Member means "not in the server" (memberHierarchy.js).
+                    const lookup = await lookupMember(interaction.guild, userId);
+                    const member = lookup.member;
 
-                    // Our servers: a member of the same or a higher role, or an owner (even by ID), is skipped (memberHierarchy.js).
-                    const allowed = assertCanActOn(interaction.guild, interaction.member, member || userId);
+                    // Our servers: a member of the same or a higher role, or an owner (even by ID), is skipped, and so is
+                    // a member Discord couldn't look up (memberHierarchy.js).
+                    const allowed = await assertCanActOn(interaction.guild, interaction.member, member || userId, { lookup });
                     if (!allowed.ok) {
                         results.skipped.push({ user: user.tag, userId, reason: allowed.message });
                         continue;
                     }
+                    // Other servers: a member who couldn't be looked up isn't banned blind either.
+                    if (!member && !lookup.absent && !hierarchyRuleApplies(interaction.guild, interaction.member)) {
+                        results.failed.push({ userId, reason: LOOKUP_FAILED_MESSAGE });
+                        continue;
+                    }
 
                     if (member) {
-                        const modCheck = ModerationService.validateHierarchy(interaction.member, member, 'ban');
+                        const modCheck = await ModerationService.validateHierarchy(interaction.member, member, 'ban');
                         if (!modCheck.valid) {
                             results.skipped.push({
                                 user: user.tag,
@@ -132,11 +140,11 @@ export default {
 
                     // Only members still in the server can be told (the bot must share a server to DM).
                     if (member) await sendPunishmentDm(interaction.guild, user, 'ban', reason, interaction.user);
-                    rememberInvoker(interaction.guild.id, 'ban', userId, interaction.user);
-                    await interaction.guild.members.ban(userId, {
+                    // The ban log shows the member who ran the command; a failed ban leaves nothing behind (commandInvoker.js).
+                    await withInvoker(interaction.guild.id, 'ban', userId, interaction.user, () => interaction.guild.members.ban(userId, {
                         reason: reason,
                         deleteMessageSeconds: deleteDays * 24 * 60 * 60
-                    });
+                    }));
 
                     results.successful.push({
                         user: user.tag,

@@ -7,7 +7,7 @@ import { getColor } from '../../config/bot.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { moderationCard } from '../../utils/moderationCard.js';
-import { rememberInvoker } from '../../services/moderation/commandInvoker.js';
+import { withInvoker } from '../../services/moderation/commandInvoker.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("unlock")
@@ -42,16 +42,15 @@ export default {
                 return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: `${channel} is not explicitly locked (everyone can already send messages).` });
             }
 
-            // The channel log shows the member who ran the command (commandInvoker.js).
-            rememberInvoker(interaction.guild.id, 'channel', channel.id, interaction.user);
-            await channel.permissionOverwrites.edit(
+            // The channel log shows the member who ran the command; a failed edit leaves nothing behind (commandInvoker.js).
+            await withInvoker(interaction.guild.id, 'channel', channel.id, interaction.user, () => channel.permissionOverwrites.edit(
                 everyoneRole,
                 { SendMessages: true },
                 {
                     type: 0,
                     reason: `Channel unlocked by ${interaction.user.tag}`,
 },
-            );
+            ));
 
             await logEvent({
                 client,

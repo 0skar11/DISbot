@@ -1,6 +1,6 @@
 import { PermissionFlagsBits } from 'discord.js';
 import { getCommandPrefix } from '../config/bot.js';
-import { isServerOwner } from '../config/serverOwners.js';
+import { isServerOwner, isTrustManager } from '../config/serverOwners.js';
 import { getGuildConfig, updateGuildConfig } from '../services/config/guildConfig.js';
 import { ModerationService } from '../services/moderation/moderationService.js';
 import { WarningService } from '../services/moderation/warningService.js';
@@ -11,8 +11,10 @@ import { mayChangeRole } from '../services/moderation/staffRoleGuard.js';
 import { issueWarning, warningCard } from '../services/moderation/warnEscalation.js';
 import { moderationCard, cardReason, formatDurationMs, NO_REASON } from './moderationCard.js';
 import { unbanDmLine } from '../services/moderation/punishmentDm.js';
-import { assertCanActOn, hierarchyRuleApplies } from '../services/moderation/memberHierarchy.js';
-import { rememberInvoker } from '../services/moderation/commandInvoker.js';
+import {
+  assertCanActOn, hierarchyRuleApplies, lookupMember, HIERARCHY_REFUSAL, LOOKUP_FAILED_MESSAGE,
+} from '../services/moderation/memberHierarchy.js';
+import { withInvoker } from '../services/moderation/commandInvoker.js';
 
 const COMMANDS = new Set([
   'وارن', 'وارنات', 'تايم', 'انتايم', 'بان', 'انبان', 'كلير', 'ان', 'شيل', 'ر', 'رول', 'ب', 'رتبة', 'ازالةرتبة', 'purge', 'تراست', 'انتراست', 'trusted', 'trustedlist', 'warn', 'warnings', 'timeout', 'untimeout', 'ban', 'unban', 'clear', 'remove', 'role', 'roll', 'lock', 'unlock', 'سحب', 'pull',
@@ -107,9 +109,14 @@ function errorText(error) {
   return text.startsWith('🚫') ? text : `❌ ${text}`;
 }
 
+/** The answer when Discord couldn't say whether the member is in the server: our servers refuse (fail-closed). */
+function lookupFailedText(message) {
+  return hierarchyRuleApplies(message.guild, message.member) ? HIERARCHY_REFUSAL : LOOKUP_FAILED_MESSAGE;
+}
+
 /** Replies with the refusal and returns true when the member may not act on `target` (memberHierarchy.js). */
 async function refusedByHierarchy(message, target, options) {
-  const check = assertCanActOn(message.guild, message.member, target, options);
+  const check = await assertCanActOn(message.guild, message.member, target, options);
   if (check.ok) return false;
   await reply(message, check.message);
   return true;
@@ -122,7 +129,7 @@ async function getReplyTargetId(message) {
 }
 
 async function handleTrustedList(message) {
-  if (!isServerOwner(message.author.id)) return reply(message, '❌ أمر Trust متاح للمالك فقط.');
+  if (!isTrustManager(message.author.id)) return reply(message, '❌ أمر Trust متاح للمالك فقط.');
   const config = await getGuildConfig(message.client, message.guild.id);
   const trustedUserIds = Array.isArray(config?.antiNukeTrustedUsers) ? config.antiNukeTrustedUsers : [];
   const trustedRoleIds = Array.isArray(config?.antiNukeTrustedRoles) ? config.antiNukeTrustedRoles : [];
@@ -144,7 +151,7 @@ async function handleTrustedList(message) {
 }
 
 async function handleTrust(message, targetId) {
-  if (!isServerOwner(message.author.id)) return reply(message, '❌ أمر Trust متاح للمالك فقط.');
+  if (!isTrustManager(message.author.id)) return reply(message, '❌ أمر Trust متاح للمالك فقط.');
   const resolvedTargetId = targetId || await getReplyTargetId(message);
   if (!resolvedTargetId) return true;
   const member = await message.guild.members.fetch(resolvedTargetId).catch(() => null);
@@ -179,13 +186,14 @@ async function changeRole(message, targetMember, roleOrName, add) {
   if (role.managed || !botRole || role.position >= botRole.position) return reply(message, '❌ Role Is Higher Than Mine');
   if (role.position >= actor.roles.highest.position && message.guild.ownerId !== actor.id) return reply(message, '❌ Role Is Higher Than Yours');
   if (!(await mayChangeRole(message.guild, actor.id, role))) return reply(message, '🚫 No Permission');
-  // The roles log names the member who typed the shortcut, not the bot (commandInvoker.js).
-  rememberInvoker(message.guild.id, 'roles', targetMember.id, message.author);
+  // The roles log names the member who typed the shortcut, not the bot; a failed change leaves nothing
+  // behind for the next role change (commandInvoker.js).
+  const asInvoker = (action) => withInvoker(message.guild.id, 'roles', targetMember.id, message.author, action);
   if (add) {
-    await targetMember.roles.add(role, `Role shortcut by ${message.author.tag}`);
+    await asInvoker(() => targetMember.roles.add(role, `Role shortcut by ${message.author.tag}`));
     return sendCard(message, { emoji: '✅', title: 'ROLE ADDED', fields: [['User', `<@${targetMember.id}>`], ['Role', `${role}`]], moderatorId: message.author.id });
   }
-  await targetMember.roles.remove(role, `Role shortcut by ${message.author.tag}`);
+  await asInvoker(() => targetMember.roles.remove(role, `Role shortcut by ${message.author.tag}`));
   return sendCard(message, { emoji: '➖', title: 'ROLE REMOVED', fields: [['User', `<@${targetMember.id}>`], ['Role', `${role}`]], moderatorId: message.author.id });
 }
 
@@ -215,8 +223,7 @@ export async function pullToVoice(message, targetMember) {
   if (!isOwner && !(allowed(from, staff, PermissionFlagsBits.MoveMembers) && allowed(room, staff, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]))) {
     return reply(message, '🚫 No Permission');
   }
-  rememberInvoker(message.guild.id, 'voice', targetMember.id, message.author);
-  await targetMember.voice.setChannel(room, `Pulled by ${message.author.tag}`);
+  await withInvoker(message.guild.id, 'voice', targetMember.id, message.author, () => targetMember.voice.setChannel(room, `Pulled by ${message.author.tag}`));
   await message.channel.send({ content: `✅ تم سحب <@${targetMember.id}> إلى ${room}`, allowedMentions: { parse: [] } }).catch(() => {});
   return true;
 }
@@ -279,9 +286,11 @@ export async function handleArabicRoleShortcut(message, prefixes = []) {
   const role = roleFor(message.guild, roleQuery);
   if (!role && !explicit) return false;
 
-  const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
+  // Only Discord's Unknown Member is "not found"; a lookup Discord couldn't answer is refused (memberHierarchy.js).
+  const lookup = await lookupMember(message.guild, targetId);
+  const targetMember = lookup.member;
   if (!targetMember) {
-    if (explicit) await reply(message, '❌ Member Not Found');
+    if (explicit) await reply(message, lookup.absent ? '❌ Member Not Found' : lookupFailedText(message));
     return explicit;
   }
   try {
@@ -319,10 +328,11 @@ export async function handleClearWarningsShortcut(message, args) {
   const id = body.match(/(?:^|\s)(\d{17,20})(?:\s|$)/u);
   const targetId = mention?.[1] || id?.[1] || await getReplyTargetId(message);
   if (!targetId) return reply(message, '⚠️ مسح تحذيرات @user');
-  const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
-  if (!targetMember) return reply(message, '❌ Member Not Found');
+  const lookup = await lookupMember(message.guild, targetId);
+  const targetMember = lookup.member;
+  if (!targetMember) return reply(message, lookup.absent ? '❌ Member Not Found' : lookupFailedText(message));
   try {
-    ModerationService.assertModerationHierarchy(message.member, targetMember, 'warn');
+    await ModerationService.assertModerationHierarchy(message.member, targetMember, 'warn');
     const result = await WarningService.clearWarnings(message.guild.id, targetId);
     return sendCard(message, { emoji: '🧹', title: 'WARNINGS CLEARED', fields: [['User', `<@${targetId}>`], ['Removed', `${result.count}`]], moderatorId: message.author.id });
   } catch (error) {
@@ -354,7 +364,7 @@ export async function handleArabicModerationShortcut(message) {
     if (command === 'وارن' || command === 'warn') {
       if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
       if (!targetMember) return true;
-      ModerationService.assertModerationHierarchy(message.member, targetMember, 'warn');
+      await ModerationService.assertModerationHierarchy(message.member, targetMember, 'warn');
       const result = await issueWarning({ guild, member: targetMember, moderator: message.member, reason: tail });
       await message.channel.send(warningCard({ userId: targetId, moderatorId: message.member.id, result })).catch(() => {});
       return true;
@@ -367,7 +377,7 @@ export async function handleArabicModerationShortcut(message) {
       const durationMs = parseDuration(durationText);
       const reason = reasonParts.join(' ') || NO_REASON;
       if (!durationMs) return reply(message, '❌ اكتب المدة هكذا: `تايم 5m السبب`.');
-      ModerationService.assertModerationHierarchy(message.member, targetMember, 'timeout');
+      await ModerationService.assertModerationHierarchy(message.member, targetMember, 'timeout');
       await ModerationService.timeoutUser({ guild, member: targetMember, moderator: message.member, durationMs, reason });
       return sendCard(message, {
         emoji: '⏳',

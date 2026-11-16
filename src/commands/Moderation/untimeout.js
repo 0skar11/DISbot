@@ -22,7 +22,7 @@ export default {
     async execute(interaction, config, client) {
         // Our servers: a member of the same or a higher role is refused before the reply is deferred (memberHierarchy.js).
         const targetMember = interaction.options.getMember("target");
-        if (targetMember) ensureCanActOn(interaction.guild, interaction.member, targetMember);
+        if (targetMember) await ensureCanActOn(interaction.guild, interaction.member, targetMember);
 
         const deferSuccess = await InteractionHelper.safeDefer(interaction);
         if (!deferSuccess) {
