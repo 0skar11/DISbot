@@ -3,6 +3,7 @@
 import pg from 'pg';
 import { pgConfig, resolvePostgresPoolConfig } from '../config/database/postgres.js';
 import { logger } from './logger.js';
+import { instrumentPool } from './perfProbe.js';
 import { assertAllowlistedIdentifier, quoteIdentifier } from './sqlIdentifiers.js';
 import {
     canonicalizeKey,
@@ -71,7 +72,7 @@ class PostgreSQLDatabase {
             try {
                 await new Promise(resolve => setTimeout(resolve, 100));
 
-                this.pool = new pg.Pool(resolvePostgresPoolConfig());
+                this.pool = instrumentPool(new pg.Pool(resolvePostgresPoolConfig()));
 
                 this.pool.on('error', (error, client) => {
                     logger.error('PostgreSQL pool error:', error);

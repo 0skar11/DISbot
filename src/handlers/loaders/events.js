@@ -3,6 +3,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from '../../utils/logger.js';
+import { startPerfProbe, timedEvent } from '../../utils/perfProbe.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,6 +13,8 @@ export default async function loadEvents(client) {
     const eventFiles = await readdir(eventsPath).then(files => files.filter(file => file.endsWith('.js')));
 
     logger.info(`Found ${eventFiles.length} event files to load`);
+    // One `[PERF]` line a minute in the log (ping, message age, CPU, event loop, database time): see src/utils/perfProbe.js.
+    startPerfProbe(client);
 
     for (const file of eventFiles) {
         const filePath = join(eventsPath, file);
@@ -25,7 +28,7 @@ export default async function loadEvents(client) {
 
             const safeExecute = async (...args) => {
                 try {
-                    await event.execute(...args, client);
+                    await timedEvent(event.name, args, () => event.execute(...args, client));
                 } catch (error) {
                     logger.error(`Error executing event ${event.name}:`, error);
                 }
