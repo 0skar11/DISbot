@@ -69,6 +69,30 @@ function oneLine(text, max) {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+/** Text from a member must not be able to write (or close) the `<!-- discord:... -->` marker of an issue. */
+function neutralizeComments(text) {
+  return String(text || '').replace(/<!--/gu, '<​!--').replace(/-->/gu, '--​>');
+}
+
+/** The LAST marker of the body: the one the bot appended after everything a member wrote. */
+function lastMarker(body) {
+  const all = [...String(body || '').matchAll(new RegExp(DISCORD_MARKER.source, 'gu'))];
+  return all.length ? all.at(-1) : null;
+}
+
+// The watcher only edits or answers in a room the bot really uses for reports: the saved #bugs-reports room (checked
+// by id, not by name) or the old report channel, and only in the guild written in the marker.
+async function trustedReportChannel(client, guildId, channelId, fromBugsRoom) {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.() || String(channel.guildId ?? channel.guild?.id) !== String(guildId)) return null;
+  if (fromBugsRoom) {
+    const { isBugsReportsRoom } = await import('./bugsReportsRoom.js');
+    return (await isBugsReportsRoom(client, channel)) ? channel : null;
+  }
+  const { REPORT_CHANNEL_ID } = await import('./reportChannelService.js');
+  return String(channel.id) === String(REPORT_CHANNEL_ID) ? channel : null;
+}
+
 // Opens the issue for a report already posted in Discord. Returns the issue number, or null.
 export async function openReportIssue({
   reportMessage, reporter, reportedUser, content, sourceChannel, attachmentUrls = [], extraLabels = [], guildName, originalUrl,
@@ -90,7 +114,8 @@ export async function openReportIssue({
     originalUrl && `**الرسالة الأصلية:** ${originalUrl}`,
     '',
     '### المشكلة',
-    content?.trim() || '*(بدون نص)*',
+    // The Discord marker below is what the watcher trusts: user text can never contain an HTML comment of its own.
+    neutralizeComments(content?.trim()) || '*(بدون نص)*',
     attachmentUrls.length && '\n### المرفقات',
     ...attachmentUrls.map((url) => `- ${url}`),
     '',
@@ -137,20 +162,20 @@ async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, 
 }
 
 async function notifyClosedReport(client, api, issue) {
-  const marker = issue.body?.match(DISCORD_MARKER);
+  const marker = lastMarker(issue.body);
   const solved = issue.state_reason === 'completed';
   const label = solved ? SOLVED_LABEL : CLOSED_LABEL;
   const fromBugsRoom = (issue.labels || []).some((entry) => (entry?.name ?? entry) === BUGS_REPORTS_LABEL);
 
   if (marker && fromBugsRoom) {
-    const [, , channelId, messageId, reporterId] = marker;
-    const channel = await client.channels.fetch(channelId).catch(() => null);
-    const reportMessage = channel?.isTextBased?.() ? await channel.messages.fetch(messageId).catch(() => null) : null;
-    if (channel?.isTextBased?.()) await notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved);
+    const [, guildId, channelId, messageId, reporterId] = marker;
+    const channel = await trustedReportChannel(client, guildId, channelId, true);
+    const reportMessage = channel ? await channel.messages.fetch(messageId).catch(() => null) : null;
+    if (channel) await notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved);
   } else if (marker) {
-    const [, , channelId, messageId, reporterId] = marker;
-    const channel = await client.channels.fetch(channelId).catch(() => null);
-    const reportMessage = channel?.isTextBased?.() ? await channel.messages.fetch(messageId).catch(() => null) : null;
+    const [, guildId, channelId, messageId, reporterId] = marker;
+    const channel = await trustedReportChannel(client, guildId, channelId, false);
+    const reportMessage = channel ? await channel.messages.fetch(messageId).catch(() => null) : null;
     if (reportMessage) {
       const [embed] = reportMessage.embeds;
       await reportMessage.edit({

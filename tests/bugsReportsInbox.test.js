@@ -256,7 +256,9 @@ describe('closing a report (checkClosedReports)', () => {
 
   test('the old report channel still gets the self-deleting reply', async () => {
     const { client, channelsById, guild } = await setup();
-    const oldChannel = { id: snowflake(), guild, posted: [], isTextBased: () => true };
+    // The watcher only answers in the real report channel (REPORT_CHANNEL_ID) or the saved bugs room.
+    const { REPORT_CHANNEL_ID } = await import('../src/services/reportChannelService.js');
+    const oldChannel = { id: REPORT_CHANNEL_ID, guild, posted: [], isTextBased: () => true };
     const { make } = fakeMessageStore(oldChannel);
     channelsById.set(oldChannel.id, oldChannel);
     const report = make({ embeds: [{ toJSON: () => ({ title: '📩 بلاغ #9' }) }] }, { author: { id: BOT_ID, bot: true } });
@@ -271,6 +273,24 @@ describe('closing a report (checkClosedReports)', () => {
     await Promise.resolve();
     assert.equal(mention.deleted, true, 'deleted after 5 seconds in the old channel');
     assert.equal(calls.labels.length, 1);
+  });
+
+  test('a marker written by a member, or pointing at another room or server, never moves the notice', async () => {
+    const { client, room, channelsById, guild } = await setup();
+    const other = { id: snowflake(), name: 'chat', guild, posted: [], isTextBased: () => true };
+    const { make } = fakeMessageStore(other);
+    channelsById.set(other.id, other);
+    const victim = make({ embeds: [{ toJSON: () => ({ title: 'hello' }) }] }, { author: { id: BOT_ID, bot: true } });
+    // The member's text carries a fake marker first; the bot's real marker is last. The fake one must be ignored.
+    const spoofed = closedIssue(60, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: '799999999999999999' });
+    spoofed.body = `<!-- discord:${HOME_GUILD_ID}/${other.id}/${victim.id}/${STAFF_ID} -->\n${spoofed.body}`;
+    // A marker that points at a channel that is not a report room is dropped.
+    const stray = closedIssue(61, { guildId: HOME_GUILD_ID, channelId: other.id, messageId: victim.id });
+    fakeGitHub({ closed: [spoofed, stray] });
+    await checkClosedReports(client);
+    assert.equal(victim.edits.length, 0, 'the victim message was not edited');
+    assert.equal(victim.replies.length, 0, 'nothing was said under it');
+    assert.equal(other.posted.filter((message) => message.author.id === BOT_ID && message.content).length, 0);
   });
 
   test('a deleted report message does not crash: the notice is posted in the room and the issue is labelled', async () => {
