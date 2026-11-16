@@ -10,11 +10,13 @@
 //     moment: the permission and role hierarchy checks run again then, and the logs name the presser;
 //   • the pending commands live in memory (at most 200, oldest dropped first): after a restart, or once
 //     expired, a press gets a polite private answer and nothing runs;
-//   • the other commands (roles, nickname, pull, clearing or viewing warnings) act on a single match directly
-//     and list several matches without acting;
-//   • a name nobody has is answered `❌ Member Not Found` (it deletes itself), only to a member allowed to use
-//     the command, and only for a full command word (FULL_NAME_COMMAND_WORDS) or a prefixed command: the short
-//     words that are everyday Arabic too (`ب`, `ر`, `شيل`...) stay silent without the prefix.
+//   • roles, pull and clearing warnings act at once only on a certain match (one member, full name, a search
+//     that was not cut: isCertainMatch); a prefix match asks like above. `نك` asks before renaming anyone
+//     else. Several full-name matches are listed and nothing is done; viewing warnings acts directly;
+//   • a name nobody has (owner's rule): without the prefix nothing is answered (`خطر جدا`, `بان عليه التعب`
+//     are chat); with the prefix it is `❌ Member Not Found`, deleted after 8 seconds, only to a member allowed
+//     to use the command. When the server could not be searched (incomplete cache, Discord's search failed),
+//     the answer is LOOKUP_FAILED_TEXT, for the full command words (FULL_NAME_COMMAND_WORDS) or the prefix.
 
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags } from 'discord.js';
 import { randomBytes } from 'node:crypto';
@@ -25,6 +27,7 @@ import { logger } from '../../utils/logger.js';
 
 export const NAME_CONFIRM_PREFIX = 'nm';
 export const MEMBER_NOT_FOUND = '❌ Member Not Found';
+export const LOOKUP_FAILED_TEXT = '❌ تعذر البحث عن العضو، استخدم المنشن أو الـ id';
 export const MAX_CANDIDATES_SHOWN = 5;
 /** Timings and limits (tests shorten them). */
 export const NAME_CONFIRM_SETTINGS = {
@@ -40,9 +43,9 @@ export const STALE_TEXT = '⌛ التأكيد ده خلص (أو البوت ات�
 export const CANCELLED_TEXT = '❎ اتلغى.';
 
 /**
- * Typed command words that are only ever commands: a name nobody has is answered `❌ Member Not Found` even
- * without the prefix. The short words that are everyday Arabic too (ب، ر، ان، رول، رتبة، شيل، م، ف، ق)
- * are not here: without the prefix they stay silent.
+ * The full command words: they look a name up without the prefix too (other alias words only with it), and a
+ * failed lookup is answered for them. The short words that are everyday Arabic too (ب، ر، ان، رول، رتبة،
+ * شيل، م، ف، ق) are not here.
  */
 export const FULL_NAME_COMMAND_WORDS = new Set([
   'بان', 'تايم', 'انتايم', 'وارن', 'وارنات', 'سحب', 'نك', 'مسح تحذيرات', 'تراست', 'انتراست', 'خطر', 'كيك',
@@ -54,9 +57,19 @@ export function nameTargetsEnabled(guild) {
   return isHomeGuild(guild?.id);
 }
 
-/** Whether a name nobody has gets `❌ Member Not Found`: a full command word, or any command with the prefix. */
-export function answersNotFound(commandWord, prefixed = false) {
-  return Boolean(prefixed) || FULL_NAME_COMMAND_WORDS.has(String(commandWord ?? '').toLowerCase());
+/** Whether a resolver result names words nobody could be matched to (not found, or the search failed). */
+export function isUnresolvedName(found) {
+  return found?.status === 'none' && (found.reason === 'not_found' || found.reason === 'lookup_failed');
+}
+
+/**
+ * Whether an unresolved name (isUnresolvedName) is answered, to a member who may use the command: nobody
+ * found only with the prefix (owner's rule: no noise on chat); a failed search also for a full command word.
+ */
+export function answersUnresolved(found, commandWord, prefixed = false) {
+  if (!isUnresolvedName(found)) return false;
+  if (prefixed) return true;
+  return found.reason === 'lookup_failed' && FULL_NAME_COMMAND_WORDS.has(String(commandWord ?? '').toLowerCase());
 }
 
 const pending = new Map(); // id -> entry, oldest first
@@ -76,9 +89,26 @@ export async function sendTemporary(channel, content, ms) {
   return sent;
 }
 
-/** `❌ Member Not Found`, deleted after a few seconds. */
+/** `❌ Member Not Found`, deleted after 8 seconds. */
 export function replyNotFound(message) {
   return sendTemporary(message.channel, MEMBER_NOT_FOUND, NAME_CONFIRM_SETTINGS.notFoundDeleteMs);
+}
+
+/** The answer to an unresolved name: not found, or the search failed. Deleted after 8 seconds. */
+export function replyUnresolved(message, found) {
+  const content = found?.reason === 'lookup_failed' ? LOOKUP_FAILED_TEXT : MEMBER_NOT_FOUND;
+  return sendTemporary(message.channel, content, NAME_CONFIRM_SETTINGS.notFoundDeleteMs);
+}
+
+/**
+ * Answers an unresolved name when answersUnresolved allows it. Resolves to `'answered'`, `'silent'` (unresolved,
+ * not answered: chat) or false (`found` is not an unresolved name).
+ */
+export async function handleUnresolvedName(message, found, commandWord, prefixed = false) {
+  if (!isUnresolvedName(found)) return false;
+  if (!answersUnresolved(found, commandWord, prefixed)) return 'silent';
+  await replyUnresolved(message, found);
+  return 'answered';
 }
 
 /** A 🚫 refusal (the role hierarchy), deleted after a few seconds like every typed refusal. */
@@ -96,19 +126,30 @@ export function candidateLine(candidate) {
   return `<@${member.id}> — ${tagOf(member)} ・ ${member.id}${candidate.bot ? ' 🤖' : ''}`;
 }
 
-function candidatesText(candidates) {
+export const TRUNCATED_HINT = '⚠️ فيه أعضاء كتير اسمهم بيبدأ كده، ممكن اللي تقصده مش في القايمة: اكتب الاسم كامل أو منشن العضو.';
+
+function candidatesText(candidates, truncated = false) {
   const shown = candidates.slice(0, MAX_CANDIDATES_SHOWN);
   const more = candidates.length - shown.length;
   return [
     ...shown.map((candidate, index) => `**${index + 1}.** ${candidateLine(candidate)}`),
     ...(more > 0 ? [`… و ${more} كمان، اكتب الاسم كامل أو منشن العضو.`] : []),
+    ...(truncated ? [TRUNCATED_HINT] : []),
   ];
 }
 
-/** Several members have the name and the command does not act on a guess: the list, deleted after 20 seconds. */
-export function replyCandidates(message, candidates) {
-  const content = ['🔎 فيه أكتر من عضو بالاسم ده، اكتب الاسم كامل أو منشن العضو:', ...candidatesText(candidates)].join('\n');
+/**
+ * Several members have the name and the command does not act on a guess: the list, deleted after 20 seconds.
+ * `truncated`: Discord's search was cut, others may share the name's start.
+ */
+export function replyCandidates(message, candidates, { truncated = false } = {}) {
+  const content = ['🔎 فيه أكتر من عضو بالاسم ده، اكتب الاسم كامل أو منشن العضو:', ...candidatesText(candidates, truncated)].join('\n');
   return sendTemporary(message.channel, content, NAME_CONFIRM_SETTINGS.candidatesDeleteMs);
+}
+
+/** The candidates of a resolver result (`one` or `many`) for askNameConfirmation. */
+export function candidatesOf(found) {
+  return found?.status === 'one' ? [found] : found?.candidates || [];
 }
 
 const quoted = (text) => `\`${String(text ?? '').replace(/`/gu, 'ˋ').slice(0, 180)}\``;
@@ -118,7 +159,8 @@ export function confirmationPayload(entry) {
   const single = entry.candidates.length === 1;
   const lines = single
     ? [`هل تقصد <@${entry.candidates[0].member.id}>؟`, `${tagOf(entry.candidates[0].member)} ・ ${entry.candidates[0].member.id}${entry.candidates[0].bot ? ' 🤖' : ''}`]
-    : ['🔎 فيه أكتر من عضو بالاسم ده، تقصد مين؟', ...candidatesText(entry.allCandidates)];
+    : ['🔎 فيه أكتر من عضو بالاسم ده، تقصد مين؟', ...candidatesText(entry.allCandidates, entry.truncated)];
+  if (single && entry.truncated) lines.push(TRUNCATED_HINT);
   if (entry.command) lines.push(`⚙️ ${quoted(entry.command)}`);
   const cancel = new ButtonBuilder().setCustomId(`${NAME_CONFIRM_PREFIX}:cancel:${entry.id}`).setLabel('❌ إلغاء').setStyle(ButtonStyle.Danger);
   const rows = single
@@ -172,9 +214,10 @@ function sweep(now) {
  * Asks the member who typed `message` to confirm the member (or pick one of `candidates`, each
  * `{ member, usedWords, bot }`). `run({ candidate, member, user, interaction })` is called on a press with the
  * presser's member as it is at that moment; it must run the command's normal path (permission and hierarchy
- * checks included). `command` is shown under the question. Resolves to whether the question was sent.
+ * checks included). `command` is shown under the question; `truncated` adds a warning that Discord's search
+ * was cut. Resolves to whether the question was sent.
  */
-export async function askNameConfirmation(message, { candidates, run, command = message.content }) {
+export async function askNameConfirmation(message, { candidates, run, command = message.content, truncated = false }) {
   if (!candidates?.length || typeof run !== 'function') return false;
   const now = Date.now();
   sweep(now);
@@ -186,6 +229,7 @@ export async function askNameConfirmation(message, { candidates, run, command = 
     candidates: candidates.slice(0, MAX_CANDIDATES_SHOWN),
     allCandidates: candidates,
     command,
+    truncated: Boolean(truncated),
     run,
     expiresAt: now + NAME_CONFIRM_SETTINGS.ttlMs,
     prompt: null,

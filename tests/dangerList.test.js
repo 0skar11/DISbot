@@ -79,9 +79,11 @@ describe('خطر: the danger list (reports #218, #219)', () => {
     const { guild, sent, message } = setup();
     assert.equal(await handleDangerCommand(message(STRANGER, `خطر <@${BAD}>`), [`<@${BAD}>`]), false);
     assert.equal(sent.reply.length, 0, 'a stranger gets no answer');
-    // `خطر` is a full command word: a trusted member whose words name nobody gets `❌ Member Not Found`
-    // (owner's rule for typed commands by name, nameConfirmation.js); nothing is listed.
-    assert.equal(await handleDangerCommand(message(TRUSTED, 'خطر جدا'), ['جدا']), true);
+    // A trusted member's sentence that names nobody is chat: no answer, nothing done (owner's rule). With the
+    // prefix it is a command: `❌ Member Not Found` (nameConfirmation.js).
+    assert.equal(await handleDangerCommand(message(TRUSTED, 'خطر جدا'), ['جدا']), false);
+    assert.equal(sent.reply.length, 0, 'no answer to chat');
+    assert.equal(await handleDangerCommand(message(TRUSTED, '!خطر جدا'), ['جدا'], { prefixed: true }), true);
     assert.equal(sent.reply.at(-1).content, '❌ Member Not Found');
     assert.equal(await isOnDangerList(guild.client, guild.id, BAD), false);
     await handleDangerCommand(message(TRUSTED, `خطر ${OWNER}`), [OWNER]);

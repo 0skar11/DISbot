@@ -5,7 +5,7 @@ import { isTrustManager } from '../config/serverOwners.js';
 import { refreshTrustedBoard, TRUSTED_BOARD_CHANNEL_ID, isTrustedBoardChannel } from '../services/trustedBoardService.js';
 import { resolveMemberByName } from '../utils/memberNameResolver.js';
 import {
-  askNameConfirmation, nameTargetsEnabled, pressMessage, replyNotFound,
+  askNameConfirmation, candidatesOf, handleUnresolvedName, nameTargetsEnabled, pressMessage, replyNotFound,
 } from '../services/moderation/nameConfirmation.js';
 
 const TRUST_COMMANDS = new Set(['trust', 'untrust', 'تراست', 'انتراست']);
@@ -69,21 +69,19 @@ async function handleTrust(message, client) {
 /**
  * Our server: `تراست محمد` / `انتراست محمد`, the member by name (memberNameResolver.js). Trust is a security
  * setting, so it never happens at once: `هل تقصد @member؟` with ✅ / ❌ (or a button for each member with the
- * name), and a press runs applyTrust as the presser (nameConfirmation.js). A name nobody has is
- * `❌ Member Not Found`. Returns false when the words name nobody at all (the usage is shown).
+ * name), and a press runs applyTrust as the presser (nameConfirmation.js). The command is typed without a
+ * prefix, so a name nobody has gets no answer (owner's rule: no noise on chat); a failed search is answered.
+ * Returns false when the words name nobody at all (the usage is shown).
  */
 async function trustByName(message, client, parsed) {
   if (!nameTargetsEnabled(message.guild) || !parsed.nameText) return false;
   const found = await resolveMemberByName(message.guild, parsed.nameText);
-  if (found.status === 'none') {
-    if (found.reason !== 'not_found') return false;
-    if (isTrustedBoardChannel(message.channelId)) await send(message, 'Member Not Found');
-    else await replyNotFound(message);
-    return true;
-  }
+  if (await handleUnresolvedName(message, found, parsed.command, false)) return true;
+  if (found.status === 'none') return false;
   const adding = isAdding(parsed.command);
   await askNameConfirmation(message, {
-    candidates: found.status === 'one' ? [found] : found.candidates,
+    candidates: candidatesOf(found),
+    truncated: found.truncated,
     command: parsed.content,
     run: ({ candidate, member, user }) => applyTrust(pressMessage(message, member, user), client, { adding, userId: candidate.member.id }),
   });
@@ -108,7 +106,8 @@ async function applyTrust(message, client, { adding, roleId = null, userId = nul
     if (role.managed || role.id === message.guild.id) return send(message, 'Can\'t Trust Managed Or @everyone Role');
   } else {
     const member = await message.guild.members.fetch(id).catch(() => null);
-    if (!member) return send(message, 'Member Not Found');
+    // A mention or ID nobody in the server has: in our server the answer deletes itself after 8 seconds.
+    if (!member) return nameTargetsEnabled(message.guild) && !isTrustedBoardChannel(message.channelId) ? replyNotFound(message) : send(message, 'Member Not Found');
   }
 
   const current = new Set(Array.isArray(config?.[key]) ? config[key] : []);

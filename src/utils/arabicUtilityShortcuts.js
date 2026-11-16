@@ -5,7 +5,9 @@ import {
 } from '../services/moderation/memberHierarchy.js';
 import { withInvoker } from '../services/moderation/commandInvoker.js';
 import { resolveMemberByName, remainingText } from './memberNameResolver.js';
-import { nameTargetsEnabled, replyCandidates } from '../services/moderation/nameConfirmation.js';
+import {
+  askNameConfirmation, candidatesOf, handleUnresolvedName, nameTargetsEnabled, pressMessage, replyNotFound,
+} from '../services/moderation/nameConfirmation.js';
 
 // `ق` / `ف` lock and unlock the room, `نك` changes a nickname, `font` writes in bold. They are ordinary chat
 // too (`ف البيت`), so (owner's request) they only react to a real command: `ق` / `ف` as the whole message,
@@ -68,38 +70,60 @@ async function getReplyLookup(message) {
   return lookupMember(message.guild, referencedMessage.author.id);
 }
 
+const lookupFailedReply = (message) => reply(message, hierarchyRuleApplies(message.guild, message.member) ? HIERARCHY_REFUSAL : LOOKUP_FAILED_MESSAGE);
+
 /**
- * Our server: `نك محمد اسم-جديد` renames the member named by the first words (exact names only: without a
- * mention the words are otherwise your own new nickname). Resolves to `{ member, nickname }`, `{ handled }`
- * when several members have the name (listed, nobody renamed), or null: nobody has it, so as before the
- * whole text is your own nickname.
+ * Our server: `نك محمد اسم-جديد`, the member named by the first words (exact names only: without a mention the
+ * words are otherwise your own new nickname). Renaming someone else never happens at once: `هل تقصد @member؟`
+ * with ✅ / ❌ (a button each when several members have the name), and the press renames as the presser, with
+ * the permission and the role hierarchy checked again then (nameConfirmation.js). Resolves to `{ handled: true }`
+ * when it stopped here (asked, or Discord's search failed: answered), or null when the name is yours or nobody's:
+ * then, as before, the whole text is your own nickname.
  */
-async function nicknameTargetByName(message, tail) {
+async function nicknameByName(message, tail) {
   if (!nameTargetsEnabled(message.guild) || message.reference?.messageId) return null;
   const found = await resolveMemberByName(message.guild, tail, { allowPrefix: false, minTailWords: 1 });
-  if (found.status === 'many') {
-    await replyCandidates(message, found.candidates);
+  if (found.reason === 'lookup_failed') {
+    await handleUnresolvedName(message, found, 'نك', false);
     return { handled: true };
   }
-  return found.status === 'one' ? { member: found.member, nickname: remainingText(tail, found.usedWords) } : null;
+  const others = candidatesOf(found).filter((candidate) => candidate.member.id !== message.author.id);
+  if (!others.length) return null;
+  await askNameConfirmation(message, {
+    candidates: others,
+    truncated: found.truncated,
+    run: async ({ candidate, member, user }) => {
+      const pressed = pressMessage(message, member, user);
+      if (!hasPermission(member, PermissionFlagsBits.ManageNicknames)) return false;
+      const lookup = await lookupMember(message.guild, candidate.member.id);
+      if (!lookup.member) return lookup.absent ? replyNotFound(pressed) : lookupFailedReply(pressed);
+      return applyNickname(pressed, lookup.member, remainingText(tail, candidate.usedWords));
+    },
+  });
+  return { handled: true };
 }
 
 async function changeNickname(message, tail) {
   if (!hasPermission(message.member, PermissionFlagsBits.ManageNicknames)) return false;
 
   const mention = tail.match(/^<@!?(\d+)>\s*/u);
-  const named = mention ? null : await nicknameTargetByName(message, tail);
-  if (named?.handled) return true;
+  if (!mention && await nicknameByName(message, tail)) return true;
   const targetId = mention?.[1] || null;
-  const nickname = named ? named.nickname : (mention ? tail.slice(mention[0].length) : tail).trim();
+  const nickname = (mention ? tail.slice(mention[0].length) : tail).trim();
   // Only Discord's Unknown Member is "not found"; a lookup Discord couldn't answer is refused (memberHierarchy.js).
-  const lookup = named ? { member: named.member } : targetId ? await lookupMember(message.guild, targetId) : await getReplyLookup(message);
-  if (lookup?.error) {
-    return reply(message, hierarchyRuleApplies(message.guild, message.member) ? HIERARCHY_REFUSAL : LOOKUP_FAILED_MESSAGE);
+  const lookup = targetId ? await lookupMember(message.guild, targetId) : await getReplyLookup(message);
+  if (lookup?.error) return lookupFailedReply(message);
+  const targetMember = targetId ? lookup.member : lookup?.member || message.member;
+  if (!targetMember) {
+    // A mention nobody in the server has: in our server the answer deletes itself after 8 seconds.
+    if (nameTargetsEnabled(message.guild)) return replyNotFound(message).then(() => true);
+    return reply(message, '❌ Member Not Found');
   }
-  const targetMember = (targetId || named) ? lookup.member : lookup?.member || message.member;
-  if (!targetMember) return reply(message, '❌ Member Not Found');
+  return applyNickname(message, targetMember, nickname);
+}
 
+/** Renames `targetMember` to `nickname` (empty: the original name back), within the role hierarchy. */
+async function applyNickname(message, targetMember, nickname) {
   const restoreOriginalName = !nickname;
   if (nickname.length > 32) return reply(message, '❌ Max 32 Characters');
 

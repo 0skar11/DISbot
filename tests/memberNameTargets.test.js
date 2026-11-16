@@ -1,4 +1,4 @@
-import { test, describe, beforeEach, afterEach } from 'node:test';
+import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { MessageFlags, PermissionsBitField, PermissionFlagsBits } from 'discord.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
@@ -14,8 +14,8 @@ import { handleArabicUtilityShortcuts } from '../src/utils/arabicUtilityShortcut
 import { handleDangerCommand, isOnDangerList } from '../src/services/moderation/dangerList.js';
 import nameConfirmButton from '../src/interactions/buttons/moderation/nameConfirm.js';
 import {
-  NAME_CONFIRM_SETTINGS, MEMBER_NOT_FOUND, STALE_TEXT, EXPIRED_TEXT, CANCELLED_TEXT,
-  clearNameConfirmations, pendingNameConfirmations, answersNotFound, FULL_NAME_COMMAND_WORDS,
+  NAME_CONFIRM_SETTINGS, MEMBER_NOT_FOUND, LOOKUP_FAILED_TEXT, STALE_TEXT, EXPIRED_TEXT, CANCELLED_TEXT, TRUNCATED_HINT,
+  clearNameConfirmations, pendingNameConfirmations, answersUnresolved, FULL_NAME_COMMAND_WORDS,
 } from '../src/services/moderation/nameConfirmation.js';
 import banCommand from '../src/commands/Moderation/ban.js';
 import timeoutCommand from '../src/commands/Moderation/timeout.js';
@@ -40,7 +40,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * Our server with a staff member and the members given by name. Discord calls are recorded in `actions`
  * (with the invoker remembered for the logs at that moment); ban / kick / timeout stop right after the call.
  */
-function setup({ guildId = HOME_GUILD_ID, staffPerms = ALL, staffPos = 10, staffId = nextId(), trusted = [] } = {}) {
+function setup({ guildId = HOME_GUILD_ID, staffPerms = ALL, staffPos = 10, staffId = nextId(), trusted = [], memberCount, search = null } = {}) {
   const sent = [];
   const actions = [];
   const searches = [];
@@ -57,7 +57,7 @@ function setup({ guildId = HOME_GUILD_ID, staffPerms = ALL, staffPos = 10, staff
     commands: new Map(),
   };
   const guild = {
-    id: guildId, name: 'Home', ownerId: GUILD_OWNER, client,
+    id: guildId, name: 'Home', ownerId: GUILD_OWNER, client, memberCount,
     roles: { cache: new Map(), everyone: { id: guildId } },
     channels: { cache: new Map(), fetch: async () => null },
   };
@@ -96,7 +96,7 @@ function setup({ guildId = HOME_GUILD_ID, staffPerms = ALL, staffPos = 10, staff
       if (members.has(id)) return members.get(id);
       throw Object.assign(new Error('Unknown Member'), { code: 10007, status: 404 });
     },
-    search: async ({ query }) => { searches.push(query); return new Map(); },
+    search: async (options) => { searches.push(options.query); return search ? search(options) : new Map(); },
     ban: async (id, options) => {
       actions.push({ banned: id, reason: options?.reason, invoker: invoker('ban', id) });
       throw new Error('stop here');
@@ -392,14 +392,32 @@ describe('typed commands by name: the punishing ones ask first (owner\'s request
 describe('a name nobody has', () => {
   beforeEach(() => { clearInvokers(); clearNameConfirmations(); });
 
-  test('full command words answer `❌ Member Not Found` to staff, with or without the prefix', async () => {
+  test('without the prefix a name nobody has is chat: staff get no answer and nothing happens (`بان عليه التعب`)', async () => {
     const s = setup();
-    for (const content of ['بان فلان', 'تايم فلان 10m', 'وارن فلان سبب', 'وارنات فلان', 'كيك فلان', 'ban someone', `${PREFIX}بان فلان`, `${PREFIX}طرد فلان`]) {
-      const before = s.sent.length;
+    for (const content of ['بان عليه التعب', 'بان فلان', 'تايم فلان 10m', 'وارن فلان سبب', 'وارنات فلان', 'كيك فلان', 'ban someone', 'انتايم فلان']) {
       await s.typed(content);
-      assert.deepEqual(contents(s).slice(before), [MEMBER_NOT_FOUND], content);
     }
+    assert.equal(s.sent.length, 0);
     assert.equal(s.prompts().length + s.actions.length + s.calls.length, 0);
+  });
+
+  test('with the prefix it is `❌ Member Not Found`, deleted after 8 seconds', async () => {
+    assert.equal(NAME_CONFIRM_SETTINGS.notFoundDeleteMs, 8_000);
+    const deleteMs = NAME_CONFIRM_SETTINGS.notFoundDeleteMs;
+    NAME_CONFIRM_SETTINGS.notFoundDeleteMs = 20;
+    try {
+      const s = setup();
+      for (const content of [`${PREFIX}بان فلان`, `${PREFIX}طرد فلان`, `${PREFIX}تايم فلان 10m`, `${PREFIX}وارنات فلان`, `${PREFIX}ban someone`]) {
+        const before = s.sent.length;
+        await s.typed(content);
+        assert.deepEqual(contents(s).slice(before), [MEMBER_NOT_FOUND], content);
+      }
+      await sleep(60);
+      assert.ok(s.sent.every((msg) => msg.deleted), 'every answer deleted itself');
+      assert.equal(s.prompts().length + s.actions.length + s.calls.length, 0);
+    } finally {
+      NAME_CONFIRM_SETTINGS.notFoundDeleteMs = deleteMs;
+    }
   });
 
   test('a member without the permission gets no answer at all, and nobody is looked up', async () => {
@@ -411,17 +429,55 @@ describe('a name nobody has', () => {
     assert.equal(s.actions.length + s.calls.length, 0);
   });
 
-  test('other alias words without the prefix stay chat; with the prefix they answer', async () => {
+  test('who is answered: nobody found only with the prefix; a failed search also for a full command word', async () => {
     const s = setup();
     await s.typed('طرد فلان');
     await s.typed('تحذير فلان');
     assert.equal(s.sent.length, 0);
-    assert.equal(answersNotFound('طرد', false), false);
-    assert.equal(answersNotFound('طرد', true), true);
+    const notFound = { status: 'none', reason: 'not_found' };
+    const failed = { status: 'none', reason: 'lookup_failed' };
     for (const word of ['بان', 'تايم', 'انتايم', 'وارن', 'وارنات', 'سحب', 'نك', 'مسح تحذيرات', 'تراست', 'انتراست', 'خطر', 'كيك', 'ban', 'timeout', 'untimeout', 'warn', 'kick', 'pull', 'trust', 'untrust']) {
       assert.equal(FULL_NAME_COMMAND_WORDS.has(word), true, word);
+      assert.equal(answersUnresolved(notFound, word, false), false, word);
+      assert.equal(answersUnresolved(failed, word, false), true, word);
     }
-    for (const word of ['ب', 'ر', 'ان', 'رول', 'رتبة', 'شيل', 'م', 'ف', 'ق']) assert.equal(answersNotFound(word, false), false, word);
+    for (const word of ['ب', 'ر', 'ان', 'رول', 'رتبة', 'شيل', 'م', 'ف', 'ق', 'طرد']) {
+      assert.equal(answersUnresolved(notFound, word, false), false, word);
+      assert.equal(answersUnresolved(failed, word, false), false, word);
+      assert.equal(answersUnresolved(notFound, word, true), true, word);
+    }
+    assert.equal(answersUnresolved({ status: 'none', reason: 'no_name' }, 'بان', true), false, 'no name words: the old behaviour');
+  });
+
+  test('an incomplete cache and a failed search: nobody is acted on, staff are told the search failed', async () => {
+    const s = setup({ memberCount: 500, search: () => { throw new Error('503'); } });
+    const mohamed = s.add({ nickname: 'محمد', username: 'm' });
+    s.role('Helpers');
+    await s.typed('بان محمد');
+    assert.deepEqual(contents(s), [LOOKUP_FAILED_TEXT], 'the one cached محمد is not taken as the only one');
+    await s.typed('وارنات محمد');
+    assert.equal(await handleArabicRoleShortcut(s.message(`${PREFIX}ر محمد Helpers`), [PREFIX]), true);
+    assert.equal(await handlePullShortcut(s.message('سحب محمد'), ['محمد']), true);
+    assert.deepEqual(contents(s), [LOOKUP_FAILED_TEXT, LOOKUP_FAILED_TEXT, LOOKUP_FAILED_TEXT, LOOKUP_FAILED_TEXT]);
+    assert.equal(await handleArabicRoleShortcut(s.message('ر محمد Helpers'), [PREFIX]), false, 'a short word without the prefix: chat');
+    assert.equal(s.prompts().length + s.actions.length + s.calls.length, 0);
+    assert.equal(s.sent.length, 4);
+    assert.ok(mohamed);
+  });
+
+  test('a search cut at its limit: a prefix match asks (with a warning) instead of acting', async () => {
+    let fill = [];
+    const s = setup({ memberCount: 500, search: () => new Map(fill.map((m) => [m.id, m])) });
+    const mohamed = s.add({ username: 'mohamed' });
+    const helpers = s.role('Helpers');
+    fill = [mohamed, ...Array.from({ length: 9 }, (_, i) => s.add({ username: `zzz${i}` }))];
+    assert.equal(await handleArabicRoleShortcut(s.message('ر moh Helpers'), [PREFIX]), true);
+    assert.equal(s.actions.length, 0, 'not given at once');
+    const [prompt] = s.prompts();
+    assert.ok(prompt.content.includes(TRUNCATED_HINT), prompt.content);
+    assert.match(prompt.content, new RegExp(`<@${mohamed.id}>`));
+    await s.press(s.buttonsOf(prompt)[0].id);
+    assert.deepEqual(s.actions, [{ roleAdded: helpers.id, id: mohamed.id, invoker: s.staff.id }]);
   });
 
   test('words that are not a name keep the old behaviour (`تايم 10m` is chat)', async () => {
@@ -449,24 +505,53 @@ describe('a name nobody has', () => {
   });
 });
 
-describe('the other commands by name act directly on one member', () => {
+describe('the other commands by name: a full name acts directly, a prefix asks first', () => {
   beforeEach(() => { clearInvokers(); clearNameConfirmations(); });
 
-  test('`ر محمد Helpers` / `ب محمد Helpers`: the role is given or taken, the log names the staff member', async () => {
+  test('`ر محمد Helpers` / `ب محمد Helpers` (full name): the role is given or taken at once, the log names the staff member', async () => {
     const s = setup();
     const mohamed = s.add({ username: 'mo', nickname: 'محمد' });
     const helpers = s.role('Helpers');
     assert.equal(await handleArabicRoleShortcut(s.message('ر محمد Helpers'), [PREFIX]), true);
     assert.equal(await handleArabicRoleShortcut(s.message('ب محمد Helpers'), [PREFIX]), true);
-    assert.equal(await handleArabicRoleShortcut(s.message('ر محم Helpers'), [PREFIX]), true, 'a unique prefix');
     assert.equal(await handleArabicRoleShortcut(s.message(`ر محمد <@&${helpers.id}>`), [PREFIX]), true, 'the role by mention');
     assert.deepEqual(s.actions, [
       { roleAdded: helpers.id, id: mohamed.id, invoker: s.staff.id },
       { roleRemoved: helpers.id, id: mohamed.id, invoker: s.staff.id },
       { roleAdded: helpers.id, id: mohamed.id, invoker: s.staff.id },
-      { roleAdded: helpers.id, id: mohamed.id, invoker: s.staff.id },
     ]);
-    assert.equal(s.prompts().length, 0, 'no question for roles');
+    assert.equal(s.prompts().length, 0, 'no question for a full name');
+  });
+
+  test('`ر محم Helpers` (a prefix): nothing until ✅; the press gives the role as the presser, checked again', async () => {
+    const s = setup();
+    const mohamed = s.add({ username: 'mo', nickname: 'محمد' });
+    const helpers = s.role('Helpers');
+    assert.equal(await handleArabicRoleShortcut(s.message('ر محم Helpers'), [PREFIX]), true);
+    assert.equal(s.actions.length, 0, 'a prefix never grants a role at once');
+    const [prompt] = s.prompts();
+    assert.ok(prompt.content.startsWith(`هل تقصد <@${mohamed.id}>؟`), prompt.content);
+    await s.press(s.buttonsOf(prompt)[0].id);
+    assert.deepEqual(s.actions, [{ roleAdded: helpers.id, id: mohamed.id, invoker: s.staff.id }]);
+
+    // Manage Roles lost before the press: nothing is given, nothing said.
+    await handleArabicRoleShortcut(s.message('ب محم Helpers'), [PREFIX]);
+    s.staff.permissions = new PermissionsBitField(0n);
+    const before = s.sent.length;
+    await s.press(s.buttonsOf(s.prompts().at(-1))[0].id);
+    assert.equal(s.actions.length, 1);
+    assert.equal(s.sent.length, before);
+  });
+
+  test('a prefix match on a member above the staff member: asked, then refused at the press (role hierarchy)', async () => {
+    const s = setup({ staffPos: 5 });
+    const mohamed = s.add({ username: 'mo', nickname: 'محمد', position: 3 });
+    s.role('Helpers');
+    await handleArabicRoleShortcut(s.message('ر محم Helpers'), [PREFIX]);
+    mohamed.roles.highest.position = 9;
+    await s.press(s.buttonsOf(s.prompts()[0])[0].id);
+    assert.equal(s.actions.length, 0);
+    assert.equal(contents(s).at(-1), HIERARCHY_REFUSAL);
   });
 
   test('ordinary sentences by staff stay silent (`ب كام ده`, `ر دي حلوة`, `ر محمد حلوة` with no such role)', async () => {
@@ -526,7 +611,7 @@ describe('the other commands by name act directly on one member', () => {
     assert.ok(s.prompts().at(-1).content.startsWith(`هل تقصد <@${mohamed.id}>؟`), 'the member after the word, not the one named like it');
   });
 
-  test('`سحب محمد` pulls; a name nobody has is Member Not Found; without Move Members nothing at all', async () => {
+  test('`سحب محمد` (full name) pulls at once, `سحب محم` (prefix) asks; nobody found: silent, or Member Not Found with the prefix', async () => {
     const s = setup();
     const room = { id: 'A', toString: () => '<#A>' };
     s.staff.voice = { channel: room };
@@ -535,30 +620,61 @@ describe('the other commands by name act directly on one member', () => {
     mohamed.voice = { channel: { id: 'B' }, channelId: 'B', setChannel: async (to) => { moved.push([to.id, recentInvoker(s.guild.id, 'voice', mohamed.id)?.id]); } };
     assert.equal(await handlePullShortcut(s.message('سحب محمد'), ['محمد']), true);
     assert.deepEqual(moved, [['A', s.staff.id]]);
+    assert.equal(await handlePullShortcut(s.message('سحب محم'), ['محم']), true);
+    assert.equal(moved.length, 1, 'a prefix does not pull at once');
+    await s.press(s.buttonsOf(s.prompts()[0])[0].id);
+    assert.deepEqual(moved, [['A', s.staff.id], ['A', s.staff.id]], 'pulled at the press, as the presser');
     assert.equal(await handlePullShortcut(s.message('سحب فلان'), ['فلان']), true);
+    assert.equal(s.sent.filter((msg) => msg.content === MEMBER_NOT_FOUND).length, 0, 'no answer without the prefix');
+    assert.equal(await handlePullShortcut(s.message(`${PREFIX}سحب فلان`), ['فلان'], { prefixed: true }), true);
     assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND);
+    assert.equal(await handlePullShortcut(s.message('سحب 222200000000000001'), ['222200000000000001']), true);
+    assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND, 'an ID nobody in the server has');
     assert.equal(await handlePullShortcut(s.message('سحب 5'), ['5']), false, 'not a name');
     const noPerm = setup({ staffPerms: 0n });
     noPerm.add({ username: 'mo', nickname: 'محمد' });
     assert.equal(await handlePullShortcut(noPerm.message('سحب محمد'), ['محمد']), false);
-    assert.equal(await handlePullShortcut(noPerm.message('سحب فلان'), ['فلان']), false);
+    assert.equal(await handlePullShortcut(noPerm.message('سحب فلان'), ['فلان'], { prefixed: true }), false);
+    await handlePullShortcut(noPerm.message('سحب 222200000000000001'), ['222200000000000001']);
     assert.equal(noPerm.sent.length + noPerm.searches.length, 0);
   });
 
-  test('`نك محمد اسم-جديد` renames محمد; a first word nobody has is still your own nickname', async () => {
+  test('`نك محمد اسم-جديد` renames another member only after ✅; your own name or nobody\'s is your own nickname', async () => {
     const s = setup();
+    s.staff.user.username = 'ywsf';
     const mohamed = s.add({ username: 'mo', nickname: 'محمد' });
     await handleArabicUtilityShortcuts(s.message('نك محمد اسم-جديد'));
+    assert.equal(s.actions.length, 0, 'nobody else is renamed at once');
+    const [prompt] = s.prompts();
+    assert.ok(prompt.content.startsWith(`هل تقصد <@${mohamed.id}>؟`), prompt.content);
+    await s.press(s.buttonsOf(prompt)[0].id);
     await handleArabicUtilityShortcuts(s.message('نك اسمي الجديد'));
     await handleArabicUtilityShortcuts(s.message('نك محم جديد'));
+    await handleArabicUtilityShortcuts(s.message('نك ywsf الجديد'));
     assert.deepEqual(s.actions, [
       { nick: 'اسم-جديد', id: mohamed.id, invoker: s.staff.id },
       { nick: 'اسمي الجديد', id: s.staff.id, invoker: s.staff.id },
       { nick: 'محم جديد', id: s.staff.id, invoker: s.staff.id },
-    ], 'exact names only: a prefix is your own new nickname');
+      { nick: 'ywsf الجديد', id: s.staff.id, invoker: s.staff.id },
+    ], 'exact names only; a prefix, nobody, or your own name: the whole text is your own nickname');
+    assert.equal(s.prompts().length, 1);
   });
 
-  test('`مسح تحذيرات محمد` clears that member\'s warnings; a name nobody has is Member Not Found', async () => {
+  test('`نك محمد x` asked, then Manage Nicknames lost or محمد above the presser: nobody is renamed', async () => {
+    const s = setup({ staffPos: 5 });
+    const mohamed = s.add({ username: 'mo', nickname: 'محمد', position: 3 });
+    await handleArabicUtilityShortcuts(s.message('نك محمد x'));
+    mohamed.roles.highest.position = 9;
+    await s.press(s.buttonsOf(s.prompts().at(-1))[0].id);
+    assert.equal(contents(s).at(-1), HIERARCHY_REFUSAL);
+    mohamed.roles.highest.position = 3;
+    await handleArabicUtilityShortcuts(s.message('نك محمد y'));
+    s.staff.permissions = new PermissionsBitField(0n);
+    await s.press(s.buttonsOf(s.prompts().at(-1))[0].id);
+    assert.equal(s.actions.length, 0);
+  });
+
+  test('`مسح تحذيرات محمد` clears at once, `مسح تحذيرات محم` asks; nobody found: silent, or Member Not Found with the prefix', async () => {
     const clearWarnings = WarningService.clearWarnings;
     const cleared = [];
     WarningService.clearWarnings = async (guildId, userId) => { cleared.push(userId); return { count: 2 }; };
@@ -567,9 +683,18 @@ describe('the other commands by name act directly on one member', () => {
       const mohamed = s.add({ username: 'mo', nickname: 'محمد' });
       await handleClearWarningsShortcut(s.message('مسح تحذيرات محمد'), ['محمد']);
       assert.deepEqual(cleared, [mohamed.id]);
+      await handleClearWarningsShortcut(s.message('مسح تحذيرات محم'), ['محم']);
+      assert.equal(cleared.length, 1, 'a prefix does not clear at once');
+      await s.press(s.buttonsOf(s.prompts()[0])[0].id);
+      assert.deepEqual(cleared, [mohamed.id, mohamed.id]);
+      const before = s.sent.length;
       await handleClearWarningsShortcut(s.message('مسح تحذيرات فلان'), ['فلان']);
+      assert.equal(s.sent.length, before, 'no answer (not even the usage) without the prefix');
+      await handleClearWarningsShortcut(s.message(`${PREFIX}مسح تحذيرات فلان`), ['فلان'], { prefixed: true });
       assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND);
-      assert.equal(cleared.length, 1);
+      await handleClearWarningsShortcut(s.message('مسح تحذيرات <@222200000000000002>'), ['<@222200000000000002>']);
+      assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND, 'a mention nobody in the server has');
+      assert.equal(cleared.length, 2);
     } finally {
       WarningService.clearWarnings = clearWarnings;
     }
@@ -587,7 +712,7 @@ describe('the other commands by name act directly on one member', () => {
 describe('trust and the danger list by name ask first', () => {
   beforeEach(() => { clearInvokers(); clearNameConfirmations(); });
 
-  test('`تراست محمد` / `انتراست محمد`: asked, then trusted / untrusted; a name nobody has is Member Not Found', async () => {
+  test('`تراست محمد` / `انتراست محمد`: asked, then trusted / untrusted; a name nobody has is not answered', async () => {
     const s = setup({ staffId: TRUST_MANAGER });
     const mohamed = s.add({ username: 'mo', nickname: 'محمد' });
     const trusted = async () => (await s.client.db.get(getGuildConfigKey(s.guild.id), {})).antiNukeTrustedUsers || [];
@@ -598,8 +723,11 @@ describe('trust and the danger list by name ask first', () => {
     await commandFeedback.execute(s.message('انتراست محمد'), s.client);
     await s.press(s.buttonsOf(s.prompts().at(-1))[0].id);
     assert.equal((await trusted()).includes(mohamed.id), false);
+    const before = s.sent.length;
     await commandFeedback.execute(s.message('تراست فلان'), s.client);
-    assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND);
+    assert.equal(s.sent.length, before, 'chat: no answer, not even the usage');
+    await commandFeedback.execute(s.message('تراست <@222200000000000003>'), s.client);
+    assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND, 'a mention nobody in the server has');
   });
 
   test('trust by name from someone who may not give trust: the old answer, no question', async () => {
@@ -626,7 +754,10 @@ describe('trust and the danger list by name ask first', () => {
     assert.equal(await isOnDangerList(s.client, s.guild.id, ali.id), false, 'trust lost before the press');
 
     s.store.set(getGuildConfigKey(s.guild.id), { prefix: PREFIX, antiNukeTrustedUsers: [staffId] });
-    assert.equal(await handleDangerCommand(s.message('خطر فلان'), ['فلان']), true);
+    const before = s.sent.length;
+    assert.equal(await handleDangerCommand(s.message('خطر جدا'), ['جدا']), false, 'chat: the message goes on');
+    assert.equal(s.sent.length, before, 'and nothing is answered');
+    assert.equal(await handleDangerCommand(s.message(`${PREFIX}خطر فلان`), ['فلان'], { prefixed: true }), true);
     assert.equal(contents(s).at(-1), MEMBER_NOT_FOUND);
     const stranger = setup();
     assert.equal(await handleDangerCommand(stranger.message('خطر محمد'), ['محمد']), false, 'not trusted: chat');

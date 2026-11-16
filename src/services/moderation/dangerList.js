@@ -21,7 +21,7 @@ import { staffAndDangerousRoles } from './rejoinRestore.js';
 import { assertCanActOn, lookupMember } from './memberHierarchy.js';
 import { forgetInvoker, withInvoker } from './commandInvoker.js';
 import { resolveMemberByName } from '../../utils/memberNameResolver.js';
-import { askNameConfirmation, pressMessage, replyNotFound, replyRefusal } from './nameConfirmation.js';
+import { askNameConfirmation, candidatesOf, handleUnresolvedName, pressMessage, replyRefusal } from './nameConfirmation.js';
 import { logger } from '../../utils/logger.js';
 
 export const DANGER_NOTICE_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
@@ -211,7 +211,7 @@ async function targetFrom(message, word) {
  * `خطر …` typed in our server. Returns true when the message was this command (it is then handled);
  * false lets it go on (other servers, or a normal sentence starting with the word).
  */
-export async function handleDangerCommand(message, args = []) {
+export async function handleDangerCommand(message, args = [], { prefixed = false } = {}) {
   const guild = message.guild;
   if (!guild || !isHomeGuild(guild.id)) return false;
   const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
@@ -223,7 +223,8 @@ export async function handleDangerCommand(message, args = []) {
   const targetId = await targetFrom(message, targetWord);
 
   if (!targetId) {
-    if (await dangerByName(message, removing ? args.slice(1) : args, removing)) return true;
+    const named = await dangerByName(message, removing ? args.slice(1) : args, { removing, prefixed });
+    if (named) return named === true;
     if (args.length && !(removing && args.length === 1)) return false;
     if (removing) return reply(message, '⚠️ اكتب `خطر شيل @عضو`.');
     const list = await getDangerList(guild.client, guild.id);
@@ -237,17 +238,16 @@ export async function handleDangerCommand(message, args = []) {
  * `خطر محمد` / `خطر شيل محمد` (our server): the member by name (memberNameResolver.js), never at once. The
  * bot asks `هل تقصد @member؟` (or lists the members with the name, a button each); a press runs
  * applyDangerCommand as the presser, who must still be trusted and above the member then (nameConfirmation.js).
- * A name nobody has is `❌ Member Not Found`. A reply keeps its old meaning (its words are not a name).
- * Returns false when the words name nobody at all.
+ * A name nobody has is chat without the prefix (`خطر جدا`: 'chat', nothing answered or done) and
+ * `❌ Member Not Found` with it (owner's rule). A reply keeps its old meaning (its words are not a name).
+ * Resolves to true (handled), 'chat' (an ordinary sentence: the message goes on) or false (no name words).
  */
-async function dangerByName(message, words, removing) {
+async function dangerByName(message, words, { removing, prefixed = false }) {
   if (!words.length || message.reference?.messageId) return false;
   const found = await resolveMemberByName(message.guild, words.join(' '));
-  if (found.status === 'none') {
-    if (found.reason !== 'not_found') return false;
-    await replyNotFound(message);
-    return true;
-  }
+  const unresolved = await handleUnresolvedName(message, found, DANGER_COMMAND_WORD, prefixed);
+  if (unresolved) return unresolved === 'answered' ? true : 'chat';
+  if (found.status === 'none') return false;
   // One member: a member you may not act on (an owner, your role or higher) is refused before asking.
   if (found.status === 'one') {
     const executor = message.member || (await lookupMember(message.guild, message.author.id)).member;
@@ -255,7 +255,8 @@ async function dangerByName(message, words, removing) {
     if (!allowed.ok) return replyRefusal(message, allowed.message);
   }
   await askNameConfirmation(message, {
-    candidates: found.status === 'one' ? [found] : found.candidates,
+    candidates: candidatesOf(found),
+    truncated: found.truncated,
     run: async ({ candidate, member, user }) => {
       // The presser must still be trusted now; someone who is not any more gets no answer (as when typing it).
       const config = await getGuildConfig(message.guild.client, message.guild.id).catch(() => null);

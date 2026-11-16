@@ -15,9 +15,9 @@ import {
   assertCanActOn, hierarchyRuleApplies, lookupMember, HIERARCHY_REFUSAL, LOOKUP_FAILED_MESSAGE,
 } from '../services/moderation/memberHierarchy.js';
 import { withInvoker } from '../services/moderation/commandInvoker.js';
-import { resolveMemberByName, remainingText, nameWordsOf } from './memberNameResolver.js';
+import { resolveMemberByName, remainingText, nameWordsOf, isCertainMatch } from './memberNameResolver.js';
 import {
-  answersNotFound, nameTargetsEnabled, replyCandidates, replyNotFound,
+  askNameConfirmation, candidatesOf, handleUnresolvedName, nameTargetsEnabled, pressMessage, replyCandidates, replyNotFound,
 } from '../services/moderation/nameConfirmation.js';
 
 const COMMANDS = new Set([
@@ -267,32 +267,53 @@ const ARABIC_ADD_ROLE_COMMANDS = new Set(['ر', 'رول', 'ان', 'رتبة']);
 const ARABIC_REMOVE_ROLE_COMMANDS = new Set(['ب', 'شيل', 'ازالةرتبة']);
 
 /**
- * Our server: the member a direct (non-punishing) shortcut writes by name (memberNameResolver.js). Resolves to
- * `{ member, usedWords }` for one member; `{ handled: true }` when it was answered here (several members are
- * listed, nothing is done; `❌ Member Not Found` for a full command word or the prefix); null when the text
- * names nobody, or the author lacks `permission` (no answer and no lookup at all), so the old behaviour goes on.
+ * `❌ Member Not Found` for a written mention or ID nobody in the server has: in our server it deletes itself
+ * after 8 seconds (nameConfirmation.js); other servers keep their old answer.
  */
-async function directTargetByName(message, text, { command, prefixed = false, permission }) {
-  if (!nameTargetsEnabled(message.guild) || !hasPermission(message.member, permission)) return null;
-  const found = await resolveMemberByName(message.guild, text);
-  if (found.status === 'one') return found;
-  if (found.status === 'many') {
-    await replyCandidates(message, found.candidates);
-    return { handled: true };
-  }
-  if (found.reason === 'not_found' && answersNotFound(command, prefixed)) {
-    await replyNotFound(message);
-    return { handled: true };
-  }
-  return null;
+function replyMemberNotFound(message) {
+  return nameTargetsEnabled(message.guild) ? replyNotFound(message).then(() => true) : reply(message, '❌ Member Not Found');
 }
 
 /**
- * `ر محمد Helpers` (our server): the member by name, the rest is the role. Without the prefix the words are
- * everyday chat too, so a name only counts when the rest is a real role and nobody found is not answered.
- * Resolves like directTargetByName, with `roleQuery` (the rest) on a found member.
+ * What a direct shortcut does with a name the resolver matched: a certain match (one member, full name, a
+ * search that was not cut: isCertainMatch) resolves to that candidate and the command acts at once; several
+ * full-name matches are listed and nothing is done; a prefix match or a cut search asks ✅ / ❌ first and
+ * `run({ candidate, member, user })` acts on the press as the presser (nameConfirmation.js). `accept` drops
+ * candidates the command can't use (null when none is left); otherwise resolves to `{ handled: true }`.
  */
-async function roleTargetByName(message, { command, body, prefixed }) {
+async function actOrAsk(message, found, { accept = () => true, run }) {
+  const candidates = candidatesOf(found).filter(accept);
+  if (!candidates.length) return null;
+  if (isCertainMatch(found)) return candidates[0];
+  if (found.exact && !found.truncated && candidates.length > 1) {
+    await replyCandidates(message, candidates);
+    return { handled: true };
+  }
+  await askNameConfirmation(message, { candidates, truncated: found.truncated, run });
+  return { handled: true };
+}
+
+/**
+ * Our server: the member a direct (non-punishing) shortcut writes by name (memberNameResolver.js), for a member
+ * with `permission` only (anyone else: null, no answer and no lookup at all). Resolves like actOrAsk; a name
+ * nobody has stops the command (`{ handled: true }`), answered only with the prefix (handleUnresolvedName);
+ * null when the words are no name at all, so the old behaviour goes on.
+ */
+async function directTargetByName(message, text, { command, prefixed = false, permission, run }) {
+  if (!nameTargetsEnabled(message.guild) || !hasPermission(message.member, permission)) return null;
+  const found = await resolveMemberByName(message.guild, text);
+  if (await handleUnresolvedName(message, found, command, prefixed)) return { handled: true };
+  if (found.status === 'none') return null;
+  return actOrAsk(message, found, { run });
+}
+
+/**
+ * `ر محمد Helpers` (our server): the member by name, the rest is the role. Giving a role grants rights, so
+ * only a full name acts at once; a prefix match asks first. Without the prefix the words are everyday chat too:
+ * a name only counts when the rest is a real role, and a name nobody has is not answered (null: chat).
+ * Resolves like actOrAsk, with `roleQuery` (the rest) on the candidate.
+ */
+async function roleTargetByName(message, { command, body, prefixed, add }) {
   if (!nameTargetsEnabled(message.guild) || !hasPermission(message.member, PermissionFlagsBits.ManageRoles)) return null;
   // Staff chat (`ان شاء الله`) is not even looked up: without the prefix some ending of the words must be a role.
   if (!prefixed) {
@@ -300,61 +321,25 @@ async function roleTargetByName(message, { command, body, prefixed }) {
     if (!nameWords.some((_, index) => roleFor(message.guild, remainingText(body, index + 1)))) return null;
   }
   const found = await resolveMemberByName(message.guild, body, { minTailWords: 1 });
-  if (found.status === 'none') {
-    if (found.reason === 'not_found' && answersNotFound(command, prefixed)) {
-      await replyNotFound(message);
-      return { handled: true };
-    }
-    return null;
-  }
+  if ((await handleUnresolvedName(message, found, command, prefixed)) === 'answered') return { handled: true };
+  if (found.status === 'none') return null;
   const withRole = (candidate) => ({ ...candidate, roleQuery: remainingText(body, candidate.usedWords) });
-  const namesRole = (candidate) => prefixed || Boolean(roleFor(message.guild, candidate.roleQuery));
-  if (found.status === 'many') {
-    const candidates = found.candidates.map(withRole);
-    if (!candidates.some(namesRole)) return null;
-    await replyCandidates(message, candidates);
-    return { handled: true };
-  }
-  const one = withRole(found);
-  return namesRole(one) ? one : null;
+  const named = found.status === 'one' ? withRole(found) : { ...found, candidates: found.candidates.map(withRole) };
+  return actOrAsk(message, named, {
+    accept: (candidate) => prefixed || Boolean(roleFor(message.guild, candidate.roleQuery)),
+    run: ({ candidate, member, user }) => applyRoleShortcut(pressMessage(message, member, user), {
+      command, targetId: candidate.member.id, roleQuery: candidate.roleQuery, add, explicit: true,
+    }),
+  });
 }
 
 /**
- * Arabic role shortcuts (`ر @member role` / `ب @member role`), with or without the prefix. The role is a name,
- * a role mention or a role ID (`ر @member 1234…`); the member is a mention, an ID, or the author of the
- * message replied to. Only Arabic names are handled here so English words such as `roll` keep their normal commands.
- *
- * These words are ordinary chat too (`ب`, `شيل ده`, `ان شاء الله`), so (owner's request) the shortcut stays out
- * of the way unless the message really is one: without a member, or replying with no role found, it returns
- * false and the message goes on as chat; a member without Manage Roles gets no answer at all.
- *
- * Our server: the member may also be written by name (`ر محمد Helpers`, memberNameResolver.js), after a
- * mention, an ID and a reply. Without the prefix a name only counts when the rest is a real role (`ر دي حلوة`
- * stays chat) and a name nobody has is not answered; with the prefix it is `❌ Member Not Found`.
+ * Gives (`add`) or takes the role `roleQuery` to or from `targetId`, for a member with Manage Roles (checked
+ * here again for a confirmed name, with the presser's rights as they are now). `explicit`: the member was
+ * written (wrong usage and a missing member are answered); otherwise a role nobody has is chat (false).
  */
-export async function handleArabicRoleShortcut(message, prefixes = []) {
-  const { prefixed, body: content } = splitPrefix(message.content, prefixes);
-  const parts = content.split(/\s+/u).filter(Boolean);
-  const command = parts[0]?.toLowerCase();
-  const add = ARABIC_ADD_ROLE_COMMANDS.has(command);
-  if (!add && !ARABIC_REMOVE_ROLE_COMMANDS.has(command)) return false;
-
-  const body = parts.slice(1).join(' ');
-  const { targetId: writtenTargetId, roleQuery: writtenRoleQuery } = parseMemberAndRole(message.guild, body);
-  let targetId = writtenTargetId || await getReplyTargetId(message);
-  let roleQuery = writtenRoleQuery;
-  let named = null;
-  if (!targetId) {
-    named = await roleTargetByName(message, { command, body, prefixed });
-    if (!named) return false;
-    if (named.handled) return true;
-    targetId = named.member.id;
-    roleQuery = named.roleQuery;
-  }
+async function applyRoleShortcut(message, { command, targetId, roleQuery, add, explicit }) {
   if (!hasPermission(message.member, PermissionFlagsBits.ManageRoles)) return false;
-  // A member written in the message makes it a command (wrong usage is answered); a bare reply is chat unless it names a role.
-  // A member written by name is answered with the prefix; without it the role was already found.
-  const explicit = Boolean(writtenTargetId) || Boolean(named && prefixed);
   if (!roleQuery) {
     if (!explicit) return false;
     await reply(message, `⚠️ ${command} @user role`);
@@ -367,7 +352,7 @@ export async function handleArabicRoleShortcut(message, prefixes = []) {
   const lookup = await lookupMember(message.guild, targetId);
   const targetMember = lookup.member;
   if (!targetMember) {
-    if (explicit) await reply(message, lookup.absent ? '❌ Member Not Found' : lookupFailedText(message));
+    if (explicit) await (lookup.absent ? replyMemberNotFound(message) : reply(message, lookupFailedText(message)));
     return explicit;
   }
   try {
@@ -379,29 +364,77 @@ export async function handleArabicRoleShortcut(message, prefixes = []) {
 }
 
 /**
+ * Arabic role shortcuts (`ر @member role` / `ب @member role`), with or without the prefix. The role is a name,
+ * a role mention or a role ID (`ر @member 1234…`); the member is a mention, an ID, or the author of the
+ * message replied to. Only Arabic names are handled here so English words such as `roll` keep their normal commands.
+ *
+ * These words are ordinary chat too (`ب`, `شيل ده`, `ان شاء الله`), so (owner's request) the shortcut stays out
+ * of the way unless the message really is one: without a member, or replying with no role found, it returns
+ * false and the message goes on as chat; a member without Manage Roles gets no answer at all.
+ *
+ * Our server: the member may also be written by name (`ر محمد Helpers`, memberNameResolver.js), after a
+ * mention, an ID and a reply: a full name acts at once, a prefix asks ✅ / ❌ first. Without the prefix a name
+ * only counts when the rest is a real role (`ر دي حلوة` stays chat) and a name nobody has is not answered; with
+ * the prefix it is `❌ Member Not Found`.
+ */
+export async function handleArabicRoleShortcut(message, prefixes = []) {
+  const { prefixed, body: content } = splitPrefix(message.content, prefixes);
+  const parts = content.split(/\s+/u).filter(Boolean);
+  const command = parts[0]?.toLowerCase();
+  const add = ARABIC_ADD_ROLE_COMMANDS.has(command);
+  if (!add && !ARABIC_REMOVE_ROLE_COMMANDS.has(command)) return false;
+
+  const body = parts.slice(1).join(' ');
+  const { targetId: writtenTargetId, roleQuery: writtenRoleQuery } = parseMemberAndRole(message.guild, body);
+  let targetId = writtenTargetId || await getReplyTargetId(message);
+  let roleQuery = writtenRoleQuery;
+  let byName = false;
+  if (!targetId) {
+    const named = await roleTargetByName(message, { command, body, prefixed, add });
+    if (!named) return false;
+    if (named.handled) return true;
+    targetId = named.member.id;
+    roleQuery = named.roleQuery;
+    byName = true;
+  }
+  // A member written in the message makes it a command (wrong usage is answered); a bare reply is chat unless it names a role.
+  // A member written by name is answered with the prefix; without it the role was already found.
+  const explicit = Boolean(writtenTargetId) || (byName && prefixed);
+  return applyRoleShortcut(message, { command, targetId, roleQuery, add, explicit });
+}
+
+/**
  * `سحب @member` / `pull @member` (or as a reply) typed in a channel: pulls the member to the staff member's voice room.
  * `سحب` is also an ordinary Arabic word, so without a mentioned, id'd or replied-to member it is left alone (false).
- * Our server: the member may be written by name (`سحب محمد`); a name nobody has gets `❌ Member Not Found`
- * (staff with Move Members only), several members with it are listed and nobody is pulled.
+ * Our server: the member may be written by name (`سحب محمد`): a full name pulls at once, a prefix asks ✅ / ❌
+ * first, several members with the name are listed and nobody is pulled. A name nobody has gets
+ * `❌ Member Not Found` with the prefix only (staff with Move Members only); so does a mention or ID nobody has.
  */
-export async function handlePullShortcut(message, args = []) {
+export async function handlePullShortcut(message, args = [], { prefixed = false } = {}) {
   const body = args.join(' ');
   const mention = body.match(/<@!?(\d+)>/u);
   const id = body.match(/(?:^|\s)(\d{17,20})(?:\s|$)/u);
   const targetId = mention?.[1] || id?.[1] || await getReplyTargetId(message);
   if (!targetId) {
-    const named = await directTargetByName(message, body, { command: 'سحب', permission: PermissionFlagsBits.MoveMembers });
+    const named = await directTargetByName(message, body, {
+      command: 'سحب',
+      prefixed,
+      permission: PermissionFlagsBits.MoveMembers,
+      run: ({ candidate, member, user }) => pullMember(pressMessage(message, member, user), candidate.member.id),
+    });
     if (!named) return false;
-    if (!named.handled) {
-      try {
-        await pullToVoice(message, named.member);
-      } catch (error) {
-        await reply(message, errorText(error));
-      }
-    }
+    if (!named.handled) await pullMember(message, named.member.id);
     return true;
   }
+  return pullMember(message, targetId);
+}
+
+/** Pulls `targetId` (pullToVoice checks the permission, the rooms and the role hierarchy). */
+async function pullMember(message, targetId) {
   const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
+  if (!targetMember && nameTargetsEnabled(message.guild) && hasPermission(message.member, PermissionFlagsBits.MoveMembers)) {
+    return replyMemberNotFound(message);
+  }
   try {
     await pullToVoice(message, targetMember);
   } catch (error) {
@@ -410,22 +443,36 @@ export async function handlePullShortcut(message, args = []) {
   return true;
 }
 
-/** `مسح تحذيرات @member` (or as a reply, or by name in our server) — clears all of a member's warnings. */
-export async function handleClearWarningsShortcut(message, args) {
+/**
+ * `مسح تحذيرات @member` (or as a reply, or by name in our server: a full name acts at once, a prefix asks
+ * ✅ / ❌ first) — clears all of a member's warnings.
+ */
+export async function handleClearWarningsShortcut(message, args, { prefixed = false } = {}) {
   if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
   const body = args.join(' ');
   const mention = body.match(/<@!?(\d+)>/u);
   const id = body.match(/(?:^|\s)(\d{17,20})(?:\s|$)/u);
   let targetId = mention?.[1] || id?.[1] || await getReplyTargetId(message);
   if (!targetId) {
-    const named = await directTargetByName(message, body, { command: 'مسح تحذيرات', permission: PermissionFlagsBits.ModerateMembers });
+    const named = await directTargetByName(message, body, {
+      command: 'مسح تحذيرات',
+      prefixed,
+      permission: PermissionFlagsBits.ModerateMembers,
+      run: ({ candidate, member, user }) => clearWarningsOf(pressMessage(message, member, user), candidate.member.id),
+    });
     if (named?.handled) return true;
     targetId = named?.member?.id || null;
   }
   if (!targetId) return reply(message, '⚠️ مسح تحذيرات @user');
+  return clearWarningsOf(message, targetId);
+}
+
+/** Clears `targetId`'s warnings, for a member with Moderate Members above them (checked here, also at a press). */
+async function clearWarningsOf(message, targetId) {
+  if (!hasPermission(message.member, PermissionFlagsBits.ModerateMembers)) return reply(message, '🚫 No Permission');
   const lookup = await lookupMember(message.guild, targetId);
   const targetMember = lookup.member;
-  if (!targetMember) return reply(message, lookup.absent ? '❌ Member Not Found' : lookupFailedText(message));
+  if (!targetMember) return lookup.absent ? replyMemberNotFound(message) : reply(message, lookupFailedText(message));
   try {
     await ModerationService.assertModerationHierarchy(message.member, targetMember, 'warn');
     const result = await WarningService.clearWarnings(message.guild.id, targetId);

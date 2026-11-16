@@ -43,7 +43,8 @@ import { getCommandDefaultPermissions, memberMeetsCommandPermissions } from '../
 import { assertCanActOn } from '../services/moderation/memberHierarchy.js';
 import { resolveMemberByName, remainingText } from '../utils/memberNameResolver.js';
 import {
-  askNameConfirmation, FULL_NAME_COMMAND_WORDS, nameTargetsEnabled, pressMessage, replyCandidates, replyNotFound, replyRefusal,
+  askNameConfirmation, candidatesOf, FULL_NAME_COMMAND_WORDS, handleUnresolvedName, nameTargetsEnabled, pressMessage,
+  replyCandidates, replyRefusal,
 } from '../services/moderation/nameConfirmation.js';
 
 const AFK_COMMAND = /^\s*[^\p{L}\p{N}\s]{0,3}(?:afk|افك|أفك)(?:\s|$)/iu;
@@ -178,13 +179,13 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
       await handlePurgeMessage(message, args);
       return;
     }
-    if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args)) return;
-    if ((typedCommand === 'سحب' || typedCommand === 'pull') && await handlePullShortcut(message, args)) return;
+    if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args, { prefixed: parsed.prefixed })) return;
+    if ((typedCommand === 'سحب' || typedCommand === 'pull') && await handlePullShortcut(message, args, { prefixed: parsed.prefixed })) return;
     // `.gif` / `جيف` (everyone): a picture becomes a GIF. Needs the prefix or a `.`/`!` in front (`.gif` works whatever
     // PREFIX is), so the plain word in a chat is left alone.
     if (isGifCommand(parsed) && await handleGifCommand(message, args)) return;
     if (typedCommand === 'مسح' && args[0] === 'تحذيرات') {
-      await handleClearWarningsShortcut(message, args.slice(1));
+      await handleClearWarningsShortcut(message, args.slice(1), { prefixed: parsed.prefixed });
       return;
     }
     const aliased = applyWordAliases(typedCommand, args, parsed.prefixed);
@@ -245,8 +246,8 @@ const wordsOfText = (text) => (text ? text.split(' ') : []);
  * no mention, ID or reply names one. Only for a member who may run the command (anyone else: no answer and no
  * lookup), and without the prefix only for the full command words (FULL_NAME_COMMAND_WORDS). Resolves to
  * `{ args }` for the command to go on with (the member's ID first, the name's words taken out like a mention),
- * or `{ handled: true }` when it was answered here: asked to confirm, several members listed, a refusal, or
- * `❌ Member Not Found`.
+ * or `{ handled: true }` when it stops here: asked to confirm, several members listed, a refusal, or a name
+ * nobody has (`❌ Member Not Found` with the prefix, nothing without it).
  */
 async function nameTargetForCommand(message, client, context) {
   const { command, resolvedCommandName, typedCommand, args, prefixed, guildConfig } = context;
@@ -261,15 +262,13 @@ async function nameTargetForCommand(message, client, context) {
 
   const text = args.join(' ');
   const found = await resolveMemberByName(message.guild, text);
-  if (found.status === 'none') {
-    if (found.reason !== 'not_found') return { args };
-    await replyNotFound(message);
-    return { handled: true };
-  }
+  // A name nobody has (or a failed search): answered with the prefix only (`بان عليه التعب` is chat).
+  if (await handleUnresolvedName(message, found, typedCommand, prefixed)) return { handled: true };
+  if (found.status === 'none') return { args };
   const argsFor = (candidate) => [candidate.member.id, ...wordsOfText(remainingText(text, candidate.usedWords))];
   if (!rule.confirm) {
     if (found.status === 'many') {
-      await replyCandidates(message, found.candidates);
+      await replyCandidates(message, found.candidates, { truncated: found.truncated });
       return { handled: true };
     }
     return { args: argsFor(found) };
@@ -284,7 +283,8 @@ async function nameTargetForCommand(message, client, context) {
     }
   }
   await askNameConfirmation(message, {
-    candidates: found.status === 'one' ? [found] : found.candidates,
+    candidates: candidatesOf(found),
+    truncated: found.truncated,
     // A press runs the same command with the same words through the whole normal path, as the presser now.
     run: async ({ candidate, member, user }) => {
       const pressed = pressMessage(message, member, user);

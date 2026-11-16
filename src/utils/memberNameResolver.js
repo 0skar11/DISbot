@@ -12,20 +12,29 @@
 // at least 3 characters. Two members with the same name are `many`: the caller never guesses. Bots match but
 // are flagged (`bot: true`). A duration (`10m`, `2h`, `1d`), a number, a mention or an ID is never a name.
 //
+// Fail-closed: when the cache is incomplete and Discord's search fails or times out, nobody is found
+// (`lookup_failed`), even if the cache knows one member with the name. When the search is cut at its limit
+// (10 results), a prefix match is `many` (others may share the start) and an exact one is `truncated`.
+//
 // resolveMemberByName(guild, text, options) resolves to one of:
-//   { status: 'one', member, usedWords, bot }      exactly one member; `usedWords` words of `text` named them
-//   { status: 'many', candidates: [{ member, usedWords, bot }] }
+//   { status: 'one', member, usedWords, bot, exact, truncated }   exactly one member; `usedWords` words named them
+//   { status: 'many', candidates: [{ member, usedWords, bot }], exact, truncated }
 //   { status: 'none', reason: 'no_name' }          the text starts with no word that could be a name
 //   { status: 'none', reason: 'not_found' }        name words, but nobody has that name
+//   { status: 'none', reason: 'lookup_failed' }    the server could not be searched (incomplete cache)
+// `exact`: the match is a full name (false: a prefix). A caller acts without asking only on
+// `isCertainMatch(result)`: one member, a full name, from a search that was not cut.
 
 export const NAME_SEARCH_TIMEOUT_MS = 2_500;
 export const NAME_SEARCH_LIMIT = 10;
 export const MIN_PREFIX_LENGTH = 3;
 
-const TASHKEEL = /[ؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۨ-ۭ]/gu;
-const TATWEEL = /ـ/gu;
-const INVISIBLE = /[­​-‏‪-‮⁠-⁤⁦-⁩﻿]/gu;
-const ARABIC_DIGITS = /[٠-٩۰-۹]/gu;
+// Character classes built from code points, so the source holds no invisible or direction-changing characters.
+const charClass = (...ranges) => new RegExp(`[${ranges.map(([from, to = from]) => `${String.fromCodePoint(from)}-${String.fromCodePoint(to)}`).join('')}]`, 'gu');
+const TASHKEEL = charClass([0x0610, 0x061A], [0x064B, 0x065F], [0x0670], [0x06D6, 0x06DC], [0x06DF, 0x06E8], [0x06EA, 0x06ED]);
+const TATWEEL = charClass([0x0640]);
+const INVISIBLE = charClass([0x00AD], [0x200B, 0x200F], [0x202A, 0x202E], [0x2060, 0x2064], [0x2066, 0x2069], [0xFEFF]);
+const ARABIC_DIGITS = charClass([0x0660, 0x0669], [0x06F0, 0x06F9]);
 const LEADING_AT = /^\s*@+\s*/u;
 
 // Never part of a name: a duration (timeout's units, Latin or Arabic), a number, a user / role / channel
@@ -102,8 +111,12 @@ const valuesOf = (collection) => {
   return Array.isArray(collection) ? collection : [];
 };
 
-/** The members whose names `queries` (longest first) match: the exact tier, else the prefix tier. */
-function matchMembers(members, queries, allowPrefix) {
+/**
+ * The members whose names `queries` (longest first) match: the exact tier, else the prefix tier. Results say
+ * which tier (`exact`) and whether Discord's search was cut at its limit (`truncated`): a prefix match from a
+ * cut search may miss other members with the same start, so it is `many` (the caller never guesses).
+ */
+function matchMembers(members, queries, allowPrefix, { truncated = false } = {}) {
   const exact = new Map();
   const prefix = new Map();
   for (const member of members) {
@@ -117,16 +130,21 @@ function matchMembers(members, queries, allowPrefix) {
       }
     }
   }
-  const tier = exact.size ? exact : prefix;
+  const isExact = exact.size > 0;
+  const tier = isExact ? exact : prefix;
   const found = [...tier.values()].map((entry) => ({ ...entry, bot: Boolean(entry.member.user?.bot) }));
-  if (found.length === 1) return { status: 'one', ...found[0] };
-  if (found.length > 1) return { status: 'many', candidates: found };
+  const flags = { exact: isExact, truncated };
+  if (found.length === 1 && (isExact || !truncated)) return { status: 'one', ...found[0], ...flags };
+  if (found.length) return { status: 'many', candidates: found, ...flags };
   return { status: 'none', reason: 'not_found' };
 }
 
-/** Discord's member search (prefix of username or nickname), or [] when it fails or takes longer than `timeoutMs`. */
+/**
+ * Discord's member search (start of username or nickname): `{ ok: true, members }`, or `{ ok: false }` when
+ * there is no search, it fails, or it takes longer than `timeoutMs`.
+ */
 async function searchMembers(guild, query, timeoutMs) {
-  if (typeof guild?.members?.search !== 'function' || !query) return [];
+  if (typeof guild?.members?.search !== 'function' || !query) return { ok: false };
   let timer = null;
   // Not unref'd: the answer is awaited, so the timer must be able to fire (it is cleared right after).
   const timedOut = new Promise((resolve) => {
@@ -137,16 +155,21 @@ async function searchMembers(guild, query, timeoutMs) {
       Promise.resolve().then(() => guild.members.search({ query, limit: NAME_SEARCH_LIMIT })).catch(() => null),
       timedOut,
     ]);
-    return valuesOf(found);
+    return found ? { ok: true, members: valuesOf(found) } : { ok: false };
   } finally {
     clearTimeout(timer);
   }
 }
 
+/** Whether a command may act on `result` without asking: one member, by a full name, from a search that was not cut. */
+export function isCertainMatch(result) {
+  return result?.status === 'one' && result.exact === true && !result.truncated;
+}
+
+/** Whether the cache holds fewer members than the server has (known from `guild.memberCount`). */
 function cacheIsIncomplete(guild, cache) {
-  if (!cache) return true;
   const total = Number(guild?.memberCount);
-  return Number.isFinite(total) && total > (cache.size ?? valuesOf(cache).length);
+  return Number.isFinite(total) && total > (cache?.size ?? valuesOf(cache).length);
 }
 
 /**
@@ -168,13 +191,15 @@ export async function resolveMemberByName(guild, text, {
   const cache = guild?.members?.cache;
   const cached = valuesOf(cache);
   const fromCache = matchMembers(cached, queries, allowPrefix);
-  if (fromCache.status !== 'none' && !cacheIsIncomplete(guild, cache)) return fromCache;
+  const incomplete = cacheIsIncomplete(guild, cache);
+  if (fromCache.status !== 'none' && !incomplete) return fromCache;
 
   // Discord matches the start of usernames and nicknames: the first word finds every longer name too.
   const searchQuery = words[0].replace(/^@+/u, '');
   const searched = await searchMembers(guild, searchQuery, timeoutMs);
-  if (!searched.length) return fromCache;
+  // Fail-closed: with part of the server unknown, what the cache found is never taken as the only match.
+  if (!searched.ok) return incomplete ? { status: 'none', reason: 'lookup_failed' } : fromCache;
   const merged = new Map(cached.filter((member) => member?.id).map((member) => [member.id, member]));
-  for (const member of searched) if (member?.id) merged.set(member.id, member);
-  return matchMembers([...merged.values()], queries, allowPrefix);
+  for (const member of searched.members) if (member?.id) merged.set(member.id, member);
+  return matchMembers([...merged.values()], queries, allowPrefix, { truncated: searched.members.length >= NAME_SEARCH_LIMIT });
 }

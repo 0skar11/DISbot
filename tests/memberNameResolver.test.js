@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  resolveMemberByName, normalizeName, isNameWord, nameWordsOf, remainingText, memberNames, MIN_PREFIX_LENGTH,
+  resolveMemberByName, normalizeName, isNameWord, nameWordsOf, remainingText, memberNames, isCertainMatch, MIN_PREFIX_LENGTH,
 } from '../src/utils/memberNameResolver.js';
 
 let seq = 0;
@@ -44,7 +44,7 @@ describe('normalizeName', () => {
     assert.equal(normalizeName('  محمد    علي  '), 'محمد علي');
     assert.equal(normalizeName('@Sara'), 'sara');
     assert.equal(normalizeName('𝐒𝐚𝐫𝐚'), 'sara', 'fancy letters (NFKC)');
-    assert.equal(normalizeName('sa​ra'), 'sara', 'invisible marks');
+    assert.equal(normalizeName(`sa${String.fromCodePoint(0x200B)}ra${String.fromCodePoint(0x202E)}`), 'sara', 'invisible marks');
   });
 });
 
@@ -167,15 +167,50 @@ describe('resolveMemberByName', () => {
     assert.equal(guild.searches.length, 1);
   });
 
-  test('a slow or failing search falls back to what the cache knows', async () => {
+  test('incomplete cache + a slow, failing or missing search: fail-closed (lookup_failed), even if the cache knows one', async () => {
+    const lookupFailed = { status: 'none', reason: 'lookup_failed' };
     const slow = guildOf([sara], { memberCount: 500, search: () => new Promise(() => {}) });
     const started = Date.now();
-    assert.equal((await resolveMemberByName(slow, 'sara', { timeoutMs: 30 })).member, sara);
+    assert.deepEqual(await resolveMemberByName(slow, 'sara', { timeoutMs: 30 }), lookupFailed);
     assert.ok(Date.now() - started < 1_000, 'the timeout is short');
-    const nobody = guildOf([], { search: () => new Promise(() => {}) });
-    assert.equal((await resolveMemberByName(nobody, 'karim', { timeoutMs: 30 })).status, 'none');
-    const failing = guildOf([], { search: () => { throw new Error('500'); } });
-    assert.equal((await resolveMemberByName(failing, 'karim')).status, 'none');
+    const failing = guildOf([sara], { memberCount: 500, search: () => { throw new Error('500'); } });
+    assert.deepEqual(await resolveMemberByName(failing, 'sara'), lookupFailed);
+    const rejecting = guildOf([], { memberCount: 500, search: () => Promise.reject(new Error('429')) });
+    assert.deepEqual(await resolveMemberByName(rejecting, 'karim'), lookupFailed);
+    const noSearch = guildOf([sara], { memberCount: 500 });
+    assert.deepEqual(await resolveMemberByName(noSearch, 'sara'), lookupFailed);
+    // A complete cache needs no search: a failing one changes nothing.
+    const complete = guildOf([sara], { memberCount: 1, search: () => { throw new Error('500'); } });
+    assert.equal((await resolveMemberByName(complete, 'sara')).member, sara);
+    const completeNobody = guildOf([sara], { memberCount: 1, search: () => { throw new Error('500'); } });
+    assert.equal((await resolveMemberByName(completeNobody, 'karim')).reason, 'not_found');
+  });
+
+  test('the result says how it matched: exact or prefix, and whether the search was cut; only exact + whole is certain', async () => {
+    const guild = guildOf([mohamed, sara]);
+    const exact = await resolveMemberByName(guild, 'sara');
+    assert.deepEqual([exact.exact, exact.truncated, isCertainMatch(exact)], [true, false, true]);
+    const prefix = await resolveMemberByName(guild, 'sar');
+    assert.deepEqual([prefix.status, prefix.exact, isCertainMatch(prefix)], ['one', false, false]);
+    assert.equal(isCertainMatch({ status: 'many', exact: true, truncated: false }), false);
+    assert.equal(isCertainMatch({ status: 'none', reason: 'not_found' }), false);
+  });
+
+  test('a search cut at its limit (10): a unique prefix match becomes many, an exact one is flagged truncated', async () => {
+    const karim = member({ username: 'karim' });
+    const others = Array.from({ length: 9 }, (_, i) => member({ username: `kar.${i}x` }));
+    const full = new Map([karim, ...others].map((m) => [m.id, m]));
+    const guild = guildOf([], { memberCount: 5_000, search: () => full });
+    const byPrefix = await resolveMemberByName(guild, 'kari');
+    assert.equal(byPrefix.status, 'many', 'more members may start like this beyond the 10 returned');
+    assert.equal(byPrefix.truncated, true);
+    assert.deepEqual(byPrefix.candidates.map((c) => c.member), [karim]);
+    const byName = await resolveMemberByName(guild, 'karim');
+    assert.deepEqual([byName.status, byName.member, byName.exact, byName.truncated, isCertainMatch(byName)], ['one', karim, true, true, false]);
+    // Fewer than 10 results: not cut, a unique prefix stays one.
+    const small = guildOf([], { memberCount: 5_000, search: () => new Map([[karim.id, karim]]) });
+    const whole = await resolveMemberByName(small, 'kari');
+    assert.deepEqual([whole.status, whole.truncated], ['one', false]);
   });
 
   test('memberNames lists every name once, normalised', () => {
