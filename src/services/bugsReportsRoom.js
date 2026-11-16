@@ -112,8 +112,8 @@ export function buildBugsReportsGuide() {
             'الروم ده للإدارة بس: لو البوت عمل حاجة غلط أو فيه حاجة مش شغالة، اكتبها هنا وهنتابعها.',
             'Staff only: if the bot did something wrong or something is broken, report it here.',
             '',
-            '🔢 كل رسالة تتكتب هنا بتبقى بلاغ برقم (🐞 بلاغ #رقم — مفتوح)، والبوت بيتابعه ولما يتحل بيقفله ويكتب هنا إنه اتحل.',
-            'Every message posted here becomes a numbered report: the bot tracks it and marks it closed here once it is fixed.',
+            '🔢 كل رسالة تتكتب هنا البوت بيحولها لبلاغ برقمه (🐞 بلاغ #1، #2، #3...) وبيمسح رسالتك الأصلية، والصور اللي بعتها بتتحط في البلاغ نفسه. البوت بيتابعه ولما يتحل بيقفله ويكتب هنا إنه اتحل.',
+            'Every message posted here is turned into numbered report #N and your original message is removed (your files are re-attached to the report). The bot tracks it and marks it closed here once it is fixed.',
             'الرد على بلاغ = كلام عادي، مش بلاغ جديد. Replies to a report are just chat.',
         ].join('\n'),
         fields: [

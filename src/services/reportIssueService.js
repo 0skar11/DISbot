@@ -93,9 +93,23 @@ async function trustedReportChannel(client, guildId, channelId, fromBugsRoom) {
   return String(channel.id) === String(REPORT_CHANNEL_ID) ? channel : null;
 }
 
+/** `[bugs #N]` at the start of an issue title: the #bugs-reports number the bot gave the report. */
+const BUGS_TITLE_NUMBER = /^\[bugs #(\d+)\]/u;
+const EMBED_TITLE_NUMBER = /بلاغ #(\d+)/u;
+
+/** The report's own number: from the report embed, else from the issue title, else the issue number. */
+export function bugReportNumber(issue, reportMessage) {
+  const embedTitle = reportMessage?.embeds?.[0]?.title ?? reportMessage?.embeds?.[0]?.toJSON?.()?.title;
+  return String(embedTitle || '').match(EMBED_TITLE_NUMBER)?.[1]
+    || String(issue?.title || '').match(BUGS_TITLE_NUMBER)?.[1]
+    || issue.number;
+}
+
 // Opens the issue for a report already posted in Discord. Returns the issue number, or null.
+// `reportNumber` (#bugs-reports only) titles the issue `[bugs #N] ...` so it can be found with `gh issue list --search`.
 export async function openReportIssue({
   reportMessage, reporter, reportedUser, content, sourceChannel, attachmentUrls = [], extraLabels = [], guildName, originalUrl,
+  reportNumber,
 }) {
   const api = github();
   if (!api) {
@@ -105,6 +119,7 @@ export async function openReportIssue({
 
   const summary = oneLine(content, 70) || 'بدون نص';
   const lines = [
+    reportNumber && `**رقم البلاغ:** #${reportNumber}`,
     `**المُبلِّغ:** ${reporter.tag} (\`${reporter.id}\`)`,
     reportedUser && `**المُبلَّغ عنه:** ${reportedUser.tag} (\`${reportedUser.id}\`)`,
     guildName && `**السيرفر:** ${guildName} (\`${reportMessage.guildId}\`)`,
@@ -124,7 +139,7 @@ export async function openReportIssue({
 
   try {
     const { data } = await api.post('/issues', {
-      title: `بلاغ من ${reporter.tag}: ${summary}`,
+      title: reportNumber ? `[bugs #${reportNumber}] ${reporter.tag}: ${summary}` : `بلاغ من ${reporter.tag}: ${summary}`,
       body: lines.join('\n'),
       labels: [REPORT_LABEL, ...extraLabels],
     });
@@ -139,9 +154,10 @@ export async function openReportIssue({
 // The report message may be gone (deleted by someone): the notice is then posted in the room on its own.
 async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved) {
   const date = new Date(issue.closed_at || Date.now()).toISOString().slice(0, 10);
+  const number = bugReportNumber(issue, reportMessage);
   const content = solved
-    ? `<@${reporterId}> ✅ البلاغ #${issue.number} اتقفل واتحل، متتحلش تاني.`
-    : `<@${reporterId}> 🔒 البلاغ #${issue.number} اتقفل من غير حل، متشتغلش عليه تاني.`;
+    ? `<@${reporterId}> ✅ البلاغ #${number} اتقفل واتحل، متتحلش تاني.`
+    : `<@${reporterId}> 🔒 البلاغ #${number} اتقفل من غير حل، متشتغلش عليه تاني.`;
   const payload = { content, allowedMentions: { users: [reporterId] } };
   if (!reportMessage) {
     await channel?.send?.(payload).catch(() => null);
@@ -154,10 +170,10 @@ async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, 
     embeds: [{
       ...data,
       color: solved ? SOLVED_COLOR : CLOSED_COLOR,
-      title: solved ? `✅ بلاغ #${issue.number} — اتقفل (اتحل)` : `🔒 بلاغ #${issue.number} — اتقفل`,
+      title: solved ? `✅ بلاغ #${number} — اتقفل (اتحل)` : `🔒 بلاغ #${number} — اتقفل`,
       footer: { ...(data.footer || {}), text: [data.footer?.text, closedLine].filter(Boolean).join(' • ') },
     }],
-  }).catch((error) => logger.error(`Failed to update bug report #${issue.number} in Discord:`, error));
+  }).catch((error) => logger.error(`Failed to update bug report #${number} (GitHub #${issue.number}) in Discord:`, error));
   await reportMessage.reply(payload).catch(() => channel?.send?.(payload).catch(() => null));
 }
 

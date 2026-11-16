@@ -2,9 +2,11 @@ import { test, describe, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import axios from 'axios';
 import { HOME_GUILD_ID, ZENITH_GUILD_ID } from '../src/config/homeGuild.js';
-import { updateGuildConfig } from '../src/services/config/guildConfig.js';
+import { getGuildConfig, updateGuildConfig } from '../src/services/config/guildConfig.js';
 import { BUGS_REPORTS_CHANNEL_NAME, buildBugsReportsGuide } from '../src/services/bugsReportsRoom.js';
-import { handleBugsReportsMessage, resetBugsReportsRateLimit, RATE_LIMIT } from '../src/services/bugsReportsInbox.js';
+import {
+  handleBugsReportsMessage, resetBugsReportsRateLimit, RATE_LIMIT, COUNTER_KEY, MAX_REUPLOAD_BYTES, nextBugReportNumber, pickReuploads,
+} from '../src/services/bugsReportsInbox.js';
 import { checkClosedReports } from '../src/services/reportIssueService.js';
 
 const BOT_ID = '100000000000000001';
@@ -41,7 +43,9 @@ function fakeMessageStore(channel) {
       id: snowflake(), channelId: channel.id, guildId: channel.guild.id, channel, guild: channel.guild,
       author, content: payload.content || '', embeds: payload.embeds || [], reference,
       url: `https://discord.com/channels/${channel.guild.id}/${channel.id}/x`,
-      replies: [], edits: [], deleted: false,
+      replies: [], edits: [], deleted: false, sent: payload,
+      // Files sent with the message come back as new attachments on the bot's own message.
+      attachments: new Map((payload.files || []).map((file, index) => [String(index), { url: `https://cdn.discordapp.com/re/${file.name}`, name: file.name }])),
     };
     message.edit = async (next) => { message.edits.push(next); message.embeds = next.embeds; return message; };
     message.reply = async (next) => {
@@ -58,14 +62,25 @@ function fakeMessageStore(channel) {
   return { make, messages };
 }
 
-async function setup(guildId = HOME_GUILD_ID) {
-  const store = new Map();
-  const db = { get: async (key, fallback) => (store.has(key) ? structuredClone(store.get(key)) : fallback), set: async (key, value) => { store.set(key, structuredClone(value)); return true; } };
+function fakeDb(store = new Map()) {
+  return {
+    store,
+    // A short pause on every read and write, so parallel reports really overlap.
+    get: async (key, fallback) => { await new Promise((resolve) => setImmediate(resolve)); return store.has(key) ? structuredClone(store.get(key)) : fallback; },
+    set: async (key, value) => { await new Promise((resolve) => setImmediate(resolve)); store.set(key, structuredClone(value)); return true; },
+  };
+}
+
+async function setup(guildId = HOME_GUILD_ID, { db = fakeDb() } = {}) {
   const channelsById = new Map();
   const client = { user: { id: BOT_ID }, db, channels: { fetch: async (id) => channelsById.get(id) || null } };
   const guild = { id: guildId, name: 'Test Server', client };
-  const room = { id: snowflake(), name: BUGS_REPORTS_CHANNEL_NAME, guild, posted: [], isTextBased: () => true, toString() { return `<#${this.id}>`; } };
-  room.send = async (payload) => store$.make(payload, { author: { id: BOT_ID, bot: true } });
+  const room = { id: snowflake(), name: BUGS_REPORTS_CHANNEL_NAME, guild, posted: [], sendFailures: 0, filesFail: false, isTextBased: () => true, toString() { return `<#${this.id}>`; } };
+  room.send = async (payload) => {
+    if (room.sendFailures > 0) { room.sendFailures -= 1; throw new Error('Missing Permissions'); }
+    if (room.filesFail && payload.files?.length) throw new Error('Request entity too large');
+    return store$.make(payload, { author: { id: BOT_ID, bot: true } });
+  };
   const store$ = fakeMessageStore(room);
   channelsById.set(room.id, room);
   await updateGuildConfig(client, guildId, { bugsReportsChannelId: room.id });
@@ -74,7 +89,10 @@ async function setup(guildId = HOME_GUILD_ID) {
     const author = { id: authorId, bot, tag: `user${authorId}`, displayAvatarURL: () => '', toString: () => `<@${authorId}>` };
     const message = store$.make({ content }, { author, reference });
     message.system = system;
-    message.attachments = new Map(attachments.map((url, index) => [String(index), { url, name: `file${index}.png` }]));
+    message.attachments = new Map(attachments.map((entry, index) => {
+      const file = typeof entry === 'string' ? { url: entry } : entry;
+      return [String(index), { name: `file${index}.png`, size: 1000, ...file }];
+    }));
     message.mentions = { repliedUser: repliedUser || null };
     message.createdTimestamp = Date.now();
     return message;
@@ -94,27 +112,108 @@ describe('#bugs-reports inbox', () => {
     delete process.env.GITHUB_TOKEN;
   });
 
-  test('a staff message becomes 🐞 بلاغ #N — مفتوح and an issue labelled بلاغ + bugs-reports with the server name', async () => {
+  test('a staff message becomes 🐞 بلاغ #1 — مفتوح (not a reply), files re-uploaded, original deleted, issue [bugs #1]', async () => {
     const calls = fakeGitHub();
     const { client, room, post } = await setup();
-    const original = post('أمر التايم مش شغال في روم الشات', { attachments: ['https://cdn.example/shot.png'] });
+    const original = post('أمر التايم مش شغال في روم الشات', { attachments: [{ url: 'https://cdn.example/shot.png', name: 'shot.png' }] });
     assert.equal(await handleBugsReportsMessage(original, client), true);
 
-    assert.equal(original.deleted, false, 'the original stays');
+    const [report] = reportsIn(room);
+    assert.ok(report, 'the report is posted in the room');
+    assert.equal(report.reference, undefined, 'not a reply to the original');
+    assert.equal(original.replies.length, 0);
+    assert.deepEqual(report.sent.allowedMentions, { parse: [] }, 'nobody is pinged');
+    assert.deepEqual(report.sent.files, [{ attachment: 'https://cdn.example/shot.png', name: 'shot.png' }]);
+    assert.equal(original.deleted, true, 'the original is removed once the report holds everything');
+
     assert.equal(calls.issues.length, 1);
     const [issue] = calls.issues;
+    assert.equal(issue.title, `[bugs #1] user${STAFF_ID}: أمر التايم مش شغال في روم الشات`);
     assert.deepEqual(issue.labels, ['بلاغ', 'bugs-reports']);
+    assert.match(issue.body, /\*\*رقم البلاغ:\*\* #1/u);
     assert.match(issue.body, /\*\*السيرفر:\*\* Test Server/u);
-    assert.match(issue.body, /https:\/\/cdn\.example\/shot\.png/u);
-    const [report] = original.replies;
-    assert.match(issue.body, new RegExp(`<!-- discord:${HOME_GUILD_ID}/${room.id}/${report.id}/${STAFF_ID} -->`, 'u'));
+    assert.match(issue.body, /https:\/\/cdn\.discordapp\.com\/re\/shot\.png/u, 'the re-uploaded file, not the dead link');
+    assert.match(issue.body, new RegExp(`<!-- discord:${HOME_GUILD_ID}/${room.id}/${report.id}/${STAFF_ID} -->$`, 'u'));
+    assert.doesNotMatch(issue.body, /الرسالة الأصلية/u, 'no link to a deleted message');
 
     const embed = report.embeds[0];
-    assert.equal(embed.title, '🐞 بلاغ #42 — مفتوح');
+    assert.equal(embed.title, '🐞 بلاغ #1 — مفتوح');
+    assert.equal(embed.footer.text, 'bugs-reports • GitHub #42');
     assert.match(embed.description, /أمر التايم مش شغال/u);
     assert.match(embed.description, new RegExp(`<@${STAFF_ID}>`, 'u'));
     assert.match(embed.description, /<t:\d+:F>/u);
-    assert.match(embed.description, /shot\.png/u);
+    assert.match(embed.description, /📎 shot\.png/u);
+  });
+
+  test('every report gets the next number of its guild, and the counter survives a restart', async () => {
+    fakeGitHub();
+    const db = fakeDb();
+    const first = await setup(HOME_GUILD_ID, { db });
+    for (const text of ['مشكلة أولى', 'مشكلة تانية']) await handleBugsReportsMessage(first.post(text), first.client);
+    assert.deepEqual(reportsIn(first.room).map((report) => report.embeds[0].title), ['🐞 بلاغ #1 — مفتوح', '🐞 بلاغ #2 — مفتوح']);
+
+    // A restart: a new client and a new room object, the same database.
+    resetBugsReportsRateLimit();
+    const second = await setup(HOME_GUILD_ID, { db });
+    await handleBugsReportsMessage(second.post('مشكلة بعد الريستارت'), second.client);
+    assert.equal(reportsIn(second.room)[0].embeds[0].title, '🐞 بلاغ #3 — مفتوح');
+    assert.equal((await getGuildConfig(second.client, HOME_GUILD_ID))[COUNTER_KEY], 3);
+
+    // Another guild counts on its own.
+    const zenith = await setup(ZENITH_GUILD_ID, { db });
+    await handleBugsReportsMessage(zenith.post('في زينيث'), zenith.client);
+    assert.equal(reportsIn(zenith.room)[0].embeds[0].title, '🐞 بلاغ #1 — مفتوح');
+  });
+
+  test('reports posted at the same moment never share a number', async () => {
+    const calls = fakeGitHub();
+    const { client, room, post } = await setup();
+    const messages = ['200000000000000011', '200000000000000012', '200000000000000013', '200000000000000014']
+      .map((authorId, index) => post(`مشكلة متوازية ${index}`, { authorId }));
+    await Promise.all(messages.map((message) => handleBugsReportsMessage(message, client)));
+    const numbers = reportsIn(room).map((report) => Number(report.embeds[0].title.match(/#(\d+)/u)[1])).sort();
+    assert.deepEqual(numbers, [1, 2, 3, 4]);
+    assert.deepEqual(calls.issues.map((issue) => issue.title.match(/^\[bugs #(\d+)\]/u)[1]).sort(), ['1', '2', '3', '4']);
+    const direct = await Promise.all([nextBugReportNumber(client, HOME_GUILD_ID), nextBugReportNumber(client, HOME_GUILD_ID)]);
+    assert.deepEqual(direct, [5, 6]);
+  });
+
+  test('when posting the report fails, the original is never deleted', async () => {
+    const calls = fakeGitHub();
+    const { client, room, post } = await setup();
+    room.sendFailures = 1;
+    const original = post('مشكلة والبوت مش قادر يكتب');
+    assert.equal(await handleBugsReportsMessage(original, client), true);
+    assert.equal(original.deleted, false);
+    assert.equal(reportsIn(room).length, 0);
+    assert.equal(calls.issues.length, 0);
+  });
+
+  test('when the files cannot be uploaded, the report is posted with links and the original stays', async () => {
+    fakeGitHub();
+    const { client, room, post } = await setup();
+    room.filesFail = true;
+    const original = post('صورة المشكلة', { attachments: [{ url: 'https://cdn.example/a.png', name: 'a.png' }] });
+    await handleBugsReportsMessage(original, client);
+    const [report] = reportsIn(room);
+    assert.equal(report.sent.files, undefined);
+    assert.match(report.embeds[0].description, /https:\/\/cdn\.example\/a\.png/u);
+    assert.equal(original.deleted, false);
+  });
+
+  test('at most 5 files and 20 MB are re-uploaded; a bigger one stays a link and the original is kept', async () => {
+    fakeGitHub();
+    const { client, room, post } = await setup();
+    const big = { url: 'https://cdn.example/video.mp4', name: 'video.mp4', size: MAX_REUPLOAD_BYTES };
+    const small = Array.from({ length: 6 }, (_, index) => ({ url: `https://cdn.example/s${index}.png`, name: `s${index}.png`, size: 10 }));
+    const original = post('ملفات كتير', { attachments: [small[0], big, ...small.slice(1)] });
+    await handleBugsReportsMessage(original, client);
+    const [report] = reportsIn(room);
+    assert.deepEqual(report.sent.files.map((file) => file.name), ['s0.png', 's1.png', 's2.png', 's3.png', 's4.png']);
+    assert.match(report.embeds[0].description, /https:\/\/cdn\.example\/video\.mp4/u);
+    assert.match(report.embeds[0].description, /https:\/\/cdn\.example\/s5\.png/u);
+    assert.equal(original.deleted, false, 'a file that is only a link would die with the original');
+    assert.deepEqual(pickReuploads([{ size: MAX_REUPLOAD_BYTES + 1 }, { size: 5 }]).uploads, [{ size: 5 }]);
   });
 
   test('works in Zenith too', async () => {
@@ -124,12 +223,27 @@ describe('#bugs-reports inbox', () => {
     assert.equal(calls.issues.length, 1);
   });
 
-  test('without GITHUB_TOKEN the embed is still posted with #؟', async () => {
+  test('without GITHUB_TOKEN the report is still numbered, with the warning footer', async () => {
     delete process.env.GITHUB_TOKEN;
-    const { client, post } = await setup();
+    const { client, room, post } = await setup();
     const original = post('مشكلة في اللوج');
     await handleBugsReportsMessage(original, client);
-    assert.equal(original.replies[0].embeds[0].title, '🐞 بلاغ #؟ — مفتوح');
+    const [report] = reportsIn(room);
+    assert.equal(report.embeds[0].title, '🐞 بلاغ #1 — مفتوح');
+    assert.equal(report.embeds[0].footer.text, 'bugs-reports • ⚠️ مش متسجل في GitHub');
+    assert.equal(original.deleted, true);
+  });
+
+  test('when GitHub refuses the issue, the report is still numbered, with the warning footer', async () => {
+    mock.method(axios, 'create', () => ({
+      post: async () => { throw Object.assign(new Error('Forbidden'), { response: { status: 403, data: { message: 'Resource not accessible' } } }); },
+      get: async () => ({ data: [] }),
+    }));
+    const { client, room, post } = await setup();
+    await handleBugsReportsMessage(post('مشكلة والتوكن بايظ'), client);
+    const [report] = reportsIn(room);
+    assert.equal(report.embeds[0].title, '🐞 بلاغ #1 — مفتوح');
+    assert.match(report.embeds[0].footer.text, /⚠️ مش متسجل في GitHub/u);
   });
 
   test('another channel named bugs-reports (not the saved one) is left alone', async () => {
@@ -203,12 +317,12 @@ describe('closing a report (checkClosedReports)', () => {
     body: `x\n<!-- discord:${guildId}/${channelId}/${messageId}/${reporterId} -->`,
   });
 
-  test('completed: the bugs-room embed turns green with the date and a permanent reply pings the reporter', async () => {
+  test('completed: the embed turns green with the report number (not the issue number) and a permanent reply', async () => {
     fakeGitHub();
     const { client, room, post } = await setup();
     const original = post('مشكلة في الأمر');
     await handleBugsReportsMessage(original, client);
-    const [report] = original.replies;
+    const [report] = reportsIn(room);
     mock.restoreAll();
 
     const calls = fakeGitHub({ closed: [closedIssue(42, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: report.id })] });
@@ -217,12 +331,12 @@ describe('closing a report (checkClosedReports)', () => {
     mock.timers.tick(60_000);
 
     const embed = report.embeds[0];
-    assert.equal(embed.title, '✅ بلاغ #42 — اتقفل (اتحل)');
+    assert.equal(embed.title, '✅ بلاغ #1 — اتقفل (اتحل)', 'report #1, GitHub issue #42');
     assert.equal(embed.color, 0x2ecc71);
-    assert.match(embed.footer.text, /اتحل في 2026-11-15/u);
+    assert.match(embed.footer.text, /GitHub #42 • ✅ اتحل في 2026-11-15/u);
     assert.match(embed.description, /مشكلة في الأمر/u, 'the report text is kept');
     const [notice] = report.replies;
-    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #42 اتقفل واتحل، متتحلش تاني.`);
+    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #1 اتقفل واتحل، متتحلش تاني.`);
     assert.equal(notice.deleted, false, 'never deleted in #bugs-reports');
     assert.deepEqual(calls.labels, [{ path: '/issues/42/labels', body: { labels: ['اتحلت'] } }]);
     assert.ok(calls.gets[0].options.params.since, 'the since window is used');
@@ -234,11 +348,11 @@ describe('closing a report (checkClosedReports)', () => {
     const { client, room, post } = await setup();
     const original = post('حاجة مش مهمة');
     await handleBugsReportsMessage(original, client);
-    const [report] = original.replies;
+    const [report] = reportsIn(room);
     mock.restoreAll();
     const calls = fakeGitHub({ closed: [closedIssue(42, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: report.id, reason: 'not_planned' })] });
     await checkClosedReports(client);
-    assert.equal(report.embeds[0].title, '🔒 بلاغ #42 — اتقفل');
+    assert.equal(report.embeds[0].title, '🔒 بلاغ #1 — اتقفل');
     assert.equal(report.embeds[0].color, 0x95a5a6);
     assert.equal(report.replies.length, 1);
     assert.equal(report.replies[0].deleted, false);
@@ -295,19 +409,22 @@ describe('closing a report (checkClosedReports)', () => {
 
   test('a deleted report message does not crash: the notice is posted in the room and the issue is labelled', async () => {
     const { client, room } = await setup();
-    const calls = fakeGitHub({ closed: [closedIssue(50, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: '799999999999999999' })] });
+    const gone = closedIssue(50, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: '799999999999999999' });
+    gone.title = `[bugs #7] user${STAFF_ID}: مشكلة`;
+    const calls = fakeGitHub({ closed: [gone] });
     await checkClosedReports(client);
-    const notice = room.posted.find((message) => /#50/u.test(message.content));
+    const notice = room.posted.find((message) => message.content?.includes('البلاغ #'));
     assert.ok(notice, 'the close notice is still posted in #bugs-reports');
+    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #7 اتقفل واتحل، متتحلش تاني.`, 'the number comes from the issue title');
     assert.deepEqual(calls.labels[0].body, { labels: ['اتحلت'] });
   });
 
   test('a reply to a closed report is just chat: nothing opened or reopened', async () => {
     fakeGitHub();
-    const { client, post } = await setup();
+    const { client, room, post } = await setup();
     const original = post('مشكلة قديمة');
     await handleBugsReportsMessage(original, client);
-    const [report] = original.replies;
+    const [report] = reportsIn(room);
     mock.restoreAll();
     const calls = fakeGitHub();
     const reply = post('لسه بتحصل؟', { reference: { messageId: report.id }, repliedUser: { id: BOT_ID } });
