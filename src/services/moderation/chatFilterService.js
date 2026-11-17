@@ -17,8 +17,12 @@
 // repeated letters, mixed Arabic/Latin, look-alike letters, leetspeak, franco): see chatFilterRules.js.
 // Owners, trusted staff (the Anti-Nuke trusted list, members or roles), bots and the report channel
 // (reports quote insults) are never checked. Edit the lists in chatFilterRules.js to add or remove words.
+// Our server only: the strong English insults (INSULTS_ENGLISH, rule insult) and the owner's own edits made
+// with the `automod` command (automodCommand.js / automodStore.js): added words in any of the four rules above
+// with the same punishments, their generated franco / English / hidden spellings, and built-in words switched off.
 
 import { isServerOwner } from '../../config/serverOwners.js';
+import { isHomeGuild } from '../../config/homeGuild.js';
 import { canLiftHardBan } from './hardBanService.js';
 import { REPORT_CHANNEL_ID } from '../reportChannelService.js';
 import { issueWarning } from './warnEscalation.js';
@@ -53,7 +57,9 @@ export async function handleChatFilter(message, { now = Date.now(), warn = issue
     if (!message.guild || message.author?.bot || isServerOwner(message.author?.id)) return false;
     // Reports quote what someone else said, so the report channel is never filtered.
     if (message.channelId === REPORT_CHANNEL_ID) return false;
-    const ruleName = checkText(message.content);
+    // Our server: the owner's `automod` edits and the English insults count too; other servers keep the
+    // original built-in lists exactly (CLAUDE.md: new features are for our server only).
+    const ruleName = checkText(message.content, { legacy: !isHomeGuild(message.guild.id) });
     if (!ruleName) return false;
     // Trusted staff (the Anti-Nuke trusted list: members or roles) may swear.
     if (await canLiftHardBan(message.guild, message.author.id).catch(() => false)) return false;

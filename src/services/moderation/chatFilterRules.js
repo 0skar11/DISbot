@@ -2,19 +2,24 @@
 // exemptions and punishments belong to chatFilterService, not this matcher (the rule
 // table is documented at the top of chatFilterService.js).
 //
-// Every message is looked at through several "views" so hidden spellings are caught:
-//   • arabic   — normalized text (see normalizeForFilter): NFKD + no marks/tashkeel/tatweel/
-//                zero-width, NFKC look-alikes (fullwidth, math alphabets, presentation forms),
-//                a homoglyph map (Cyrillic/Greek/Persian), one letter shape per sound, runs of
-//                1-2 letter chunks glued back ("ك.س.م.ك", "k*s*m*k"), repeated letters collapsed.
-//   • mixed    — like arabic, but Latin letters, digits and $/@ inside Arabic words (and short Latin
-//                chunks next to Arabic words) are spelled in Arabic ("كسmك", "ك$مك", "ks امك").
-//   • latin    — Latin lists, once with franco digits kept ("3ars") and once with leetspeak
-//                read as letters ("sh4rm0ta", "k0s0mak").
-//   • skeleton — franco/Arabizi words as an Arabic consonant skeleton (3=ع 7=ح 5=خ 2=ء 9=ق 8=غ
-//                6=ط, sh/ch=ش kh=خ gh=غ th=ث, vowels incl. ou/oo dropped), compared with the
-//                skeleton of the Arabic words ("sharmoota", "ebn el gazma", "meteen omak").
-// Two neighbouring chunks are also tried glued ("شر موطه") for the long insults.
+// Every message is looked at through several "views" so hidden spellings are caught (chatFilterText.js):
+// arabic, mixed Arabic/Latin, latin (franco digits kept / leetspeak), and the franco consonant skeleton.
+//
+// Two rule sets are kept:
+//   • legacy   — exactly the built-in lists below. Other servers and company names use it unchanged.
+//   • current  — our server (`checkText(text)`): the same built-in lists minus the words the owner switched
+//                off with `automod`, plus the strong English insults (INSULTS_ENGLISH) and the owner's own
+//                words with their generated spellings (chatFilterVariants.js). setCustomRules() rebuilds it
+//                (automodStore.js calls it on startup and after every edit), so changes apply at once.
+// The built-in regex families (كسمك..., زانية, دين امك, يلعن..., ميتين امك, the franco family spellings and
+// "ebn el zanya/a7ba/labwa") are patterns, not word lists, so they cannot be switched off word by word.
+
+import {
+    collapse, normalizeForFilter, normalizeKeepRepeats, viewsOf, skeletonAlternatives,
+} from './chatFilterText.js';
+import { compileCustomRules, englishBuiltIns, matchCustom, maskNames } from './chatFilterVariants.js';
+
+export { normalizeForFilter };
 
 export const IBN_AL_ALLOWED = ['الحلال', 'الناس', 'الاصول', 'العم', 'الخال', 'البلد', 'الجيران', 'الحته', 'الحاره'];
 // Only these completions of "ابن ال..." / "بنت ال..." are insults (normalized: ة→ه, no doubled letters).
@@ -34,7 +39,7 @@ export const INSULTS = [
     'لبوه', 'قحبه', 'قحاب',
     'ديوث',
 ];
-const INSULTS_LATIN = [
+export const INSULTS_LATIN = [
     'sharmot', 'sharmota', 'metnak', 'mitnak', 'metnaka', 'manyok', 'manyak', 'khawal', 'a3ars', '3ars', 'm3ars',
     'zobr', 'zeby', 'teez', 'tez', 'labwa', 'a7ba',
     // franco spellings of the same words (repeated letters are collapsed first: "sharmoota" → "sharmota")
@@ -42,135 +47,31 @@ const INSULTS_LATIN = [
     'me3ars', 'mo3ars', 'm3rs', 'm3arsin', 'dayoth', 'dayouth', 'zobry', '2a7ba', '9a7ba', 'qa7ba', 'ka7ba',
     'anikak', 'anekak', 'hanikak', 'hanekak',
 ];
+// The long insults also caught through the franco skeleton ("sharmoota", "metnaak"): short skeletons
+// (خول → "خل", منيوك → "منك") collide with normal words.
+const SKELETON_INSULTS = ['شرموط', 'شراميط', 'متناك'];
+
+// Strong English insults and slurs (our server only, `insult`: deleted + a warning). Matched as whole words
+// after the leetspeak view ("f*ck" → "fck", "b!tch" → "btch", "a$$hole", "fvck", "phuck"), with the usual
+// endings (fucker, fucking, bitches, dickhead...). Judgement calls (kept out on purpose, see the tests):
+// "ass" alone, "shit", "damn", "hoe", "prick", "cock", "chink", "gay", "idiot"/"stupid" (too common or too
+// mild); "pussycat", "Scunthorpe", "class", "assassin", "cocktail", "Dickens", "Niger", "snigger" are words,
+// not insults; "Dick" next to another capitalised word ("Moby Dick", "Dick Grayson") is a name.
+export const INSULTS_ENGLISH = englishBuiltIns();
 
 // "الحفره" used to be here; it is allowed now (in every server). Add patterns here to delete a word without punishment.
 export const BANNED_WORDS = [];
-
-const HOMOGLYPHS = {
-    // Cyrillic
-    а: 'a', в: 'b', е: 'e', ё: 'e', з: '3', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x',
-    ѕ: 's', і: 'i', ї: 'i', ј: 'j', һ: 'h', ԁ: 'd', ӏ: 'l', ո: 'n', ս: 'u',
-    // Greek
-    α: 'a', β: 'b', ε: 'e', η: 'n', ι: 'i', κ: 'k', μ: 'm', ν: 'v', ο: 'o', ρ: 'p', σ: 's', ς: 's', τ: 't', υ: 'u', χ: 'x', ω: 'w',
-    // Persian/Urdu letter shapes and the wasla
-    ک: 'ك', ڪ: 'ك', گ: 'ج', ی: 'ي', ې: 'ي', ۍ: 'ي', ے: 'ي', ہ: 'ه', ھ: 'ه', ۃ: 'ه', ٱ: 'ا', ة: 'ه', ى: 'ي',
-    // Arabic-Indic digits
-    '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
-    '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9',
-};
-
-const collapse = (s) => s.replace(/([\p{L}\p{N}$@])\1+/gu, '$1');
-
-/** Lowercase, no tashkeel/tatweel/invisibles, look-alikes unified, short chunks glued and no repeats. */
-export function normalizeForFilter(text) {
-    let s = String(text || '').toLowerCase().normalize('NFKD')
-        .replace(/[\p{M}\p{Cf}ـ]/gu, '')
-        .normalize('NFKC')
-        .toLowerCase()
-        .replace(/[^\x00-\x7f]/gu, (ch) => HOMOGLYPHS[ch] ?? ch)
-        .replace(/[أإآ]/gu, 'ا')
-        .replace(/ؤ/gu, 'و')
-        .replace(/ئ/gu, 'ي');
-    const tokens = s.split(/[^\p{L}\p{N}$@]+/u).filter(Boolean);
-    const glued = [];
-    let run = '';
-    for (const token of tokens) {
-        if (token.length <= 2) {
-            run += token;
-            continue;
-        }
-        if (run) glued.push(run);
-        run = '';
-        glued.push(token);
-    }
-    if (run) glued.push(run);
-    return collapse(glued.join(' '));
-}
-
-const ARABIC = /\p{Script=Arabic}/u;
-const LATINISH = /[a-z0-9$@]/u;
-
-// ---- franco → Arabic ------------------------------------------------------------------
-const DIGRAPHS = { sh: 'ش', ch: 'ش', kh: 'خ', gh: 'غ', th: 'ث', dh: 'ذ' };
-// With vowels, for Latin chunks inside Arabic text ("كسmك", "ks امك").
-const SPELL = {
-    a: 'ا', b: 'ب', c: 'ك', d: 'د', e: 'ي', f: 'ف', g: 'ج', h: 'ه', i: 'ي', j: 'ج', k: 'ك', l: 'ل', m: 'م', n: 'ن',
-    o: 'و', p: 'ب', q: 'ق', r: 'ر', s: 'س', t: 'ت', u: 'و', v: 'ف', w: 'و', x: 'كس', y: 'ي', z: 'ز',
-    2: '', 3: 'ع', 4: 'ا', 5: 'خ', 6: 'ط', 7: 'ح', 8: 'غ', 9: 'ق', 0: 'و', 1: 'ي', $: 'س', '@': 'ا',
-};
-function spellInArabic(word) {
-    let out = '';
-    for (let i = 0; i < word.length;) {
-        const pair = DIGRAPHS[word.slice(i, i + 2)];
-        if (pair) {
-            out += pair;
-            i += 2;
-            continue;
-        }
-        const ch = word[i];
-        out += i === 0 && 'aeiou'.includes(ch) ? 'ا' : SPELL[ch] ?? ch;
-        i += 1;
-    }
-    return collapse(out);
-}
-
-// Consonant skeleton: both sides use one letter per sound and drop vowels (except a word-initial one).
-const SKELETON_MERGE = { ق: 'ك', ص: 'س', ط: 'ت', ض: 'د', ظ: 'ز', ذ: 'ز', ه: 'ح', ء: '', أ: 'ا' };
-function arabicSkeleton(word) {
-    const s = word.replace(/ه$/u, '').replace(/./gu, (ch) => SKELETON_MERGE[ch] ?? ch);
-    return collapse(s.slice(0, 1) + s.slice(1).replace(/[اويى]/gu, ''));
-}
-const SKELETON_LATIN = {
-    b: 'ب', p: 'ب', t: 'ت', 6: 'ت', g: 'ج', j: 'ج', h: 'ح', 7: 'ح', 5: 'خ', d: 'د', r: 'ر', z: 'ز', s: 'س',
-    c: 'ك', k: 'ك', q: 'ك', 9: 'ك', f: 'ف', v: 'ف', l: 'ل', m: 'م', n: 'ن', 3: 'ع', 8: 'غ', x: 'كس',
-};
-const SKELETON_DIGRAPHS = { sh: 'ش', ch: 'ش', kh: 'خ', gh: 'غ', th: 'ث', dh: 'ز' };
-function francoSkeleton(word) {
-    const w = word.replace(/\$/gu, 's').replace(/@/gu, 'a').replace(/0/gu, 'o').replace(/1/gu, 'i').replace(/4/gu, 'a')
-        .replace(/(?<=[aeiou])h$/u, '');
-    let out = '';
-    for (let i = 0; i < w.length;) {
-        const pair = SKELETON_DIGRAPHS[w.slice(i, i + 2)];
-        if (pair) {
-            out += pair;
-            i += 2;
-            continue;
-        }
-        const ch = w[i];
-        if ('aeiouyw2'.includes(ch)) {
-            if (i === 0) out += ch === 'w' ? 'و' : ch === 'y' ? 'ي' : 'ا';
-        } else {
-            out += SKELETON_LATIN[ch] ?? '';
-        }
-        i += 1;
-    }
-    return collapse(out);
-}
-const skeletonAlternatives = (words, min = 3) => [...new Set(words.map(arabicSkeleton))].filter((s) => s.length >= min).join('|');
-
-function leet(text) {
-    return collapse(text.replace(/0/gu, 'o').replace(/1/gu, 'i').replace(/3/gu, 'e').replace(/4/gu, 'a')
-        .replace(/5/gu, 's').replace(/7/gu, 't').replace(/\$/gu, 's').replace(/@/gu, 'a'));
-}
-function latinOf(text) {
-    return text.replace(/\$/gu, 's').replace(/0/gu, 'o').replace(/@/gu, 'a');
-}
 
 // ---- patterns -------------------------------------------------------------------------
 const START = '(?<!\\p{L})';
 const END = '(?!\\p{L})';
 const PREFIX = '(?:يا\\s?|و|ف|ب|ال|وال|بال|يال)?';
 const YOUR = '(?:كوا|كو|كم|كي|ك|ها|هم|ه)';
+const NEVER = '(?!)';
+const alternatives = (list) => (list.length ? list.join('|') : NEVER);
 
-const IBN_AL_PATTERN = new RegExp(`${START}(?:يا\\s?|و|ف)?(?:ا?بن|بنت)\\s?(?:ال|ل)?\\s?(?:${IBN_AL_INSULTS.map((w) => [...w].join('\\s?')).join('|')})(?:ين|ات)?${END}`, 'u');
 const IBN_AL_LATIN = /(?<![a-z])(?:ya\s?)?(?:[ie]?bn|bint)\s?(?:[ae]?l)?\s?(?:zan(?:i|y|e|ey|iy|ee)y?(?:a|ah|eh|at)|[2]?a7ba|labwa)(?![a-z])/u;
-const IBN_AL_SKELETON = new RegExp(`${START}(?:ي\\s?)?(?:ا?بن|بنت)\\s?(?:ا?ل)?\\s?(?:${skeletonAlternatives(IBN_AL_INSULTS)})(?:ن|ت)?${END}`, 'u');
-
-const INSULT_PATTERN = new RegExp(`${START}${PREFIX}((?:${INSULTS.join('|')})${ENDINGS})${END}`, 'gu');
 const NOT_INSULTS = new Set(['خوله']);
-const INSULT_LATIN_PATTERN = new RegExp(`(?<![a-z0-9])(?:ya\\s?)?((?:${INSULTS_LATIN.join('|')})(?:ak|ek|a|ين)?)(?![a-z0-9])`, 'gu');
-// Only the long, unambiguous words: short skeletons (خول → "خل", منيوك → "منك") collide with normal words.
-const INSULT_SKELETON = new RegExp(`${START}(?:ي\\s?)?(?:${skeletonAlternatives(['شرموط', 'شراميط', 'متناك'], 4)})(?:ك|كم|ت|ن)?${END}`, 'u');
 
 const FAMILY = '(?:ام|ابو|اب|اهل|اخت|اجداد|جدود|جد|سلسفيل|عيلت|ستات)';
 const FAMILY_PATTERNS = [
@@ -203,44 +104,97 @@ const FAMILY_SKELETON = [
     new RegExp(`${START}دن\\s?(?:${YOUR_SKELETON})${END}`, 'u'),
 ];
 
-/** The views every rule is checked against (see the top of this file). */
-function viewsOf(normalized) {
-    const tokens = normalized.split(' ');
-    const isArabic = tokens.map((t) => ARABIC.test(t));
-    const mixedTokens = tokens.map((t, i) => {
-        if (isArabic[i]) return LATINISH.test(t) ? spellInArabic(t) : t;
-        const nearArabic = isArabic[i - 1] || isArabic[i + 1];
-        return nearArabic && t.length <= 3 && /[a-z]/u.test(t) ? spellInArabic(t) : t;
-    });
-    const skeletonTokens = tokens.map((t, i) => (!isArabic[i] && /[a-z]/u.test(t) ? francoSkeleton(t) : '_'));
-    const pairs = (list) => list.slice(1).map((t, i) => collapse(list[i] + t));
-    const latinTokens = tokens.filter((t, i) => !isArabic[i]);
-    return {
-        arabic: [normalized, mixedTokens.join(' ')],
-        arabicPairs: [...pairs(tokens), ...pairs(mixedTokens)],
-        latin: [latinOf(normalized), leet(normalized)],
-        latinPairs: pairs(latinTokens).flatMap((t) => [latinOf(t), leet(t)]),
-        skeleton: skeletonTokens.join(' '),
-        skeletonPairs: pairs(latinTokens).map(francoSkeleton),
-    };
-}
+/** The built-in regex families, shown read-only by `automod` (they are patterns, not word lists). */
+export const BUILT_IN_GROUPS = {
+    family: [
+        'كسمك / كس امك / كسومك / كس ام (وكل الضماير: كسمها، كسمكم...)',
+        'كس اختك / كس ابوك / كس اهلك / كس دين...',
+        'زانية / الزانية / زاني',
+        'دين امك / دين ابوك / دين اهلك (مع "ك" بس)',
+        'يلعن دين... / يلعن ابوك / يلعن ابو امك / يلعن سلسفيل اهلك',
+        'ميتين امك / ميتين ابو / ميتين دين / ميتين اهل (رقم "ميتين" لوحده مسموح)',
+        'فرانكو: ksomak, kos okhtak, kos abook, x omak, zanya, meteen omak, yel3an deenak',
+    ],
+    ibnAl: ['فرانكو: ebn el zanya / ebn el a7ba / ebn el labwa'],
+};
 
 const anyMatch = (patterns, texts) => texts.some((text) => patterns.some((pattern) => pattern.test(text)));
-function insultIn(text, minLength = 0) {
-    return [...text.matchAll(INSULT_PATTERN)].some((match) => !NOT_INSULTS.has(match[1]) && match[1].length >= minLength);
-}
-function latinInsultIn(text, minLength = 0) {
-    return [...text.matchAll(INSULT_LATIN_PATTERN)].some((match) => match[1].length >= minLength);
+
+/**
+ * Compiles the built-in rules. `disabled` (normalized words the owner switched off) removes words from the
+ * built-in word lists; `english` adds INSULTS_ENGLISH; `custom` is a compiled list of the owner's words.
+ * With no options it is exactly the original filter (the legacy set).
+ */
+function buildRuleSet({ disabled = new Set(), english = false, custom = null } = {}) {
+    const on = (list) => list.filter((word) => !disabled.has(word));
+    const insults = on(INSULTS);
+    const ibnAlInsults = on(IBN_AL_INSULTS);
+    const insultsLatin = on(INSULTS_LATIN);
+
+    const ibnAlPattern = new RegExp(`${START}(?:يا\\s?|و|ف)?(?:ا?بن|بنت)\\s?(?:ال|ل)?\\s?(?:${alternatives(ibnAlInsults.map((w) => [...w].join('\\s?')))})(?:ين|ات)?${END}`, 'u');
+    const ibnAlSkeleton = new RegExp(`${START}(?:ي\\s?)?(?:ا?بن|بنت)\\s?(?:ا?ل)?\\s?(?:${skeletonAlternatives(ibnAlInsults) || NEVER})(?:ن|ت)?${END}`, 'u');
+    const insultPattern = new RegExp(`${START}${PREFIX}((?:${alternatives(insults)})${ENDINGS})${END}`, 'gu');
+    const insultLatinPattern = new RegExp(`(?<![a-z0-9])(?:ya\\s?)?((?:${alternatives(insultsLatin)})(?:ak|ek|a|ين)?)(?![a-z0-9])`, 'gu');
+    const insultSkeleton = new RegExp(`${START}(?:ي\\s?)?(?:${skeletonAlternatives(on(SKELETON_INSULTS), 4) || NEVER})(?:ك|كم|ت|ن)?${END}`, 'u');
+    const englishOn = english ? INSULTS_ENGLISH.filter((entry) => !disabled.has(entry.word)) : [];
+
+    const insultIn = (text, minLength = 0) => [...text.matchAll(insultPattern)].some((match) => !NOT_INSULTS.has(match[1]) && match[1].length >= minLength);
+    const latinInsultIn = (text, minLength = 0) => [...text.matchAll(insultLatinPattern)].some((match) => match[1].length >= minLength);
+
+    const builtIn = {
+        ibnAl: (v) => anyMatch([ibnAlPattern], v.arabic) || anyMatch([IBN_AL_LATIN], v.latin) || ibnAlSkeleton.test(v.skeleton),
+        insult: (v) => v.arabic.some((t) => insultIn(t)) || v.latin.some((t) => latinInsultIn(t)) || insultSkeleton.test(v.skeleton)
+            || v.arabicPairs.some((t) => insultIn(t, 5)) || v.latinPairs.some((t) => latinInsultIn(t, 5))
+            || insultSkeleton.test(v.skeletonPairs),
+        family: (v) => anyMatch(FAMILY_PATTERNS, v.arabic) || anyMatch(FAMILY_LATIN, v.latin) || anyMatch(FAMILY_SKELETON, [v.skeleton]),
+        banned: (v) => anyMatch(BANNED_WORDS, [...v.arabic, ...v.latin]),
+    };
+    const extra = english || custom ? compileCustomRules(custom || [], { english: englishOn }) : null;
+    return { builtIn, extra, extended: Boolean(extra) };
 }
 
-const RULE_CHECKS = [
-    ['ibnAl', (v) => anyMatch([IBN_AL_PATTERN], v.arabic) || anyMatch([IBN_AL_LATIN], v.latin) || IBN_AL_SKELETON.test(v.skeleton)],
-    ['insult', (v) => v.arabic.some((t) => insultIn(t)) || v.latin.some((t) => latinInsultIn(t)) || INSULT_SKELETON.test(v.skeleton)
-        || v.arabicPairs.some((t) => insultIn(t, 5)) || v.latinPairs.some((t) => latinInsultIn(t, 5))
-        || v.skeletonPairs.some((t) => INSULT_SKELETON.test(t))],
-    ['family', (v) => anyMatch(FAMILY_PATTERNS, v.arabic) || anyMatch(FAMILY_LATIN, v.latin) || anyMatch(FAMILY_SKELETON, [v.skeleton])],
-    ['banned', (v) => anyMatch(BANNED_WORDS, [...v.arabic, ...v.latin])],
-];
+const RULE_ORDER = ['ibnAl', 'insult', 'family', 'banned'];
+const LEGACY = buildRuleSet();
+let current = buildRuleSet({ english: true });
+let currentRules = { custom: [], disabled: [] };
+
+/**
+ * Applies the owner's `automod` edits: `custom` words ({ word, rule }) and `disabled` built-in words
+ * (normalized). Synchronous and never throws; bad entries are skipped. Takes effect for the next message.
+ */
+export function setCustomRules(rules = {}) {
+    const custom = Array.isArray(rules?.custom) ? rules.custom.filter((entry) => entry && typeof entry.word === 'string' && RULE_ORDER.includes(entry.rule)) : [];
+    const disabled = Array.isArray(rules?.disabled) ? rules.disabled.filter((word) => typeof word === 'string') : [];
+    current = buildRuleSet({ disabled: new Set(disabled), english: true, custom });
+    currentRules = { custom: custom.map((entry) => ({ ...entry })), disabled: [...disabled] };
+}
+
+/** The owner's edits as last applied (for the `automod` list). */
+export function getCustomRules() {
+    return { custom: currentRules.custom.map((entry) => ({ ...entry })), disabled: [...currentRules.disabled] };
+}
+
+/** Rule name (and what matched) for one text, with a given rule set. */
+function matchOf(text, set) {
+    const source = set.extended ? maskNames(text) : text;
+    // normalizeForFilter(source) in two steps, keeping the repeated letters for the English "a$$" / "nigga" forms.
+    const keepRepeats = normalizeKeepRepeats(source);
+    const normalized = collapse(keepRepeats);
+    if (!normalized) return null;
+    const views = viewsOf(normalized);
+    let extraHits;
+    const extraHit = (rule) => {
+        if (!set.extra) return null;
+        extraHits ??= matchCustom(set.extra, views, keepRepeats);
+        return extraHits.get(rule) || null;
+    };
+    for (const rule of RULE_ORDER) {
+        if (set.builtIn[rule](views)) return { rule, source: 'builtin' };
+        const hit = extraHit(rule);
+        if (hit) return { rule, source: hit.source, word: hit.word };
+    }
+    return null;
+}
 
 // The path/query of a link holds random ids ("watch?v=ksmk123", invite codes), so a match that lies
 // entirely inside the path of a valid ASCII link is ignored. The host, the text around the link and any
@@ -249,16 +203,7 @@ const LINK = /(?:\bhttps?:\/\/|\bwww\.|\b(?=discord(?:app)?\.(?:gg|com)\/))([^\s
 const ASCII_HOST = /^[a-z0-9.-]+(?::\d+)?$/iu;
 const ASCII_PATH = /^[\x21-\x7e]*$/u;
 
-function ruleOf(text) {
-    const normalized = normalizeForFilter(text);
-    if (!normalized) return null;
-    const views = viewsOf(normalized);
-    for (const [rule, matches] of RULE_CHECKS) if (matches(views)) return rule;
-    return null;
-}
-
-/** Strongest matched rule, without a role bypass or any side effects. */
-export function checkText(text) {
+function explainWith(text, set) {
     const raw = String(text || '');
     const paths = [];
     const stripped = raw.replace(LINK, (link, host, path = '') => {
@@ -266,9 +211,23 @@ export function checkText(text) {
         paths.push(path);
         return link.slice(0, link.length - path.length) + ' ';
     });
-    const rule = ruleOf(stripped);
-    if (rule || !paths.length) return rule;
+    const match = matchOf(stripped, set);
+    if (match || !paths.length) return match;
     // Only a link path changed the answer: ignore it when that path alone explains the match.
-    const withPaths = ruleOf(raw);
-    return withPaths && !paths.some((path) => ruleOf(path)) ? withPaths : null;
+    const withPaths = matchOf(raw, set);
+    return withPaths && !paths.some((path) => matchOf(path, set)) ? withPaths : null;
+}
+
+/**
+ * Strongest matched rule, without a role bypass or any side effects. `legacy: true` uses only the original
+ * built-in lists (other servers and company names); otherwise the owner's `automod` edits and the English
+ * insults count too.
+ */
+export function checkText(text, { legacy = false } = {}) {
+    return explainWith(text, legacy ? LEGACY : current)?.rule ?? null;
+}
+
+/** Like checkText, with where the match came from: { rule, source: 'builtin'|'english'|'custom', word? } or null. */
+export function explainText(text, { legacy = false } = {}) {
+    return explainWith(text, legacy ? LEGACY : current);
 }

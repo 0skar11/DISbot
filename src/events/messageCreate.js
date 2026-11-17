@@ -39,6 +39,7 @@ import { handleMentionGroupCommand } from '../services/mentionGroup.js';
 import { handleStreakCommand, handleStreakMessage, isStreakChannel } from '../services/cc/streakService.js';
 import { handleDangerCommand, handleDangerMessage, punishDanger, blockDangerCommand, DANGER_COMMAND_WORD } from '../services/moderation/dangerList.js';
 import { isHomeGuild } from '../config/homeGuild.js';
+import { handleAutomodMessage, isAutomodCommand } from '../services/moderation/automodCommand.js';
 import { getCommandDefaultPermissions, memberMeetsCommandPermissions } from '../utils/permissionGuard.js';
 import { assertCanActOn } from '../services/moderation/memberHierarchy.js';
 import { resolveMemberByName, remainingText } from '../utils/memberNameResolver.js';
@@ -144,6 +145,7 @@ async function isBotCommand(message, client) {
   if (!parsed) return false;
   const typedCommand = parsed.commandName.toLowerCase();
   if (['trusted', 'purge', DANGER_COMMAND_WORD, 'منشن'].includes(typedCommand)) return true;
+  if (isAutomodCommand(message, guildConfig?.prefix || getCommandPrefix())) return true;
   const aliased = applyWordAliases(typedCommand, parsed.args, parsed.prefixed);
   if (!aliased) return false;
   const name = resolveCommandAlias(aliased.commandName);
@@ -157,6 +159,8 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
     const prefix = guildConfig?.prefix || getCommandPrefix();
     if (gamesOnly && !isGameCommandMessage(message.content, [prefix])) return;
     const parsed = parseTypedCommand(message.content, prefix);
+    // `automod` (our server, owners only): the insult filter's lists, sent privately. Anyone else: plain chat.
+    if (await handleAutomodMessage(message, { prefix })) return;
     // `منشن` group (our server): runs before the role shortcuts so `شيل منشن @x` isn't "remove role منشن".
     if (parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;
     if (parsed && await handleStreakCommand(message, parsed.commandName, parsed.args)) return;

@@ -14,7 +14,7 @@ function hasSeparatedServerWord(tokens) {
         let joined = '';
         for (let end = start; end < tokens.length; end += 1) {
             joined += tokens[end];
-            const rule = checkText(joined);
+            const rule = checkText(joined, { legacy: true });
             // "ibn al" depends on its following word; checking truncated windows
             // would incorrectly reject allowed phrases such as "ابن العم".
             if (rule && rule !== 'ibnAl') return true;
@@ -33,8 +33,9 @@ export function normalizeCompanyName(name) {
 export function forbiddenCompanyName(name) {
     const text = String(name ?? '').normalize('NFKD');
     // Do not use handleChatFilter: its Trusted/owner exemptions are for chat only.
-    // The pure rule applies to every company owner and moderator identically.
-    if (checkText(text)) return true;
+    // The pure rule applies to every company owner and moderator identically. Company names keep the original
+    // built-in lists in every server (the `automod` edits and English list are for chat in our server).
+    if (checkText(text, { legacy: true })) return true;
     // Normalize tokens individually: the chat matcher glues runs of short words,
     // which can otherwise hide "my s e x" or fail on mixed chunks like "دع اره".
     const tokens = text.replace(/[\p{M}\p{Cf}\u0640]/gu, '').split(/[^\p{L}\p{N}$@]+/u)

@@ -23,6 +23,7 @@ import { ensureTraderRole } from "../services/cc/traderRoleService.js";
 import { startCustomRoles } from "../services/cc/customRoleService.js";
 import { startVoteKickSweeps } from "../services/voice/voteKickService.js";
 import { isHomeGuild } from "../config/homeGuild.js";
+import { loadAutomodRules } from "../services/moderation/automodStore.js";
 
 export default {
   name: Events.ClientReady,
@@ -36,6 +37,13 @@ export default {
       startupLog(`Loaded ${client.commands.size} commands`);
 
       // A failure here must not stop the rest of the startup work.
+      try {
+        // The owner's `automod` edits to the chat filter (our server): read once, then kept in memory.
+        const automod = await loadAutomodRules(client);
+        startupLog(`Automod words: ${automod.loaded ? 'loaded' : 'NOT loaded (built-in lists only)'} (${automod.custom} added, ${automod.disabled} switched off)`);
+      } catch (error) {
+        logger.error("Failed to load the automod words:", error);
+      }
       try {
         const result = await publishArabicModerationCommands(client);
         startupLog(`Arabic moderation commands: ${result.status} (channel ${result.channelId})`);
