@@ -336,8 +336,8 @@ describe('closing a report (checkClosedReports)', () => {
     assert.match(embed.footer.text, /GitHub #42 • ✅ اتحل في 2026-11-15/u);
     assert.match(embed.description, /مشكلة في الأمر/u, 'the report text is kept');
     const [notice] = report.replies;
-    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #1 اتقفل واتحل، متتحلش تاني.`);
-    assert.equal(notice.deleted, false, 'never deleted in #bugs-reports');
+    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #1 اتحل`);
+    assert.equal(notice.deleted, true, 'the short notice deletes itself after 5 seconds');
     assert.deepEqual(calls.labels, [{ path: '/issues/42/labels', body: { labels: ['اتحلت'] } }]);
     assert.ok(calls.gets[0].options.params.since, 'the since window is used');
     assert.equal(calls.gets[0].options.params.labels, 'بلاغ');
@@ -357,7 +357,7 @@ describe('closing a report (checkClosedReports)', () => {
     assert.equal(report.embeds[0].color, 0x95a5a6);
     assert.equal(report.replies.length, 1);
     const [notice] = report.replies;
-    assert.equal(notice.content, `<@${STAFF_ID}> 🔒 البلاغ #1 اتقفل من غير حل، متشتغلش عليه تاني.`);
+    assert.equal(notice.content, `<@${STAFF_ID}> 🔒 البلاغ #1 اتقفل`);
     mock.timers.tick(4_999);
     await Promise.resolve();
     assert.equal(notice.deleted, false, 'still there before 5 seconds');
@@ -438,7 +438,7 @@ describe('closing a report (checkClosedReports)', () => {
     await checkClosedReports(client);
     const notice = room.posted.find((message) => message.content?.includes('البلاغ #'));
     assert.ok(notice, 'the close notice is still posted in #bugs-reports');
-    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #7 اتقفل واتحل، متتحلش تاني.`, 'the number comes from the issue title');
+    assert.equal(notice.content, `<@${STAFF_ID}> ✅ البلاغ #7 اتحل`, 'the number comes from the issue title');
     assert.deepEqual(calls.labels[0].body, { labels: ['اتحلت'] });
   });
 

@@ -150,20 +150,20 @@ export async function openReportIssue({
   }
 }
 
-// #bugs-reports: the embed shows the result and the date. The "solved" reply pinging the reporter stays;
-// the "closed without a fix" reply deletes itself after 5 seconds (report #281), the grey embed keeps the record.
+// #bugs-reports: the embed shows the result and the date. The short reply pinging the reporter ("solved" or
+// "closed", no extra words) deletes itself after 5 seconds (reports #281 and the owner's follow-up); the embed keeps the record.
 // The report message may be gone (deleted by someone): the notice is then posted in the room on its own.
 async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved) {
   const sent = await announceClosedBugReport(channel, reportMessage, issue, reporterId, solved);
-  if (sent && !solved) setTimeout(() => sent.delete?.().catch(() => null), MENTION_DELETE_MS).unref?.();
+  if (sent) setTimeout(() => sent.delete?.().catch(() => null), MENTION_DELETE_MS).unref?.();
 }
 
 async function announceClosedBugReport(channel, reportMessage, issue, reporterId, solved) {
   const date = new Date(issue.closed_at || Date.now()).toISOString().slice(0, 10);
   const number = bugReportNumber(issue, reportMessage);
   const content = solved
-    ? `<@${reporterId}> ✅ البلاغ #${number} اتقفل واتحل، متتحلش تاني.`
-    : `<@${reporterId}> 🔒 البلاغ #${number} اتقفل من غير حل، متشتغلش عليه تاني.`;
+    ? `<@${reporterId}> ✅ البلاغ #${number} اتحل`
+    : `<@${reporterId}> 🔒 البلاغ #${number} اتقفل`;
   const payload = { content, allowedMentions: { users: [reporterId] } };
   if (!reportMessage) return channel?.send?.(payload).catch(() => null);
   const [embed] = reportMessage.embeds;
