@@ -14,6 +14,7 @@ import { isCommandEnabled } from '../services/commandAccessService.js';
 import { getCountingGameConfig, saveCountingGameConfig, isValidCountingMessage, recordCorrectCount } from '../services/countingGameService.js';
 import { handleTrustedListCommand } from '../utils/trustedCommand.js';
 import { handleGifCommand, isGifCommand } from '../services/gifConverterService.js';
+import { handleRemoveBgCommand, isRemoveBgCommand, removeBgArgs } from '../services/backgroundRemoval/removeBgService.js';
 import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullShortcut } from '../utils/arabicModerationShortcuts.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { handleReportChannelMessage } from '../services/reportChannelService.js';
@@ -164,6 +165,8 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
     // `منشن` group (our server): runs before the role shortcuts so `شيل منشن @x` isn't "remove role منشن".
     if (parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;
     if (parsed && await handleStreakCommand(message, parsed.commandName, parsed.args)) return;
+    // `.شيل الخلفية` / `.removebg` (everyone, report #286): before the role shortcuts, where `شيل` is "remove role".
+    if (isRemoveBgCommand(parsed) && await handleRemoveBgCommand(message, removeBgArgs(parsed))) return;
     if (await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
     if (!parsed) return;
 

@@ -7,6 +7,7 @@ import { Collection, ActionRowBuilder, MessageFlags } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
 import { isDisabledGameCommand } from '../../config/games.js';
+import { isSilentCommand } from '../../config/commands/commandAvailability.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,7 +145,8 @@ async function createCategoryCommandsMenu(category, client) {
                 if (
                     commandData.name === "help" ||
                     commandData.name === "commandlist" ||
-                    isDisabledGameCommand(commandData.name)
+                    isDisabledGameCommand(commandData.name) ||
+                    isSilentCommand(commandData.name)
                 )
                     continue;
 
@@ -274,7 +276,8 @@ export async function createAllCommandsMenu(page = 1, client) {
                     if (
                         commandData.name === "help" ||
                         commandData.name === "commandlist" ||
-                        isDisabledGameCommand(commandData.name)
+                        isDisabledGameCommand(commandData.name) ||
+                    isSilentCommand(commandData.name)
                     )
                         continue;
 

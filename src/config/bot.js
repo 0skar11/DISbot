@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { musicEnabled } from './music/musicFeature.js';
 
 export const botConfig = {
   // =========================
@@ -442,7 +443,8 @@ export const botConfig = {
     utility: true,
     community: true,
     fun: true,
-    music: true,
+    // Off unless MUSIC_ENABLED=true (config/music/musicFeature.js).
+    music: musicEnabled(),
   },
 };
 

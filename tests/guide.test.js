@@ -7,6 +7,10 @@ import { commandAliases, standaloneOnlyAliases } from '../src/config/commands/co
 import { bourseSettings } from '../src/config/store/bourse.js';
 import { CC } from '../src/config/cc.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
+import { isMovedCCCommand, isSilentCommand } from '../src/config/commands/commandAvailability.js';
+import { registerCommands } from '../src/handlers/loaders/commandLoader.js';
+import removebg from '../src/commands/Tools/removebg.js';
+import interactionCreate from '../src/events/interactionCreate.js';
 
 describe('شرح: the CC / store / bourse guide in DM', () => {
   test('covers CC, earning, the store, the bourse and transfers with the real numbers', () => {
@@ -38,22 +42,39 @@ describe('شرح: the CC / store / bourse guide in DM', () => {
         assert.ok(section.embed.description.length < 700, `${section.id} stays short`);
       }
 
-      // The menu (in DM, no server there) edits the message in place, with the server from its id.
-      const updates = [];
-      await guideMenu.execute({ values: ['bourse'], update: async (payload) => updates.push(payload) }, {}, [guildId]);
-      assert.equal(updates[0].embeds[0].title, '📈 البورصة (الاستثمار)');
-      assert.equal(updates[0].components[0].components[0].options.find((option) => option.default).value, 'bourse');
-      assert.equal(updates[0].embeds[0].description.includes('القصر'), guildId === HOME_GUILD_ID, 'the server still shapes the section');
-      await guideMenu.execute({ values: ['contents'], update: async (payload) => updates.push(payload) }, {}, [guildId]);
-      assert.match(updates[1].embeds[0].title, /المحتويات/u);
+      // A section page (what the menu showed before the guide moved), with the server from its id.
+      const bourse = buildGuidePayload({ guildId, boostLine: '', section: 'bourse' });
+      assert.equal(bourse.embeds[0].title, '📈 البورصة (الاستثمار)');
+      assert.equal(bourse.components[0].components[0].options.find((option) => option.default).value, 'bourse');
+      assert.equal(bourse.embeds[0].description.includes('القصر'), guildId === HOME_GUILD_ID, 'the server still shapes the section');
+
+      // The guide moved to the CC bot (report #287): a menu left in an old DM is acknowledged, nothing changes.
+      let deferred = 0;
+      await guideMenu.execute({ values: ['bourse'], deferUpdate: async () => { deferred += 1; }, update: () => assert.fail('updated') }, {}, [guildId]);
+      assert.equal(deferred, 1);
     }
     assert.equal(guideMenu.name, 'guide');
     assert.equal(buildGuidePayload({ guildId: 'x' }).components[0].components[0].custom_id, 'guide:0');
   });
 
-  test('`شرح` runs the guide only as the whole message', () => {
+  test('`شرح` maps to the guide only as the whole message', () => {
     assert.equal(commandAliases['شرح'], 'guide');
     assert.ok(standaloneOnlyAliases.has('شرح'));
+  });
+
+  test('the guide moved to the CC bot (report #287): `/guide` is not registered and `شرح` gets no answer', async () => {
+    assert.equal(isMovedCCCommand('guide'), true);
+    assert.equal(isSilentCommand('guide'), true, 'typed `شرح` and stale `/guide` return silently');
+    const requests = [];
+    await registerCommands({
+      commands: new Map([[guide.data.name, guide], [removebg.data.name, removebg]]),
+      rest: { put: async (route, payload) => requests.push(payload) },
+    }, { clientId: '100000000000000001' });
+    assert.deepEqual(requests[0].body.map((command) => command.name), ['removebg']);
+
+    let touched = 0;
+    await interactionCreate.execute({ commandName: 'guide', isChatInputCommand: () => true, reply: () => { touched += 1; } }, { commands: { get: () => { touched += 1; } } });
+    assert.equal(touched, 0);
   });
 
   test('sends the guide in DM and says so; tells the member when their DMs are closed', async () => {

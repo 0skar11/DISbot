@@ -70,14 +70,15 @@ export async function findImageUrl(message, args = []) {
     return mentioned?.displayAvatarURL?.({ extension: 'png', size: 1024 }) || null;
 }
 
-async function download(url, fetchImpl = fetch) {
+/** Downloads a picture, streamed and stopped at `maxBytes` (error 'too big'). Also used by `شيل الخلفية`. */
+export async function download(url, fetchImpl = fetch, maxBytes = MAX_INPUT_BYTES) {
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'error' });
     if (!response.ok) throw new Error(`download failed (${response.status})`);
-    if (Number(response.headers.get('content-length') || 0) > MAX_INPUT_BYTES) throw new Error('too big');
+    if (Number(response.headers.get('content-length') || 0) > maxBytes) throw new Error('too big');
     // Count the bytes as they arrive and stop at the limit, whatever the server claims.
     if (!response.body?.getReader) {
         const whole = Buffer.from(await response.arrayBuffer());
-        if (whole.length > MAX_INPUT_BYTES) throw new Error('too big');
+        if (whole.length > maxBytes) throw new Error('too big');
         return whole;
     }
     const reader = response.body.getReader();
@@ -87,7 +88,7 @@ async function download(url, fetchImpl = fetch) {
         const { done, value } = await reader.read();
         if (done) break;
         total += value.length;
-        if (total > MAX_INPUT_BYTES) { await reader.cancel().catch(() => {}); throw new Error('too big'); }
+        if (total > maxBytes) { await reader.cancel().catch(() => {}); throw new Error('too big'); }
         chunks.push(value);
     }
     return Buffer.concat(chunks);

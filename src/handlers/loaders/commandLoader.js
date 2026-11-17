@@ -5,7 +5,7 @@ import { Collection } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import botConfig from '../../config/bot.js';
 import { isDisabledGameCommand, isDisabledCCCommand } from '../../config/games.js';
-import { isMovedCCCommand, isSilentCommand } from '../../config/commands/commandAvailability.js';
+import { isOffCommand, isSilentCommand } from '../../config/commands/commandAvailability.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,7 +82,7 @@ export async function loadCommands(client) {
             command.filePath = normalizedPath;
             
             const primaryCommandName = command.data.name;
-            if (isMovedCCCommand(primaryCommandName)) continue;
+            if (isOffCommand(primaryCommandName)) continue;
 
             // The games moved to the games bot: their files stay but they aren't loaded (config/games.js).
             if (isDisabledGameCommand(primaryCommandName)) {

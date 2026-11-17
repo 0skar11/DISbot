@@ -77,9 +77,10 @@ test('every real command has a valid required-option order in the outgoing regis
     }
     await visit(fileURLToPath(new URL('../src/commands', import.meta.url)));
     const payload = await captureRegistration(commands);
-    assert.ok(payload.length > 90, 'audit the full real command set');
+    // The guide moved to the CC bot and music is off (MUSIC_ENABLED): those are not registered.
+    assert.ok(payload.length > 80, 'audit the full real command set');
     const expectedNames = new Set(commands.map((command) => command.data.name));
-    for (const name of ['bourse', 'cc', 'cctop']) {
+    for (const name of ['bourse', 'cc', 'cctop', 'guide', 'join', 'music', 'nowplaying', 'play', 'queue']) {
         assert.ok(expectedNames.delete(name), `audit includes ${name}`);
     }
     assert.deepEqual(new Set(payload.map((command) => command.name)), expectedNames);

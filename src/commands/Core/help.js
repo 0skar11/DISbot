@@ -12,6 +12,7 @@ import {
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { musicEnabled } from "../../config/music/musicFeature.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -57,6 +58,8 @@ export async function createInitialHelpMenu(client) {
     )
         .filter((dirent) => dirent.isDirectory())
         .map((dirent) => dirent.name)
+        // Music is off unless MUSIC_ENABLED=true (config/music/musicFeature.js).
+        .filter((name) => name !== "Music" || musicEnabled())
         .sort();
 
     const options = [
