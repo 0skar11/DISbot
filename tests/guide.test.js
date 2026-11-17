@@ -1,7 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGuideEmbeds } from '../src/services/cc/guideUi.js';
+import { buildGuideEmbeds, buildGuideSections, buildGuidePayload } from '../src/services/cc/guideUi.js';
 import guide from '../src/commands/Games/guide.js';
+import guideMenu from '../src/interactions/selectMenus/guide/guideSection.js';
 import { commandAliases, standaloneOnlyAliases } from '../src/config/commands/commandAliases.js';
 import { bourseSettings } from '../src/config/store/bourse.js';
 import { CC } from '../src/config/cc.js';
@@ -22,6 +23,34 @@ describe('شرح: the CC / store / bourse guide in DM', () => {
     assert.ok(embeds.length <= 10 && text.length < 6000);
   });
 
+  test('opens on a short contents page; the menu shows each short section and goes back (report #283)', async () => {
+    for (const guildId of [HOME_GUILD_ID, '100000000000000250']) {
+      const sections = buildGuideSections({ boostLine: '', guildId });
+      const contents = buildGuidePayload({ guildId, boostLine: '' });
+      assert.equal(contents.embeds.length, 1);
+      for (const section of sections) assert.ok(contents.embeds[0].description.includes(section.label), section.id);
+      const menu = contents.components[0].components[0];
+      assert.equal(menu.custom_id, `guide:${guildId}`);
+      assert.deepEqual(menu.options.map((option) => option.value), ['contents', ...sections.map((section) => section.id)]);
+      assert.ok(menu.options.length <= 25);
+      for (const section of sections) {
+        assert.ok(section.embed.description.split('\n').length <= 6, `${section.id} stays short`);
+        assert.ok(section.embed.description.length < 700, `${section.id} stays short`);
+      }
+
+      // The menu (in DM, no server there) edits the message in place, with the server from its id.
+      const updates = [];
+      await guideMenu.execute({ values: ['bourse'], update: async (payload) => updates.push(payload) }, {}, [guildId]);
+      assert.equal(updates[0].embeds[0].title, '📈 البورصة (الاستثمار)');
+      assert.equal(updates[0].components[0].components[0].options.find((option) => option.default).value, 'bourse');
+      assert.equal(updates[0].embeds[0].description.includes('القصر'), guildId === HOME_GUILD_ID, 'the server still shapes the section');
+      await guideMenu.execute({ values: ['contents'], update: async (payload) => updates.push(payload) }, {}, [guildId]);
+      assert.match(updates[1].embeds[0].title, /المحتويات/u);
+    }
+    assert.equal(guideMenu.name, 'guide');
+    assert.equal(buildGuidePayload({ guildId: 'x' }).components[0].components[0].custom_id, 'guide:0');
+  });
+
   test('`شرح` runs the guide only as the whole message', () => {
     assert.equal(commandAliases['شرح'], 'guide');
     assert.ok(standaloneOnlyAliases.has('شرح'));
@@ -39,7 +68,9 @@ describe('شرح: the CC / store / bourse guide in DM', () => {
     });
     await guide.execute(interaction(async (payload) => { dms.push(payload); }));
     assert.equal(dms.length, 1);
-    assert.ok(dms[0].embeds.length >= 4);
+    assert.equal(dms[0].embeds.length, 1, 'one short page at a time');
+    assert.match(dms[0].embeds[0].title, /المحتويات/u);
+    assert.equal(dms[0].components[0].components[0].type, 3);
 
     const notes = [];
     const source = { channel: { send: async (payload) => { notes.push(payload); return { delete: async () => {} }; } }, delete: async () => {} };

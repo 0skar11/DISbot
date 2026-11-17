@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { MessageFlags } from 'discord.js';
 import command from '../src/commands/Games/company.js';
 import button from '../src/interactions/buttons/store/company.js';
@@ -89,7 +90,9 @@ test('buttons are owner/guild/channel-bound and cancel never spends', async () =
     ]) {
         const press = interactionFor(changed);
         await button.execute(press, client, ['confirm', id]);
-        assert.equal(press.outputs[0].flags, MessageFlags.Ephemeral);
+        // Another server answers nothing (report #284); the other cases get a private refusal.
+        if (changed.guildId) assert.equal(press.outputs.length, 0);
+        else assert.equal(press.outputs[0].flags, MessageFlags.Ephemeral);
         assert.equal(client.records.get(KEY).cc, 1_000_000);
     }
     await button.execute(interactionFor(), client, ['cancel', id]);
@@ -182,8 +185,24 @@ test('company buttons respect subcommand holds, fail closed on config errors, an
 
 test('wrong guild/channel commands do not touch storage', async () => {
     const client = { db: { getStrict: async () => { throw new Error('must not query'); } } };
-    assert.match((await runTyped(client, 'شركة', { guildId: '100000000000000250' })).content, /مش متاحة/);
+    // Another server: no answer at all (report #284).
+    assert.equal(await runTyped(client, 'شركة', { guildId: '100000000000000250' }), undefined);
     assert.match((await runTyped(client, 'شركة', { channelId: '100000000000000251' })).content, /بس/);
+});
+
+test('a slash company command in another server leaves no message (report #284)', async () => {
+    const calls = [];
+    const interaction = {
+        guildId: '100000000000000250', channelId: GAMES_BOTS_CHANNEL_ID, user: { id: USER },
+        deferReply: async (options) => { calls.push(['defer', options.flags]); },
+        deleteReply: async () => { calls.push(['delete']); },
+        reply: async () => { calls.push(['reply']); }, editReply: async () => { calls.push(['edit']); }, followUp: async () => { calls.push(['followUp']); },
+    };
+    await command.execute(interaction, {}, { db: { getStrict: async () => { throw new Error('must not query'); } } });
+    assert.deepEqual(calls, [['defer', MessageFlags.Ephemeral], ['delete']]);
+    for (const file of ['../src/commands/Games/company.js', '../src/interactions/buttons/store/company.js']) {
+        assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /الشركات مش متاحة/u, file);
+    }
 });
 
 test('company panel and upgrade/withdraw prompts disclose current and next-cycle economics', async () => {

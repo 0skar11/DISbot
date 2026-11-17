@@ -5,6 +5,12 @@ import { isGamesBotsChannel } from '../../services/cc/gamesBotChannel.js';
 import { companyPanel, companiesPanel, quoteCompanyAction, quoteCompanyModeration, companyFailureText } from '../../services/cc/companyUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
+async function ignoreSilently(interaction) {
+    if (interaction._isPrefixCommand || interaction.replied || interaction.deferred) return;
+    const deferred = await interaction.deferReply?.({ flags: MessageFlags.Ephemeral }).then(() => true).catch(() => false);
+    if (deferred) await interaction.deleteReply?.().catch(() => {});
+}
+
 const words = { إنشاء: 'create', انشاء: 'create', تطوير: 'upgrade', خزنة: 'treasury', خزنه: 'treasury', سحب: 'withdraw', ترتيب: 'leaderboard', إيقاف: 'archive', ايقاف: 'archive', استرجاع: 'restore' };
 
 export default {
@@ -32,7 +38,9 @@ export default {
     },
     async execute(interaction, config, client) {
         const reply = (data) => InteractionHelper.safeReply(interaction, { allowedMentions: { parse: [] }, ...data });
-        if (!isHomeGuild(interaction.guildId)) return reply({ content: '❌ الشركات مش متاحة في السيرفر ده.' });
+        // Companies are our server only. Anywhere else the bot says nothing (report #284): a typed command gets
+        // no answer, and a slash command is acknowledged privately and the reply removed, so no message is left.
+        if (!isHomeGuild(interaction.guildId)) return ignoreSilently(interaction);
         if (!isGamesBotsChannel(interaction.channel, interaction.channelId)) return reply({ content: `🏢 الشركات في <#${GAMES_BOTS_CHANNEL_ID}> بس.` });
         // Neon may cold-start and the leaderboard reads the guild's economy rows. Acknowledge
         // Discord before doing any I/O; prefix commands use the helper's local defer path.

@@ -1,9 +1,10 @@
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
-import { buildGuideEmbeds } from '../../services/cc/guideUi.js';
+import { buildGuidePayload } from '../../services/cc/guideUi.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 
 // `شرح` / `/guide`: sends the simple CC, store and bourse guide (services/cc/guideUi.js) to the member
-// in DM. The chat only gets a short note, gone after a few seconds.
+// in DM: a short contents page with a sections menu (report #283). The chat only gets a short note,
+// gone after a few seconds.
 const NOTE_DELETE_MS = 5_000;
 const SENT = '📬 بعتلك الشرح في الخاص.';
 const DM_CLOSED = '❌ مقدرتش أبعتلك في الخاص، افتح الرسايل الخاصة من السيرفر وجرّب تاني.';
@@ -15,7 +16,7 @@ export default {
         .setDMPermission(false),
 
     async execute(interaction) {
-        const sent = await interaction.user.send({ embeds: buildGuideEmbeds({ guildId: interaction.guildId }) }).then(() => true).catch(() => false);
+        const sent = await interaction.user.send(buildGuidePayload({ guildId: interaction.guildId })).then(() => true).catch(() => false);
         const content = sent ? SENT : DM_CLOSED;
         const source = interaction._sourceMessage;
         if (!source) {

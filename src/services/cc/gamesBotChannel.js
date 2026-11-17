@@ -8,14 +8,16 @@
 // message answering a trader (their slash command, or a reply to their message) opens that channel for
 // the games bot, and it stays open while the game goes on, until TRADER_GAME_IDLE_MS pass with no games
 // bot message there.
+//
+// In every server the server owners (config/serverOwners.js) may open a game anywhere too. Nobody else:
+// Anti-Nuke trusted members and trusted roles (Zenith's الماس) play in the games room only (report #280).
 
 import { GAMES_BOTS_CHANNEL_ID, gamesBotIds } from '../../config/games.js';
 import { isHomeGuild } from '../../config/homeGuild.js';
+import { isServerOwner } from '../../config/serverOwners.js';
 import { getTraderRole } from './traderRoleService.js';
-import { getGuildConfig } from '../config/guildConfig.js';
-import { isTrusted } from '../../utils/antiNukeLogging.js';
 
-// The games bots room of each other server (Zenith). In those servers the Anti-Nuke trusted members may open a game anywhere.
+// The games bots room of each other server (Zenith).
 const GUILD_GAMES_CHANNELS = { '1569932761471524874': '1570728118182744145' };
 export const gamesChannelIdFor = (guildId) => GUILD_GAMES_CHANNELS[String(guildId)] || GAMES_BOTS_CHANNEL_ID;
 
@@ -41,19 +43,13 @@ async function isTrader(message, userId) {
     return Boolean(member?.roles?.cache?.has(role.id));
 }
 
-/** Whether this games bot message belongs to a game a trader opened in this channel (our server only). */
+/** Whether this games bot message belongs to a game a server owner (or, in our server, a trader) opened in this channel. */
 async function isTraderGame(message, now) {
-    const home = isHomeGuild(message.guild.id);
     const open = now - (traderGames.get(message.channelId) ?? -Infinity) <= TRADER_GAME_IDLE_MS;
     if (!open) {
         const starter = await starterOf(message);
         if (!starter) return false;
-        if (home) {
-            if (!(await isTrader(message, starter))) return false;
-        } else {
-            const config = await getGuildConfig(message.client, message.guild.id).catch(() => null);
-            if (!(await isTrusted(message.guild, config, starter).catch(() => false))) return false;
-        }
+        if (!isServerOwner(starter) && !(isHomeGuild(message.guild.id) && await isTrader(message, starter))) return false;
     }
     traderGames.set(message.channelId, now);
     return true;
@@ -77,7 +73,7 @@ export async function handleGamesBotOutsideChannel(message, { now = Date.now() }
     // The member who started the game (Clover answers slash commands) is told where to play.
     const userId = message.interactionMetadata?.user?.id || message.interaction?.user?.id || null;
     const notice = await message.channel.send({
-        content: `🎮 ${userId ? `<@${userId}> ` : ''}ألعاب البوتات في <#${room}> بس${isHomeGuild(message.guild.id) ? '، أو في أي روم لو معاك 💼 رول التاجر' : '، أو في أي روم لو انت Trusted'}.`,
+        content: `🎮 ${userId ? `<@${userId}> ` : ''}ألعاب البوتات في <#${room}> بس${isHomeGuild(message.guild.id) ? '، أو في أي روم لو معاك 💼 رول التاجر' : ''}.`,
         allowedMentions: { users: userId ? [userId] : [] },
     }).catch(() => null);
     if (notice) setTimeout(() => notice.delete().catch(() => {}), NOTICE_DELETE_MS).unref?.();

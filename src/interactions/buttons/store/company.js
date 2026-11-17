@@ -26,7 +26,8 @@ async function buttonEnabled(client, guildId, action) {
 export default {
     name: COMPANY_BUTTON_PREFIX,
     async execute(interaction, client, [action, ...args]) {
-        if (!interaction.inGuild() || !isHomeGuild(interaction.guildId)) return privateReply(interaction, '❌ الشركات مش متاحة هنا.');
+        // Outside our server companies don't exist: the press is acknowledged with no message (report #284).
+        if (!interaction.inGuild() || !isHomeGuild(interaction.guildId)) return interaction.deferUpdate?.().catch(() => {});
         if (!isGamesBotsChannel(interaction.channel, interaction.channelId)) return privateReply(interaction, '🏢 افتح لوحة الشركة في روم الألعاب.');
         if (action === 'confirm' || action === 'cancel') {
             const quote = getCompanyQuote(args[0]);

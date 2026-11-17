@@ -343,7 +343,7 @@ describe('closing a report (checkClosedReports)', () => {
     assert.equal(calls.gets[0].options.params.labels, 'بلاغ');
   });
 
-  test('not planned: grey 🔒 بلاغ #N — اتقفل, also permanent', async () => {
+  test('not planned: grey 🔒 بلاغ #N — اتقفل stays, the "closed without a fix" reply deletes itself after 5 seconds (report #281)', async () => {
     fakeGitHub();
     const { client, room, post } = await setup();
     const original = post('حاجة مش مهمة');
@@ -351,12 +351,35 @@ describe('closing a report (checkClosedReports)', () => {
     const [report] = reportsIn(room);
     mock.restoreAll();
     const calls = fakeGitHub({ closed: [closedIssue(42, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: report.id, reason: 'not_planned' })] });
+    mock.timers.enable({ apis: ['setTimeout'] });
     await checkClosedReports(client);
     assert.equal(report.embeds[0].title, '🔒 بلاغ #1 — اتقفل');
     assert.equal(report.embeds[0].color, 0x95a5a6);
     assert.equal(report.replies.length, 1);
-    assert.equal(report.replies[0].deleted, false);
+    const [notice] = report.replies;
+    assert.equal(notice.content, `<@${STAFF_ID}> 🔒 البلاغ #1 اتقفل من غير حل، متشتغلش عليه تاني.`);
+    mock.timers.tick(4_999);
+    await Promise.resolve();
+    assert.equal(notice.deleted, false, 'still there before 5 seconds');
+    mock.timers.tick(1);
+    await Promise.resolve();
+    assert.equal(notice.deleted, true, 'deleted after 5 seconds');
     assert.deepEqual(calls.labels[0].body, { labels: ['اتقفلت'] });
+  });
+
+  test('not planned with the report message gone: the notice posted in the room deletes itself too', async () => {
+    const { client, room } = await setup();
+    const gone = closedIssue(51, { guildId: HOME_GUILD_ID, channelId: room.id, messageId: '799999999999999998', reason: 'not_planned' });
+    gone.title = `[bugs #8] user${STAFF_ID}: مشكلة`;
+    fakeGitHub({ closed: [gone] });
+    mock.timers.enable({ apis: ['setTimeout'] });
+    await checkClosedReports(client);
+    const notice = room.posted.find((message) => message.content?.includes('البلاغ #8'));
+    assert.ok(notice);
+    assert.equal(notice.deleted, false);
+    mock.timers.tick(5_000);
+    await Promise.resolve();
+    assert.equal(notice.deleted, true);
   });
 
   test('an issue already labelled اتحلت is not announced again', async () => {

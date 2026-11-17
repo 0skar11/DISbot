@@ -132,4 +132,15 @@ describe('CC messages', () => {
     assert.equal(await handleGamesBotOutsideChannel(owner, { now: 95_000_000 }), false);
     assert.equal(owner.deleted, false);
   });
+
+  test('Zenith: Anti-Nuke trusted members (the Discord owner, trusted roles like الماس) play in the games room only (report #280)', async () => {
+    const ZENITH = '1569932761471524874';
+    const ROOM = '1570728118182744145';
+    // guild.ownerId is '1' in botMessage: isTrusted() says yes for them, the games room rule must not.
+    const trusted = botMessage('666666666666666666', { guildId: ZENITH, userId: '1' });
+    assert.equal(await handleGamesBotOutsideChannel(trusted, { now: 120_000_000 }), true);
+    assert.equal(trusted.deleted, true);
+    assert.match(trusted.sent[0].content, new RegExp(`<#${ROOM}> بس\\.$`, 'u'));
+    assert.doesNotMatch(trusted.sent[0].content, /Trusted/u);
+  });
 });

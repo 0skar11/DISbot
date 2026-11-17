@@ -4,7 +4,7 @@ import { logger } from '../utils/logger.js';
 // Every report is also opened as an issue (label 'بلاغ') in the bot's GitHub repo, so reports can be
 // searched and followed up there. Closing the issue marks the report as solved: the
 // watcher below then edits the report message in Discord and pings the reporter with a
-// short reply that deletes itself after 5 seconds (in #bugs-reports the reply stays: notifyClosedBugReport).
+// short reply that deletes itself after 5 seconds (in #bugs-reports the "solved" reply stays: notifyClosedBugReport).
 //   GITHUB_TOKEN   fine-grained token with Issues read/write on REPORTS_REPO
 //   REPORTS_REPO   owner/name of the repo the report issues go to
 // The repo was renamed from 0skar11/- to 0skar11/DISbot; the old name now belongs to another repo,
@@ -150,19 +150,22 @@ export async function openReportIssue({
   }
 }
 
-// #bugs-reports: the embed shows the result and the date, and the reply pinging the reporter is never deleted.
+// #bugs-reports: the embed shows the result and the date. The "solved" reply pinging the reporter stays;
+// the "closed without a fix" reply deletes itself after 5 seconds (report #281), the grey embed keeps the record.
 // The report message may be gone (deleted by someone): the notice is then posted in the room on its own.
 async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, solved) {
+  const sent = await announceClosedBugReport(channel, reportMessage, issue, reporterId, solved);
+  if (sent && !solved) setTimeout(() => sent.delete?.().catch(() => null), MENTION_DELETE_MS).unref?.();
+}
+
+async function announceClosedBugReport(channel, reportMessage, issue, reporterId, solved) {
   const date = new Date(issue.closed_at || Date.now()).toISOString().slice(0, 10);
   const number = bugReportNumber(issue, reportMessage);
   const content = solved
     ? `<@${reporterId}> ✅ البلاغ #${number} اتقفل واتحل، متتحلش تاني.`
     : `<@${reporterId}> 🔒 البلاغ #${number} اتقفل من غير حل، متشتغلش عليه تاني.`;
   const payload = { content, allowedMentions: { users: [reporterId] } };
-  if (!reportMessage) {
-    await channel?.send?.(payload).catch(() => null);
-    return;
-  }
+  if (!reportMessage) return channel?.send?.(payload).catch(() => null);
   const [embed] = reportMessage.embeds;
   const data = embed?.toJSON?.() || embed || {};
   const closedLine = solved ? `✅ اتحل في ${date}` : `🔒 اتقفل في ${date}`;
@@ -174,7 +177,7 @@ async function notifyClosedBugReport(channel, reportMessage, issue, reporterId, 
       footer: { ...(data.footer || {}), text: [data.footer?.text, closedLine].filter(Boolean).join(' • ') },
     }],
   }).catch((error) => logger.error(`Failed to update bug report #${number} (GitHub #${issue.number}) in Discord:`, error));
-  await reportMessage.reply(payload).catch(() => channel?.send?.(payload).catch(() => null));
+  return reportMessage.reply(payload).catch(() => channel?.send?.(payload).catch(() => null));
 }
 
 async function notifyClosedReport(client, api, issue) {
