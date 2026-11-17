@@ -9,7 +9,7 @@ import { HOME_GUILD_ID } from '../../config/homeGuild.js';
 import { Mutex } from '../../utils/mutex.js';
 import { logger } from '../../utils/logger.js';
 import {
-    IBN_AL_INSULTS, INSULTS, INSULTS_ENGLISH, INSULTS_LATIN, explainText, setCustomRules,
+    IBN_AL_INSULTS, INSULTS, INSULTS_ENGLISH, INSULTS_LATIN, builtInFamilyOf, explainText, setCustomRules,
 } from './chatFilterRules.js';
 import { RULES, isCommonLatin, normalizeCustomWord, variantGroups } from './chatFilterVariants.js';
 import { collapseToken, normalizeForFilter } from './chatFilterText.js';
@@ -48,40 +48,44 @@ export function resetAutomodStore() {
 
 // ---- built-in lists ---------------------------------------------------------------------------
 /**
- * Where a built-in word lives: { list: 'insult'|'ibnAl'|'latin'|'english', word } (the word as stored), or null.
+ * Where a built-in word lives: { list: 'insult'|'ibnAl'|'latin'|'english', word, head, words }, or null. `word`
+ * is the entry as stored; `head` and `words` are the whole word it belongs to (BUILT_IN_FAMILIES: its Arabic
+ * forms and franco spellings), which `automod remove` / `automod enable` switch off and on together.
  * `ibnAl`: true = only the "ابن ال..." list, false = every list but that one, undefined = all lists.
  */
 export function findBuiltIn(word, { ibnAl } = {}) {
+    const found = findEntry(word, { ibnAl });
+    return found ? { ...found, ...builtInFamilyOf(found.word) } : null;
+}
+function findEntry(word, { ibnAl } = {}) {
     const normalized = normalizeForFilter(word);
     if (!normalized) return null;
     if (ibnAl !== false) {
         const ibn = normalizeCustomWord(word, 'ibnAl');
         const inIbn = [normalized, ibn].find((w) => IBN_AL_INSULTS.includes(w));
-        if (ibnAl === true) return inIbn ? { list: 'ibnAl', word: inIbn, words: [inIbn] } : null;
-        if (inIbn && !INSULTS.includes(normalized)) return { list: 'ibnAl', word: inIbn, words: [inIbn] };
+        if (ibnAl === true) return inIbn ? { list: 'ibnAl', word: inIbn } : null;
+        if (inIbn && !INSULTS.includes(normalized)) return { list: 'ibnAl', word: inIbn };
     }
-    if (INSULTS.includes(normalized)) return { list: 'insult', word: normalized, words: [normalized] };
-    // The franco list has a few uncollapsed spellings ("teez" next to "tez"): they go off and on together.
+    if (INSULTS.includes(normalized)) return { list: 'insult', word: normalized };
+    // The franco list has a few uncollapsed spellings ("teez" next to "tez"): both are in the same word.
     const typed = String(word).trim().toLowerCase();
-    const latinEntries = [...new Set(INSULTS_LATIN.filter((entry) => collapseToken(entry) === normalized))];
-    if (latinEntries.length) return { list: 'latin', word: latinEntries.includes(typed) ? typed : latinEntries[0], words: latinEntries };
+    const latinEntries = INSULTS_LATIN.filter((entry) => collapseToken(entry) === normalized);
+    if (latinEntries.length) return { list: 'latin', word: latinEntries.includes(typed) ? typed : latinEntries[0] };
     const latin = collapseToken(normalized.replace(/\$/gu, 's').replace(/@/gu, 'a').replace(/0/gu, 'o'));
     const english = INSULTS_ENGLISH.find((entry) => entry.word === latin || entry.forms.includes(latin) || entry.double.includes(latin));
-    if (english) return { list: 'english', word: english.word, words: [english.word] };
-    return null;
+    return english ? { list: 'english', word: english.word } : null;
 }
 const isBuiltInWord = (word) => INSULTS.includes(word) || IBN_AL_INSULTS.includes(word) || INSULTS_LATIN.includes(word)
     || INSULTS_ENGLISH.some((entry) => entry.word === word);
 
-/** Built-in words with the same consonant skeleton (the other spellings that stay on when one is switched off). */
-export function relatedBuiltIns(word) {
-    const groups = variantGroups(word, 'insult');
-    const keys = new Set([...groups.skeleton, ...groups.francoForms, ...groups.arabicFromLatin].filter(Boolean));
-    if (!keys.size) return [];
-    const normalized = normalizeForFilter(word);
-    const related = [...INSULTS_LATIN, ...INSULTS].filter((entry) => entry !== normalized && !state.disabled.includes(entry)
-        && variantGroups(entry, 'insult').francoForms.some((form) => keys.has(form)));
-    return [...new Set(related)].slice(0, 8);
+/** The switched-off built-in words, one per word: [{ head, words }] in the order they were switched off. */
+export function switchedOffWords(disabled = state.disabled) {
+    const words = new Map();
+    for (const entry of disabled) {
+        const family = builtInFamilyOf(entry);
+        if (!words.has(family.head)) words.set(family.head, { head: family.head, words: family.words.filter((w) => disabled.includes(w)) });
+    }
+    return [...words.values()];
 }
 
 // ---- persistence ------------------------------------------------------------------------------
@@ -96,7 +100,11 @@ function sanitize(stored) {
         seen.add(key);
         custom.push({ word, rule: entry.rule, addedBy: String(entry.addedBy || ''), at: Number(entry.at) || 0 });
     }
-    const disabled = [...new Set((Array.isArray(stored?.disabled) ? stored.disabled : []).filter((w) => typeof w === 'string' && isBuiltInWord(w)))];
+    // A word is off in all its spellings: an older save that switched off only one spelling ("خول" without
+    // "khawal") switches off the whole word, so the list and the filter agree.
+    const disabled = [...new Set((Array.isArray(stored?.disabled) ? stored.disabled : [])
+        .filter((w) => typeof w === 'string' && isBuiltInWord(w))
+        .flatMap((w) => builtInFamilyOf(w).words))];
     return { custom, disabled };
 }
 
@@ -177,8 +185,9 @@ export function addAutomodWord(client, { word, rule = 'insult', by = '', now = D
 }
 
 /**
- * Removes an owner word, or switches a built-in list word off. Returns { ok: true, kind: 'custom', entry } |
- * { ok: true, kind: 'disabled', builtIn, related } | { ok: false, reason: 'not_found'|'already_off'|'readonly', rule }.
+ * Removes an owner word, or switches a built-in word off in all its spellings. Returns
+ * { ok: true, kind: 'custom', entry } | { ok: true, kind: 'disabled', builtIn, words } (the spellings switched off) |
+ * { ok: false, reason: 'not_found'|'already_off'|'readonly', rule }.
  */
 export function removeAutomodWord(client, { word }) {
     return edit(client, () => {
@@ -194,7 +203,7 @@ export function removeAutomodWord(client, { word }) {
             const off = builtIn.words.filter((entry) => !state.disabled.includes(entry));
             if (!off.length) return { ok: false, reason: 'already_off', builtIn };
             state = { ...state, disabled: [...state.disabled, ...off] };
-            return { ok: true, kind: 'disabled', builtIn, related: relatedBuiltIns(builtIn.word).filter((entry) => !builtIn.words.includes(entry)) };
+            return { ok: true, kind: 'disabled', builtIn, words: off };
         }
         // Caught by a built-in pattern (كسمك, زانية, دين امك...): those groups cannot be switched off word by word.
         const caught = explainText(text);
@@ -202,13 +211,14 @@ export function removeAutomodWord(client, { word }) {
     });
 }
 
-/** Switches a built-in word back on. Returns { ok: true, word } or { ok: false, reason: 'not_off' }. */
+/** Switches a built-in word back on in all its spellings. Returns { ok: true, word, words } or { ok: false, reason: 'not_off' }. */
 export function enableAutomodWord(client, { word }) {
     return edit(client, () => {
         const builtIn = findBuiltIn(word);
         const targets = builtIn?.words || [normalizeForFilter(word)];
-        if (!targets.some((entry) => state.disabled.includes(entry))) return { ok: false, reason: 'not_off' };
+        const back = targets.filter((entry) => state.disabled.includes(entry));
+        if (!back.length) return { ok: false, reason: 'not_off' };
         state = { ...state, disabled: state.disabled.filter((entry) => !targets.includes(entry)) };
-        return { ok: true, word: builtIn?.word || targets[0], builtIn };
+        return { ok: true, word: builtIn?.head || targets[0], words: back, builtIn };
     });
 }

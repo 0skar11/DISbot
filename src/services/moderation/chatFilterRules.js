@@ -62,6 +62,40 @@ export const INSULTS_ENGLISH = englishBuiltIns();
 // "الحفره" used to be here; it is allowed now (in every server). Add patterns here to delete a word without punishment.
 export const BANNED_WORDS = [];
 
+// Every built-in list word belongs to one word: its Arabic forms, its franco spellings and the "ابن ال..."
+// completions of the same word (the first entry names it). `automod remove` / `automod enable` switch the
+// whole word off or on (owner's request: a removed word disappears from the list in all its spellings).
+// An English entry (INSULTS_ENGLISH) is a word of its own with its spellings.
+export const BUILT_IN_FAMILIES = [
+    ['شرموط', 'شرموطه', 'شراميط', 'sharmot', 'sharmota', 'sharmouta', 'shrmota'],
+    ['متناك', 'متناكه', 'اتناك', 'metnak', 'mitnak', 'metnaka', 'mtnak'],
+    ['منيوك', 'منيوكه', 'manyok', 'manyak', 'manyouk', 'manyoka', 'mnyok'],
+    ['نيك', 'انيك', 'هنيك', 'anikak', 'anekak', 'hanikak', 'hanekak'],
+    ['خول', 'خولات', 'khawal', 'khawl', 'khwal', '5awal', '5wal', 'khawalat', '5awalat'],
+    ['عرص', 'عرصه', 'معرص', 'معرصين', '3ars', 'a3ars', 'm3ars', 'me3ars', 'mo3ars', 'm3rs', 'm3arsin'],
+    ['زب', 'زبي', 'زبر', 'zobr', 'zeby', 'zobry'],
+    ['طيز', 'teez', 'tez'],
+    ['لبوه', 'labwa'],
+    ['قحبه', 'قحاب', 'a7ba', '2a7ba', '9a7ba', 'qa7ba', 'ka7ba'],
+    ['ديوث', 'dayoth', 'dayouth'],
+    ['كلب', 'كلبه', 'كلاب'],
+    ['جزمه', 'جزم'],
+    ['حمار', 'حماره'],
+    ['وسخ', 'وسخه'],
+    ['زانيه'],
+    ['حرام'],
+    ['زباله'],
+    ['عاهره'],
+    ['خنزير'],
+];
+const FAMILY_OF = new Map(BUILT_IN_FAMILIES.flatMap((family) => family.map((word) => [word, family])));
+
+/** The whole built-in word a list entry belongs to: { head, words } (a word outside the lists is its own). */
+export function builtInFamilyOf(word) {
+    const family = FAMILY_OF.get(word);
+    return family ? { head: family[0], words: [...family] } : { head: word, words: [word] };
+}
+
 // ---- patterns -------------------------------------------------------------------------
 const START = '(?<!\\p{L})';
 const END = '(?!\\p{L})';

@@ -24,6 +24,7 @@ import {
 import { variantGroups } from './chatFilterVariants.js';
 import {
     MAX_CUSTOM_WORDS, WORD_MAX_LENGTH, WORD_MIN_LENGTH, addAutomodWord, enableAutomodWord, getAutomodState, removeAutomodWord,
+    switchedOffWords,
 } from './automodStore.js';
 
 export const AUTOMOD_BUTTON = 'automod';
@@ -41,6 +42,7 @@ const SUBCOMMANDS = new Map([
     ...['variants', 'variant', 'اشكال', 'أشكال'].map((w) => [w, 'variants']),
     ...['test', 'check', 'جرب', 'اختبر'].map((w) => [w, 'test']),
     ...['list', 'show', 'القايمة', 'لستة'].map((w) => [w, 'list']),
+    ...['disabled', 'stopped', 'موقوفة', 'موقوفه', 'الموقوفة', 'الموقوفه'].map((w) => [w, 'disabled']),
 ]);
 export const RULE_WORDS = new Map([
     ...['family', 'عيلة', 'عيله', 'اهل', 'أهل'].map((w) => [w, 'family']),
@@ -64,13 +66,14 @@ export const USAGE = [
     '`automod add <نوع> <كلمة>` إضافة: النوع عيلة / ابن / شتيمة / ممنوع (من غيره = شتيمة)',
     '`automod remove <كلمة>` تشيل كلمتك، أو توقف كلمة من القايمة الأساسية',
     '`automod enable <كلمة>` ترجع كلمة أساسية وقفتها',
+    '`automod موقوفة` الكلمات الأساسية اللي وقفتها (مش بتظهر في القايمة)',
     '`automod variants <كلمة>` الأشكال اللي البوت بيمسكها لوحده',
     '`automod test <كلام>` تجرب الفلتر (من غير أي عقاب)',
 ].join('\n');
 
 /**
  * `automod ...` typed as the first word (with `!`, `.` or the prefix, or without). Returns null for anything
- * else, or { sub: 'list'|'add'|'remove'|'enable'|'variants'|'test'|'usage', rule, text }.
+ * else, or { sub: 'list'|'add'|'remove'|'enable'|'disabled'|'variants'|'test'|'usage', rule, text }.
  */
 export function parseAutomod(content, prefix = '!') {
     let text = String(content || '').trim();
@@ -119,11 +122,16 @@ function chunks(text, size = EMBED_CHARS) {
 
 const listLine = (label, words, separator = '، ') => `${label} ${words.length ? words.map(escape).join(separator) : '*مفيش*'}`;
 
-/** The list's sections (rule classes), each { title, text }. */
+/**
+ * The list's sections (rule classes), each { title, text }. Only what the filter catches is shown: a removed
+ * owner word or a switched-off built-in word (in all its spellings) is gone from its section. When some
+ * built-in words are switched off, one short last line says how to see them and bring them back.
+ */
 export function automodSections(state = getAutomodState()) {
     const off = new Set(state.disabled);
-    const on = (list) => list.filter((word) => !off.has(word));
+    const on = (list) => [...new Set(list)].filter((word) => !off.has(word));
     const custom = (rule) => state.custom.filter((entry) => entry.rule === rule).map((entry) => entry.word);
+    const switchedOff = switchedOffWords(state.disabled);
     return [
         {
             title: ruleText('insult'),
@@ -151,8 +159,23 @@ export function automodSections(state = getAutomodState()) {
             ].join('\n'),
         },
         { title: ruleText('banned'), text: listLine('**كلماتك:**', custom('banned')) },
-        { title: '⏸️ كلمات أساسية موقفة', text: listLine('', state.disabled).trim() },
+        ...(switchedOff.length ? [{
+            title: '🔕 موقوفة',
+            text: `${switchedOff.length} كلمة أساسية موقوفة ومش ظاهرة فوق. \`automod موقوفة\` يعرضها، و\`automod enable <كلمة>\` يرجعها.`,
+        }] : []),
     ];
+}
+
+/** `automod موقوفة`: the switched-off built-in words (each with its spellings), to bring one back. */
+export function switchedOffText(state = getAutomodState()) {
+    const words = switchedOffWords(state.disabled);
+    if (!words.length) return '🔕 مفيش كلمات أساسية موقوفة.';
+    const lines = words.map(({ head, words: spellings }) => {
+        const others = spellings.filter((word) => word !== head);
+        return `• **${escape(head)}**${others.length ? ` (${others.map(escape).join('، ')})` : ''}`;
+    });
+    return [`🔕 **الكلمات الأساسية الموقوفة** (${words.length}): مش بتتمسح ومش ظاهرة في القايمة.`, ...lines,
+        '`automod enable <كلمة>` يرجع الكلمة بكل كتاباتها.'].join('\n').slice(0, 3900);
 }
 
 const HEADER = [
@@ -246,17 +269,17 @@ export function removeResultText(result) {
         if (result.reason === 'readonly') return `🔒 دي بتتمسك بنمط ثابت (${ruleText(result.rule)})، والأنماط دي مينفعش تتشال كلمة كلمة.`;
         return FAILURE[result.reason] || '❌ حصلت مشكلة.';
     }
-    if (result.kind === 'custom') return [`🗑️ اتشالت **${escape(result.entry.word)}** من كلماتك.`, ...savedNote(result)].join('\n');
+    if (result.kind === 'custom') return [`🗑️ اتشالت **${escape(result.entry.word)}** من كلماتك ومن القايمة.`, ...savedNote(result)].join('\n');
     return [
-        `⏸️ اتوقفت **${escape(result.builtIn.word)}** من القايمة الأساسية. \`automod enable ${result.builtIn.word}\` يرجعها.`,
-        ...(result.related?.length ? [`ℹ️ كتابات تانية لنفس الكلمة لسه شغالة: ${result.related.map(escape).join('، ')}`] : []),
+        `🔕 اتوقفت **${escape(result.builtIn.head)}** بكل كتاباتها واتشالت من القايمة: ${result.words.map(escape).join('، ')}`,
+        `\`automod enable ${result.builtIn.head}\` يرجعها.`,
         ...savedNote(result),
     ].join('\n');
 }
 
 export function enableResultText(result) {
     if (!result.ok) return FAILURE[result.reason] || '❌ حصلت مشكلة.';
-    return [`▶️ رجعت **${escape(result.word)}** للقايمة الأساسية.`, ...savedNote(result)].join('\n');
+    return [`▶️ رجعت **${escape(result.word)}** بكل كتاباتها للقايمة: ${result.words.map(escape).join('، ')}`, ...savedNote(result)].join('\n');
 }
 
 function savedNote(result) {
@@ -297,19 +320,31 @@ export function testText(text) {
 // ---- sending -------------------------------------------------------------------------------------
 /**
  * Sends `payload` to the message's author in DM; when their DMs are closed, in the room with a mention,
- * deleted after ROOM_REPLY_DELETE_MS. Returns 'dm', 'room' or 'none'.
+ * deleted after ROOM_REPLY_DELETE_MS. Returns the sent message (or null).
  */
 export async function sendPrivately(message, payload, { deleteAfterMs = ROOM_REPLY_DELETE_MS } = {}) {
     const dm = await message.author?.send?.(payload).catch(() => null);
-    if (dm) return 'dm';
+    if (dm) return dm;
     const room = await message.channel?.send?.({
         ...payload,
         content: [`<@${message.author.id}>`, payload.content].filter(Boolean).join(' '),
         allowedMentions: { users: [message.author.id] },
     }).catch(() => null);
-    if (!room) return 'none';
+    if (!room) return null;
     setTimeout(() => room.delete?.().catch(() => {}), deleteAfterMs).unref?.();
-    return 'room';
+    return room;
+}
+
+// The last list each owner was sent (and its page): a typed edit refreshes it, so a removed word is gone
+// from the list the owner is looking at too (the forms and 🔄 refresh their own list).
+const lastLists = new Map();
+function rememberList(userId, message, guildId, page = 0) {
+    if (message?.edit) lastLists.set(userId, { message, guildId, page: Number(page) || 0 });
+}
+async function refreshLastList(userId) {
+    const last = lastLists.get(userId);
+    if (!last) return;
+    await last.message.edit(automodListPayload(last.guildId, last.page)).catch(() => lastLists.delete(userId));
 }
 
 const textPayload = (text) => ({ content: '', embeds: [{ color: COLOR, description: text }], allowedMentions: { parse: [] } });
@@ -333,7 +368,7 @@ export async function logAutomodChange(guild, user, action, details) {
     }
 }
 
-const ACTION_NAMES = { add: '➕ إضافة كلمة', custom: '🗑️ شيل كلمة', disabled: '⏸️ وقف كلمة أساسية', enable: '▶️ رجوع كلمة أساسية' };
+const ACTION_NAMES = { add: '➕ إضافة كلمة', custom: '🗑️ شيل كلمة', disabled: '🔕 وقف كلمة أساسية (بكل كتاباتها)', enable: '▶️ رجوع كلمة أساسية' };
 
 /** Runs one edit (add / remove / enable) and logs it. Returns the answer text. */
 export async function runAutomodEdit(client, guild, user, sub, { word, rule = 'insult' }) {
@@ -347,13 +382,13 @@ export async function runAutomodEdit(client, guild, user, sub, { word, rule = 'i
         const result = await removeAutomodWord(client, { word });
         if (result.ok) {
             const shown = result.kind === 'custom' ? result.entry.word : result.builtIn.word;
-            await logAutomodChange(guild, user, ACTION_NAMES[result.kind], [`📝 **الكلمة:** ${escape(shown)}`,
-                ...(result.kind === 'custom' ? [`🚫 **النوع:** ${ruleText(result.entry.rule)}`] : [])]);
+            await logAutomodChange(guild, user, ACTION_NAMES[result.kind], [`📝 **الكلمة:** ${escape(result.kind === 'custom' ? shown : result.builtIn.head)}`,
+                ...(result.kind === 'custom' ? [`🚫 **النوع:** ${ruleText(result.entry.rule)}`] : [`✏️ **الكتابات:** ${result.words.map(escape).join('، ')}`])]);
         }
         return removeResultText(result);
     }
     const result = await enableAutomodWord(client, { word });
-    if (result.ok) await logAutomodChange(guild, user, ACTION_NAMES.enable, [`📝 **الكلمة:** ${escape(result.word)}`]);
+    if (result.ok) await logAutomodChange(guild, user, ACTION_NAMES.enable, [`📝 **الكلمة:** ${escape(result.word)}`, `✏️ **الكتابات:** ${result.words.map(escape).join('، ')}`]);
     return enableResultText(result);
 }
 
@@ -369,16 +404,20 @@ export async function handleAutomodMessage(message, { prefix = '!' } = {}) {
     // The words stay private: the typed command is removed from the room.
     await message.delete?.().catch(() => {});
     if (parsed.sub === 'list') {
-        await sendPrivately(message, automodListPayload(message.guild.id, 0));
+        rememberList(message.author.id, await sendPrivately(message, automodListPayload(message.guild.id, 0)), message.guild.id);
         return true;
     }
     let text;
     if (parsed.sub === 'usage') text = USAGE;
+    else if (parsed.sub === 'disabled') text = switchedOffText();
     else if (parsed.sub === 'variants') {
         const custom = getAutomodState().custom.find((entry) => entry.word === parsed.text);
         text = parsed.text ? variantsText(parsed.text, custom?.rule || 'insult') : `⚠️ اكتب الكلمة.\n${USAGE}`;
     } else if (parsed.sub === 'test') text = testText(parsed.text);
-    else text = await runAutomodEdit(client, message.guild, message.author, parsed.sub, { word: parsed.text, rule: parsed.rule });
+    else {
+        text = await runAutomodEdit(client, message.guild, message.author, parsed.sub, { word: parsed.text, rule: parsed.rule });
+        await refreshLastList(message.author.id);
+    }
     await sendPrivately(message, textPayload(text));
     return true;
 }
@@ -417,7 +456,10 @@ export function automodModal(action, guildId, page = 0) {
 export async function handleAutomodButton(interaction, client, [action, guildId, page] = []) {
     if (!isServerOwner(interaction.user?.id)) return privately(interaction, NOT_OWNER);
     if (!isHomeGuild(guildId) || !['page', 'add', 'remove', 'test'].includes(action)) return privately(interaction, STALE);
-    if (action === 'page') return interaction.update(automodListPayload(guildId, page)).catch(() => privately(interaction, STALE));
+    if (action === 'page') {
+        rememberList(interaction.user.id, interaction.message, guildId, page);
+        return interaction.update(automodListPayload(guildId, page)).catch(() => privately(interaction, STALE));
+    }
     return interaction.showModal(automodModal(action, guildId, Number(page) || 0)).catch(() => privately(interaction, STALE));
 }
 

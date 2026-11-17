@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { SERVER_OWNER_IDS, isServerOwner } from '../src/config/serverOwners.js';
 import { getGuildConfigKey } from '../src/utils/database.js';
-import { checkText } from '../src/services/moderation/chatFilterRules.js';
+import {
+  BUILT_IN_FAMILIES, IBN_AL_INSULTS, INSULTS, INSULTS_LATIN, checkText,
+} from '../src/services/moderation/chatFilterRules.js';
 import { handleChatFilter } from '../src/services/moderation/chatFilterService.js';
 import { clearRepeats } from '../src/services/moderation/chatFilterRepeats.js';
 import {
@@ -27,7 +29,7 @@ const OTHER_GUILD = '100000000000000099';
 
 function setup({ guildId = HOME_GUILD_ID, dmOpen = true, db = {} } = {}) {
   const store = new Map([[getGuildConfigKey(guildId), { prefix: '!', auditChannels: { automode: AUDIT_ROOM } }]]);
-  const sent = { room: [], dm: [], audit: [] };
+  const sent = { room: [], dm: [], dmMessages: [], audit: [] };
   const client = {
     user: { id: 'bot', bot: true },
     commands: new Map(),
@@ -59,8 +61,10 @@ function setup({ guildId = HOME_GUILD_ID, dmOpen = true, db = {} } = {}) {
     id, tag: `user${id.slice(-3)}`, username: `user${id.slice(-3)}`, bot: false,
     send: async (payload) => {
       if (!dmOpen) throw Object.assign(new Error('Cannot send messages to this user'), { code: 50007 });
+      const msg = { id: `dm${sent.dm.length + 1}`, payload, edits: [], edit: async (edit) => { msg.edits.push(edit); return msg; } };
       sent.dm.push(payload);
-      return { id: `dm${sent.dm.length}` };
+      sent.dmMessages.push(msg);
+      return msg;
     },
   });
   const message = (content, authorId = OWNER) => {
@@ -131,24 +135,39 @@ describe('automod store', () => {
     assert.deepEqual(store.get(AUTOMOD_KEY).custom, []);
     // Once the owner word is gone, the same word names the built-in "ابن الكلب" completion.
     const builtIn = await removeAutomodWord(client, { word: 'كلب' });
-    assert.deepEqual([builtIn.kind, builtIn.builtIn.list], ['disabled', 'ibnAl']);
+    assert.deepEqual([builtIn.kind, builtIn.builtIn.list, builtIn.words], ['disabled', 'ibnAl', ['كلب', 'كلبه', 'كلاب']]);
     assert.equal(checkText('ابن الكلب'), null);
+    assert.equal(checkText('ابن الكلاب'), null, 'the whole word goes off');
     assert.equal((await enableAutomodWord(client, { word: 'كلب' })).ok, true);
     assert.equal(checkText('ابن الكلب'), 'ibnAl');
     assert.equal((await removeAutomodWord(client, { word: 'قطقوطة' })).reason, 'not_found');
   });
 
-  test('built-in list words are switched off and back on; the regex families are read-only', async () => {
+  test('every built-in list entry belongs to exactly one word', () => {
+    const counts = new Map();
+    for (const family of BUILT_IN_FAMILIES) for (const word of new Set(family)) counts.set(word, (counts.get(word) || 0) + 1);
+    for (const word of new Set([...INSULTS, ...INSULTS_LATIN, ...IBN_AL_INSULTS])) assert.equal(counts.get(word), 1, word);
+    for (const word of counts.keys()) assert.ok([...INSULTS, ...INSULTS_LATIN, ...IBN_AL_INSULTS].includes(word), `${word} is not a list entry`);
+  });
+
+  test('built-in words are switched off and back on in all their spellings; the regex families are read-only', async () => {
     const { client, store } = setup();
     await loadAutomodRules(client);
     const off = await removeAutomodWord(client, { word: 'طيز' });
     assert.equal(off.kind, 'disabled');
-    assert.deepEqual(off.builtIn, { list: 'insult', word: 'طيز', words: ['طيز'] });
-    assert.ok(off.related.includes('teez'), 'the other spellings that stay on are named');
+    assert.deepEqual(off.builtIn, { list: 'insult', word: 'طيز', head: 'طيز', words: ['طيز', 'teez', 'tez'] });
+    assert.deepEqual(off.words, ['طيز', 'teez', 'tez']);
     assert.equal(checkText('طيز'), null);
+    assert.equal(checkText('teez'), null, 'its franco spellings too');
     assert.equal(checkText('طيز', { legacy: true }), 'insult', 'other servers keep it');
-    assert.deepEqual(store.get(AUTOMOD_KEY).disabled, ['طيز']);
+    assert.deepEqual(store.get(AUTOMOD_KEY).disabled, ['طيز', 'teez', 'tez']);
     assert.equal((await removeAutomodWord(client, { word: 'طيز' })).reason, 'already_off');
+    assert.equal((await removeAutomodWord(client, { word: 'tez' })).reason, 'already_off', 'any spelling names the same word');
+    const khawal = await removeAutomodWord(client, { word: 'khawal' });
+    assert.deepEqual(khawal.words, ['خول', 'خولات', 'khawal', 'khawl', 'khwal', '5awal', '5wal', 'khawalat', '5awalat']);
+    assert.deepEqual(['خول', 'خولات', 'khawal', '5awal', 'ya khwal'].map((text) => checkText(text)), [null, null, null, null, null]);
+    assert.equal((await enableAutomodWord(client, { word: 'خولات' })).words.length, 9);
+    assert.equal(checkText('5awal'), 'insult');
     assert.equal((await removeAutomodWord(client, { word: 'كسمك' })).reason, 'readonly');
     assert.equal((await removeAutomodWord(client, { word: 'ميتين امك' })).reason, 'readonly');
     assert.equal((await removeAutomodWord(client, { word: 'fvck' })).builtIn.word, 'fuck', 'an English spelling switches its entry off');
@@ -160,6 +179,7 @@ describe('automod store', () => {
     await removeAutomodWord(client, { word: 'طيز' });
     assert.equal((await enableAutomodWord(client, { word: 'طيز' })).ok, true);
     assert.equal(checkText('طيز'), 'insult');
+    assert.equal(checkText('teez'), 'insult');
     assert.equal((await enableAutomodWord(client, { word: 'طيز' })).reason, 'not_off');
   });
 
@@ -171,13 +191,13 @@ describe('automod store', () => {
     resetAutomodStore();
     assert.equal(checkText('حمار'), null, 'forgotten in memory');
     const saved = store.get(AUTOMOD_KEY);
-    assert.deepEqual(saved.disabled, ['teez', 'tez'], '"teez" and "tez" go off together');
-    store.set(AUTOMOD_KEY, { custom: [...saved.custom, null, { word: 5 }, { word: 'x y', rule: 'nope' }], disabled: [...saved.disabled, 'not-a-built-in', 5] });
-    assert.deepEqual(await loadAutomodRules(client), { loaded: true, custom: 1, disabled: 2 });
+    assert.deepEqual(saved.disabled, ['طيز', 'teez', 'tez'], 'the word in all its spellings');
+    // An older save that switched off one spelling only ("خول") comes back as the whole word.
+    store.set(AUTOMOD_KEY, { custom: [...saved.custom, null, { word: 5 }, { word: 'x y', rule: 'nope' }], disabled: ['teez', 'خول', 'not-a-built-in', 5] });
+    assert.deepEqual(await loadAutomodRules(client), { loaded: true, custom: 1, disabled: 12 });
     assert.equal(checkText('7mar'), 'family');
-    assert.equal(checkText('teez'), null);
-    assert.equal(checkText('طيز'), 'insult', 'only the franco spellings were switched off');
-    assert.deepEqual(getAutomodState().disabled, ['teez', 'tez']);
+    assert.deepEqual(['teez', 'طيز', 'خول', 'khawal', '5awal'].map((text) => checkText(text)), [null, null, null, null, null]);
+    assert.deepEqual(getAutomodState().disabled.slice(0, 3), ['طيز', 'teez', 'tez']);
   });
 
   test(`at most ${MAX_CUSTOM_WORDS} owner words`, async () => {
@@ -292,6 +312,8 @@ describe('the automod command', () => {
     assert.deepEqual(parseAutomod('automod remove kalb'), { sub: 'remove', rule: null, text: 'kalb' });
     assert.deepEqual(parseAutomod('automod test يا كلب يا حمار'), { sub: 'test', rule: null, text: 'يا كلب يا حمار' });
     assert.equal(parseAutomod('automod blabla').sub, 'usage');
+    assert.equal(parseAutomod('automod موقوفة').sub, 'disabled');
+    assert.equal(parseAutomod('automod disabled').sub, 'disabled');
     for (const text of ['automodx', 'the automod', 'auto mod', 'hello', '']) assert.equal(parseAutomod(text), null, text);
   });
 
@@ -380,6 +402,58 @@ describe('the automod command', () => {
     }
     assert.match(sent.audit[0].embeds[0].description, /البقرة/u);
     assert.match(sent.audit[2].embeds[0].description, /teez/u);
+  });
+
+  test('removed words disappear from the list: owner words, and built-in words in all their spellings', async () => {
+    const { client, message, sent, press } = setup();
+    await loadAutomodRules(client);
+    // The words shown in the rule sections (the header with the commands is left out).
+    const wordsOf = (embeds) => new Set(embeds.filter((e) => !e.title.startsWith('🛡️'))
+      .flatMap((e) => e.description.replace(/\*/gu, '').split(/[،,:\s()]+/u)).filter(Boolean));
+    const listed = () => wordsOf(automodPages().flat());
+    const titles = () => automodPages().flat().map((e) => e.title);
+    const typed = (content) => handleAutomodMessage(message(content, OWNER));
+    const KHAWAL = ['خول', 'خولات', 'khawal', 'khawl', 'khwal', '5awal', '5wal', 'khawalat', '5awalat'];
+
+    assert.ok(!titles().some((title) => title.includes('🔕') || title.includes('⏸️')), 'nothing switched off: no such section');
+    assert.ok(KHAWAL.every((w) => listed().has(w)));
+    await typed('automod');
+    const list = sent.dmMessages.at(-1);
+
+    await typed('automod add قرد');
+    assert.ok(listed().has('قرد'));
+    await typed('automod remove قرد');
+    assert.ok(!listed().has('قرد'), 'a removed owner word is gone');
+
+    await typed('automod remove خول');
+    for (const w of KHAWAL) assert.ok(!listed().has(w), `${w} is gone from the Arabic and franco lines`);
+    assert.ok(listed().has('شرموط') && listed().has('sharmota') && listed().has('عرص'), 'the other words stay');
+    await typed('automod remove fuck');
+    assert.ok(!listed().has('fuck') && listed().has('motherfucker'), 'the English line too');
+    await typed('automod remove كلب');
+    for (const w of ['كلب', 'كلبه', 'كلاب']) assert.ok(!listed().has(w), `${w} is gone from the ابن ال... line`);
+
+    // The list the owner was sent is refreshed, and the buttons show the same list.
+    assert.ok(list.edits.length >= 5);
+    const refreshed = wordsOf(list.edits.at(-1).embeds);
+    assert.ok(!refreshed.has('خول') && !refreshed.has('khawal') && !refreshed.has('fuck') && refreshed.has('شرموط'));
+    const page = await press(`automod:page:${HOME_GUILD_ID}:0`, OWNER);
+    assert.ok(!wordsOf(page.updates[0].embeds).has('khawal'));
+
+    // One short last section says how to see and bring back the switched-off words; it lists none of them.
+    const off = automodPages().flat().find((e) => e.title === '🔕 موقوفة');
+    assert.match(off.description, /^3 /u);
+    assert.ok(!/خول|khawal|fuck|كلب/u.test(off.description));
+    assert.ok(!titles().includes('⏸️ كلمات أساسية موقفة'));
+    await typed('automod موقوفة');
+    const offList = sent.dm.at(-1).embeds[0].description;
+    for (const w of ['خول', 'khawal', 'fuck', 'كلب', 'كلاب']) assert.ok(offList.includes(w), w);
+
+    for (const w of ['خول', 'fuck', 'كلب']) await typed(`automod enable ${w}`);
+    assert.ok(KHAWAL.every((w) => listed().has(w)) && listed().has('fuck') && listed().has('كلاب'));
+    assert.ok(!titles().some((title) => title.includes('🔕')), 'the section goes away when nothing is off');
+    await typed('automod موقوفة');
+    assert.match(sent.dm.at(-1).embeds[0].description, /مفيش/u);
   });
 
   test('a long list is split in pages under Discord limits, with ◀️ ▶️', () => {
