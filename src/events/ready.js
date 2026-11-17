@@ -38,7 +38,7 @@ export default {
 
       // A failure here must not stop the rest of the startup work.
       try {
-        // The owner's `automod` edits to the chat filter (our server): read once, then kept in memory.
+        // The owner's `automod` edits to the chat filter (one list for every server): read once, then kept in memory.
         const automod = await loadAutomodRules(client);
         startupLog(`Automod words: ${automod.loaded ? 'loaded' : 'NOT loaded (built-in lists only)'} (${automod.custom} added, ${automod.disabled} switched off)`);
       } catch (error) {

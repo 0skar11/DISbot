@@ -159,7 +159,7 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
     const prefix = guildConfig?.prefix || getCommandPrefix();
     if (gamesOnly && !isGameCommandMessage(message.content, [prefix])) return;
     const parsed = parseTypedCommand(message.content, prefix);
-    // `automod` (our server, owners only): the insult filter's lists, sent privately. Anyone else: plain chat.
+    // `automod` (every server, the server owners only): the insult filter's lists, sent privately. Anyone else: plain chat.
     if (await handleAutomodMessage(message, { prefix })) return;
     // `منشن` group (our server): runs before the role shortcuts so `شيل منشن @x` isn't "remove role منشن".
     if (parsed && await handleMentionGroupCommand(message, parsed.commandName, parsed.args)) return;

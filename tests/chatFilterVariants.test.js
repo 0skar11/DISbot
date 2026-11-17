@@ -59,7 +59,7 @@ describe('generateVariants (pure)', () => {
   });
 });
 
-describe('built-in English insults (our server; other servers keep the old lists)', () => {
+describe('built-in English insults (every server)', () => {
   beforeEach(() => setCustomRules({}));
 
   const POSITIVES = [
@@ -93,7 +93,7 @@ describe('built-in English insults (our server; other servers keep the old lists
     assert.equal(checkText('hey Dick'), 'insult');
   });
 
-  test('other servers (legacy) keep exactly the old lists: no English', () => {
+  test('the original built-in lists are unchanged (legacy option): no English there', () => {
     assert.deepEqual(wrong(['fuck', 'bitch', 'nigga', 'asshole'], null, { legacy: true }), []);
     assert.equal(checkText('sharmoota', { legacy: true }), 'insult');
     assert.equal(checkText('كسمك', { legacy: true }), 'family');
@@ -154,7 +154,7 @@ describe('setCustomRules: the owner words take effect at once for every rule cla
     setCustomRules({ disabled: ['طيز', 'teez', 'tez'] });
     assert.equal(checkText('طيز'), null);
     assert.equal(checkText('teez'), null);
-    assert.equal(checkText('طيز', { legacy: true }), 'insult', 'other servers keep it');
+    assert.equal(checkText('طيز', { legacy: true }), 'insult', 'the original list still has it');
     assert.equal(checkText('متناك'), 'insult');
     assert.equal(checkText('كسمك'), 'family');
     setCustomRules({ disabled: ['كلب'] });

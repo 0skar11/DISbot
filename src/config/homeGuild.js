@@ -1,6 +1,6 @@
-// homeGuild.js — our only server. The owner's rule: every update from now on is for this server only;
-// other servers the bot is in keep what they had and get no new features unless the owner asks for it.
-// New features check `isHomeGuild(guildId)` before doing anything.
+// homeGuild.js — our main server (CHAOS Club). The older rule "every update is for this server only" was
+// replaced by the owner on 2026-11-17: every change from now on applies to ALL servers the bot is in.
+// `isHomeGuild(guildId)` stays for the features made before that which are still for this server only.
 export const HOME_GUILD_ID = '1155236281706627173';
 
 export function isHomeGuild(guildId) {

@@ -1,4 +1,4 @@
-// automodCommand.js — `automod` (our server, the server owners only): the chat filter's insult lists, edited
+// automodCommand.js — `automod` (every server, the server owners only): the chat filter's insult lists, edited
 // from the bot (owner's request). Typed `automod`, `!automod`, `.automod` or `اوتومود`:
 //   automod                         the list, sent privately (DM; DMs closed → in the room, deleted after 60 s)
 //   automod add <rule> <word>       adds a word (rule: عيلة/family, ابن/ibn, شتيمة/insult, ممنوع/banned; default insult)
@@ -14,9 +14,8 @@ import {
     ActionRowBuilder, ButtonBuilder, ButtonStyle, LabelBuilder, MessageFlags, ModalBuilder, StringSelectMenuBuilder,
     TextInputBuilder, TextInputStyle,
 } from 'discord.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
 import { isServerOwner } from '../../config/serverOwners.js';
-import { postAuditRoom } from '../logging/auditRooms.js';
+import { postAuditRoom, resolveAuditRoomId } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
 import {
     BUILT_IN_GROUPS, IBN_AL_INSULTS, INSULTS, INSULTS_ENGLISH, INSULTS_LATIN, explainText,
@@ -101,9 +100,9 @@ export function parseAutomod(content, prefix = '!') {
     return { sub, rule, text: after };
 }
 
-/** Whether `message` is an owner's `automod` command in our server (messageCreate's report-channel check). */
+/** Whether `message` is an owner's `automod` command (messageCreate's report-channel check). */
 export function isAutomodCommand(message, prefix) {
-    return Boolean(message?.guild && isHomeGuild(message.guild.id) && isServerOwner(message.author?.id) && parseAutomod(message.content, prefix));
+    return Boolean(message?.guild && isServerOwner(message.author?.id) && parseAutomod(message.content, prefix));
 }
 
 // ---- the list ----------------------------------------------------------------------------------
@@ -179,7 +178,7 @@ export function switchedOffText(state = getAutomodState()) {
 }
 
 const HEADER = [
-    'دي الكلمات اللي الفلتر بيمسحها (السيرفر ده بس). الأونرز والتراستد مش بيتفلتروا.',
+    'دي الكلمات اللي الفلتر بيمسحها في كل السيرفرات: قايمة واحدة، وأي تعديل من أي سيرفر بيتطبق على الكل. الأونرز والتراستد مش بيتفلتروا.',
     '🤖 كل كلمة بتضيفها البوت بيمسك أشكالها لوحده: الفرانكو (3=ع، 7=ح، 5=خ، 2=ق...)، الإنجليزي (كلب = dog...)، '
         + 'والكتابة المستخبية (مسافات ونقط ورموز بين الحروف، تشكيل وتطويل، حروف مكررة أو شبيهة، leetspeak).',
     '🔒 الأنماط الثابتة (كسمك، كس امك، زانية، دين امك، يلعن...، ميتين امك) مكتوبة كـ regex بيمسك مئات الكتابات مرة واحدة، '
@@ -349,10 +348,11 @@ async function refreshLastList(userId) {
 
 const textPayload = (text) => ({ content: '', embeds: [{ color: COLOR, description: text }], allowedMentions: { parse: [] } });
 
-/** Writes one change in the automod log room. */
+/** Writes one change in the automod log room of the server where it was made; nothing when it has none. */
 export async function logAutomodChange(guild, user, action, details) {
     if (!guild) return;
     try {
+        if (!(await resolveAuditRoomId(guild, 'automode'))) return;
         await postAuditRoom(guild, 'automode', {
             color: 0xf39c12,
             title: '🛡️ أوتومود — تعديل فلتر الشتايم',
@@ -393,11 +393,11 @@ export async function runAutomodEdit(client, guild, user, sub, { word, rule = 'i
 }
 
 /**
- * `automod ...` typed in our server by an owner. Returns true when handled; false (nothing sent, the message
+ * `automod ...` typed in any server by a server owner. Returns true when handled; false (nothing sent, the message
  * goes on as chat) for anyone else, another server, or a message that is not this command.
  */
 export async function handleAutomodMessage(message, { prefix = '!' } = {}) {
-    if (!message?.guild || message.author?.bot || !isHomeGuild(message.guild.id)) return false;
+    if (!message?.guild || message.author?.bot) return false;
     const parsed = parseAutomod(message.content, prefix);
     if (!parsed || !isServerOwner(message.author.id)) return false;
     const client = message.client;
@@ -452,10 +452,19 @@ export function automodModal(action, guildId, page = 0) {
     );
 }
 
-/** The list's buttons: `automod:<page|add|remove|test>:<guildId>:<page>`. Owners only. */
+/**
+ * Whether a list's `<guildId>` no longer fits: not a server id, or the list was pressed inside another server.
+ * The id only names the server whose log room gets the change (in a DM there is no server to compare with).
+ */
+function staleGuild(interaction, guildId) {
+    if (!/^[0-9]{15,25}$/u.test(String(guildId || ''))) return true;
+    return Boolean(interaction.guildId) && interaction.guildId !== guildId;
+}
+
+/** The list's buttons: `automod:<page|add|remove|test>:<guildId>:<page>`. Owners only, checked on every press. */
 export async function handleAutomodButton(interaction, client, [action, guildId, page] = []) {
     if (!isServerOwner(interaction.user?.id)) return privately(interaction, NOT_OWNER);
-    if (!isHomeGuild(guildId) || !['page', 'add', 'remove', 'test'].includes(action)) return privately(interaction, STALE);
+    if (staleGuild(interaction, guildId) || !['page', 'add', 'remove', 'test'].includes(action)) return privately(interaction, STALE);
     if (action === 'page') {
         rememberList(interaction.user.id, interaction.message, guildId, page);
         return interaction.update(automodListPayload(guildId, page)).catch(() => privately(interaction, STALE));
@@ -463,10 +472,10 @@ export async function handleAutomodButton(interaction, client, [action, guildId,
     return interaction.showModal(automodModal(action, guildId, Number(page) || 0)).catch(() => privately(interaction, STALE));
 }
 
-/** The forms: `automodform:<add|remove|test>:<guildId>:<page>`. Owners only. */
+/** The forms: `automodform:<add|remove|test>:<guildId>:<page>`. Owners only, checked again on every submit. */
 export async function handleAutomodForm(interaction, client, [action, guildId, page] = []) {
     if (!isServerOwner(interaction.user?.id)) return privately(interaction, NOT_OWNER);
-    if (!isHomeGuild(guildId) || !['add', 'remove', 'test'].includes(action)) return privately(interaction, STALE);
+    if (staleGuild(interaction, guildId) || !['add', 'remove', 'test'].includes(action)) return privately(interaction, STALE);
     const field = (id) => {
         try {
             return interaction.fields.getTextInputValue(id);

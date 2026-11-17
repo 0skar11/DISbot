@@ -1,6 +1,6 @@
 import { test, describe, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
+import { HOME_GUILD_ID, ZENITH_GUILD_ID } from '../src/config/homeGuild.js';
 import { SERVER_OWNER_IDS, isServerOwner } from '../src/config/serverOwners.js';
 import { getGuildConfigKey } from '../src/utils/database.js';
 import {
@@ -27,8 +27,8 @@ const AUDIT_ROOM = '300000000000000301';
 const ROOM = '300000000000000302';
 const OTHER_GUILD = '100000000000000099';
 
-function setup({ guildId = HOME_GUILD_ID, dmOpen = true, db = {} } = {}) {
-  const store = new Map([[getGuildConfigKey(guildId), { prefix: '!', auditChannels: { automode: AUDIT_ROOM } }]]);
+function setup({ guildId = HOME_GUILD_ID, dmOpen = true, db = {}, auditRoom = true } = {}) {
+  const store = new Map([[getGuildConfigKey(guildId), { prefix: '!', ...(auditRoom ? { auditChannels: { automode: AUDIT_ROOM } } : {}) }]]);
   const sent = { room: [], dm: [], dmMessages: [], audit: [] };
   const client = {
     user: { id: 'bot', bot: true },
@@ -76,9 +76,9 @@ function setup({ guildId = HOME_GUILD_ID, dmOpen = true, db = {} } = {}) {
     msg.delete = async () => { msg.deleted = true; };
     return msg;
   };
-  const interaction = (customId, userId = OWNER, { fields = {}, select = {}, fromMessage = true } = {}) => {
+  const interaction = (customId, userId = OWNER, { fields = {}, select = {}, fromMessage = true, inGuild = null } = {}) => {
     const it = {
-      customId, user: user(userId), guild: null, guildId: null, replies: [], updates: [], modals: [], edits: [],
+      customId, user: user(userId), guild: null, guildId: inGuild, replies: [], updates: [], modals: [], edits: [],
       reply: async (payload) => { it.replies.push(payload); },
       update: async (payload) => { it.updates.push(payload); },
       showModal: async (modal) => { it.modals.push(modal); },
@@ -159,7 +159,7 @@ describe('automod store', () => {
     assert.deepEqual(off.words, ['طيز', 'teez', 'tez']);
     assert.equal(checkText('طيز'), null);
     assert.equal(checkText('teez'), null, 'its franco spellings too');
-    assert.equal(checkText('طيز', { legacy: true }), 'insult', 'other servers keep it');
+    assert.equal(checkText('طيز', { legacy: true }), 'insult', 'the original list still has it');
     assert.deepEqual(store.get(AUTOMOD_KEY).disabled, ['طيز', 'teez', 'tez']);
     assert.equal((await removeAutomodWord(client, { word: 'طيز' })).reason, 'already_off');
     assert.equal((await removeAutomodWord(client, { word: 'tez' })).reason, 'already_off', 'any spelling names the same word');
@@ -244,7 +244,7 @@ describe('automod store', () => {
   });
 });
 
-describe('automod punishments follow the chosen rule (our server)', () => {
+describe('automod punishments follow the chosen rule (every server)', () => {
   beforeEach(() => {
     resetAutomodStore();
     clearRepeats();
@@ -287,13 +287,41 @@ describe('automod punishments follow the chosen rule (our server)', () => {
     assert.deepEqual(banned.calls[0], ['delete']);
     assert.equal(warned.length, 3, 'banned: no warning');
 
-    // Another server keeps the old filter: no owner words, no English.
-    const other = setup({ guildId: OTHER_GUILD });
-    assert.equal(await handleChatFilter(chat('يا قرد', other.guild).message, { warn }), false);
-    assert.equal(await handleChatFilter(chat('fuck you', other.guild).message, { warn }), false);
+    // Every server uses the same list (owner's rule of 2026-11-17): the owner words and the English insults.
+    for (const guildId of [ZENITH_GUILD_ID, OTHER_GUILD]) {
+      const other = setup({ guildId });
+      assert.equal(await handleChatFilter(chat('يا قرد', other.guild).message, { warn }), true, guildId);
+      assert.equal(await handleChatFilter(chat('fuck you', other.guild).message, { warn }), true, guildId);
+      assert.equal(await handleChatFilter(chat('كسمك', other.guild).message, { warn }), true, guildId);
+      assert.equal(await handleChatFilter(chat('صباح الخير', other.guild).message, { warn }), false, guildId);
+    }
     assert.equal(await handleChatFilter(chat('fuck you', guild).message, { warn }), true);
-    // Owners stay exempt.
+    // Owners stay exempt everywhere.
     assert.equal(await handleChatFilter(chat('يا قرد', guild, OWNER).message, { warn }), false);
+    assert.equal(await handleChatFilter(chat('يا قرد', setup({ guildId: OTHER_GUILD }).guild, OWNER).message, { warn }), false);
+  });
+
+  test('one shared list: an edit made in any server applies in every server', async () => {
+    const zenith = setup({ guildId: ZENITH_GUILD_ID });
+    const other = setup({ guildId: OTHER_GUILD });
+    const home = setup();
+    await loadAutomodRules(home.client);
+    const warn = async () => ({ totalCount: 1, timeoutApplied: false });
+    const caught = async (fixture, text) => handleChatFilter(chat(text, fixture.guild).message, { warn });
+
+    // Added from Zenith: caught in every server.
+    await handleAutomodMessage(zenith.message('automod add شتيمة سبونج', OWNER));
+    for (const fixture of [home, zenith, other]) assert.equal(await caught(fixture, 'يا سبونج'), true, fixture.guild.id);
+    // Switched off from another server: off in every server, also for its franco spellings.
+    await handleAutomodMessage(other.message('automod remove خول', OWNER));
+    for (const fixture of [home, zenith, other]) {
+      assert.equal(await caught(fixture, 'انت خول'), false, fixture.guild.id);
+      assert.equal(await caught(fixture, 'ya khawal'), false, fixture.guild.id);
+    }
+    // Back on from the home server.
+    await handleAutomodMessage(home.message('automod enable خول', OWNER));
+    for (const fixture of [home, zenith, other]) assert.equal(await caught(fixture, 'ya khawal'), true, fixture.guild.id);
+    assert.deepEqual(getAutomodState().custom.map((entry) => entry.word), ['سبونج']);
   });
 });
 
@@ -351,10 +379,39 @@ describe('the automod command', () => {
     assert.equal(sent.dm.length, 1);
   });
 
-  test('other servers: the command does nothing, even for an owner', async () => {
-    const { message, sent } = setup({ guildId: OTHER_GUILD });
-    assert.equal(await handleAutomodMessage(message('automod', OWNER)), false);
-    assert.deepEqual([sent.room.length, sent.dm.length], [0, 0]);
+  test('every server: the owners can use it, anyone else gets nothing', async () => {
+    for (const guildId of [ZENITH_GUILD_ID, OTHER_GUILD]) {
+      const { client, message, sent } = setup({ guildId });
+      for (const owner of [OWNER, TRUST_MANAGER]) {
+        const typed = message('automod', owner);
+        assert.equal(await handleAutomodMessage(typed), true, guildId);
+        assert.equal(typed.deleted, true);
+      }
+      assert.equal(sent.dm.length, 2);
+      const ids = sent.dm[0].components.flatMap((row) => row.toJSON().components.map((c) => c.custom_id));
+      assert.ok(ids.includes(`automod:add:${guildId}:0`), 'the list names the server it was asked from');
+      for (const content of ['automod', '!automod', 'automod add شتيمة حمار', 'اوتومود']) {
+        const typed = message(content, MEMBER);
+        assert.equal(await handleAutomodMessage(typed), false);
+        await handlePrefixCommand(typed, client);
+        assert.equal(typed.deleted, false, content);
+      }
+      assert.deepEqual([sent.room.length, sent.dm.length, sent.audit.length], [0, 2, 0], guildId);
+      assert.deepEqual(getAutomodState().custom, []);
+    }
+  });
+
+  test('the change is logged in the server where it was made, and skipped there when it has no log room', async () => {
+    const zenith = setup({ guildId: ZENITH_GUILD_ID });
+    const bare = setup({ guildId: OTHER_GUILD, auditRoom: false });
+    await loadAutomodRules(zenith.client);
+    await handleAutomodMessage(zenith.message('automod add شتيمة سبونج', OWNER));
+    assert.equal(zenith.sent.audit.length, 1);
+    assert.match(zenith.sent.audit[0].embeds[0].description, /سبونج/u);
+    await handleAutomodMessage(bare.message('automod remove سبونج', OWNER));
+    assert.equal(bare.sent.audit.length, 0, 'no log room: nothing posted');
+    assert.match(bare.sent.dm.at(-1).embeds[0].description, /اتشالت/u, 'the edit still works');
+    assert.equal(zenith.sent.audit.length, 1, 'not posted in the other server');
   });
 
   test('DMs closed: the answer goes in the room for 60 seconds', async (t) => {
@@ -510,11 +567,20 @@ describe('automod buttons and forms (owners only)', () => {
     assert.equal((await press(`automod:test:${HOME_GUILD_ID}:0`, TRUST_MANAGER)).modals.length, 1);
     const page = await press(`automod:page:${HOME_GUILD_ID}:0`, OWNER);
     assert.equal(page.updates.length, 1);
-    for (const id of [`automod:add:${OTHER_GUILD}:0`, `automod:nope:${HOME_GUILD_ID}:0`, 'automod:add']) {
-      const it = await press(id, OWNER);
+    // Any server's list works (in a DM or inside that server).
+    assert.equal((await press(`automod:add:${OTHER_GUILD}:0`, OWNER)).modals.length, 1);
+    assert.equal((await press(`automod:add:${ZENITH_GUILD_ID}:0`, OWNER, { inGuild: ZENITH_GUILD_ID })).modals.length, 1);
+    const stale = [
+      [`automod:nope:${HOME_GUILD_ID}:0`, {}], ['automod:add', {}], ['automod:add:abc:0', {}],
+      [`automod:add:${HOME_GUILD_ID}:0`, { inGuild: OTHER_GUILD }], [`automodform:add:${HOME_GUILD_ID}:0`, { inGuild: OTHER_GUILD, fields: { word: 'حمار' } }],
+    ];
+    for (const [id, options] of stale) {
+      const it = await press(id, OWNER, options);
       assert.match(it.replies[0].content, /قديمة/u, id);
       assert.equal(it.replies[0].flags, 64);
+      assert.equal(it.modals.length, 0);
     }
+    assert.deepEqual(getAutomodState().custom, []);
   });
 
   test('the forms add, remove and test; the list message is refreshed and the change logged', async () => {

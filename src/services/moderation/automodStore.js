@@ -1,4 +1,5 @@
-// automodStore.js — the owner's `automod` edits to the chat filter (our server only, CLAUDE.md):
+// automodStore.js — the owner's `automod` edits to the chat filter: ONE list for every server the bot is in (saved
+// under the CHAOS key; an edit made in any server applies everywhere, owner's rule of 2026-11-17):
 //   { custom: [{ word, rule: 'family'|'ibnAl'|'insult'|'banned', addedBy, at }], disabled: [built-in words switched off] }
 // Saved under one database key (AUTOMOD_KEY), read once at startup (ready.js) and kept in memory; every change
 // is handed to the filter at once (setCustomRules, chatFilterRules.js). A failed save never breaks the filter:

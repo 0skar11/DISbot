@@ -6,8 +6,9 @@
 // arabic, mixed Arabic/Latin, latin (franco digits kept / leetspeak), and the franco consonant skeleton.
 //
 // Two rule sets are kept:
-//   • legacy   — exactly the built-in lists below. Other servers and company names use it unchanged.
-//   • current  — our server (`checkText(text)`): the same built-in lists minus the words the owner switched
+//   • legacy   — exactly the original built-in lists below (`checkText(text, { legacy: true })`); the tests use it to
+//                prove the built-in lists are unchanged.
+//   • current  — every server and company names (`checkText(text)`): the same built-in lists minus the words the owner switched
 //                off with `automod`, plus the strong English insults (INSULTS_ENGLISH) and the owner's own
 //                words with their generated spellings (chatFilterVariants.js). setCustomRules() rebuilds it
 //                (automodStore.js calls it on startup and after every edit), so changes apply at once.
@@ -51,7 +52,7 @@ export const INSULTS_LATIN = [
 // (خول → "خل", منيوك → "منك") collide with normal words.
 const SKELETON_INSULTS = ['شرموط', 'شراميط', 'متناك'];
 
-// Strong English insults and slurs (our server only, `insult`: deleted + a warning). Matched as whole words
+// Strong English insults and slurs (every server, `insult`: deleted + a warning). Matched as whole words
 // after the leetspeak view ("f*ck" → "fck", "b!tch" → "btch", "a$$hole", "fvck", "phuck"), with the usual
 // endings (fucker, fucking, bitches, dickhead...). Judgement calls (kept out on purpose, see the tests):
 // "ass" alone, "shit", "damn", "hoe", "prick", "cock", "chink", "gay", "idiot"/"stupid" (too common or too
@@ -253,9 +254,8 @@ function explainWith(text, set) {
 }
 
 /**
- * Strongest matched rule, without a role bypass or any side effects. `legacy: true` uses only the original
- * built-in lists (other servers and company names); otherwise the owner's `automod` edits and the English
- * insults count too.
+ * Strongest matched rule, without a role bypass or any side effects: the built-in lists, the English insults and
+ * the owner's `automod` edits (every server). `legacy: true` uses only the original built-in lists.
  */
 export function checkText(text, { legacy = false } = {}) {
     return explainWith(text, legacy ? LEGACY : current)?.rule ?? null;
