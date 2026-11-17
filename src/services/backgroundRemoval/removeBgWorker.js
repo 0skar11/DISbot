@@ -66,6 +66,9 @@ async function predictMask(rgb, width, height, model, modelPath, threads) {
     for (let i = 0; i < area; i += 1) mask[i] = Math.round(((prediction[i] - low) / range) * 255);
     return sharp(mask, { raw: { width: side, height: side, channels: 1 } })
         .resize(width, height, { fit: 'fill', kernel: 'lanczos3' })
+        // sharp hands a resized 1-channel raw image back with 3 channels: keep one, or the alpha (joinChannel) is read
+        // with the wrong stride and the picture comes out as horizontal stripes.
+        .extractChannel(0)
         .raw()
         .toBuffer();
 }
