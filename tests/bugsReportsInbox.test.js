@@ -5,7 +5,7 @@ import { HOME_GUILD_ID, ZENITH_GUILD_ID } from '../src/config/homeGuild.js';
 import { getGuildConfig, updateGuildConfig } from '../src/services/config/guildConfig.js';
 import { BUGS_REPORTS_CHANNEL_NAME, buildBugsReportsGuide } from '../src/services/bugsReportsRoom.js';
 import {
-  handleBugsReportsMessage, resetBugsReportsRateLimit, RATE_LIMIT, COUNTER_KEY, MAX_REUPLOAD_BYTES, nextBugReportNumber, pickReuploads,
+  handleBugsReportsMessage, resetBugsReportsRateLimit, RATE_LIMIT, COUNTER_KEY, MAX_REUPLOAD_BYTES, nextBugReportNumber, pickReuploads, resetBugReportCounter,
 } from '../src/services/bugsReportsInbox.js';
 import { checkClosedReports } from '../src/services/reportIssueService.js';
 
@@ -454,5 +454,51 @@ describe('closing a report (checkClosedReports)', () => {
     assert.equal(await handleBugsReportsMessage(reply, client), true);
     assert.equal(calls.issues.length, 0);
     assert.equal(reply.replies.length, 0);
+  });
+
+  test('resetBugReportCounter resets the counter to 0 so next report starts at #1', async () => {
+    const { client } = await setup();
+    await updateGuildConfig(client, HOME_GUILD_ID, { [COUNTER_KEY]: 42 });
+    assert.equal(await nextBugReportNumber(client, HOME_GUILD_ID), 43);
+
+    const success = await resetBugReportCounter(client, HOME_GUILD_ID);
+    assert.equal(success, true);
+    assert.equal(await nextBugReportNumber(client, HOME_GUILD_ID), 1);
+  });
+
+  test('resetbugscounter command is owner-only and resets the counter', async () => {
+    const { default: resetCmd } = await import('../src/commands/Utility/resetbugscounter.js');
+    const { SERVER_OWNER_IDS } = await import('../src/config/serverOwners.js');
+    const { client } = await setup();
+    await updateGuildConfig(client, HOME_GUILD_ID, { [COUNTER_KEY]: 10 });
+
+    // Non-owner is refused
+    const nonOwnerReplies = [];
+    const nonOwnerInteraction = {
+      id: snowflake(),
+      user: { id: '999999999999999999' },
+      guildId: HOME_GUILD_ID,
+      createdTimestamp: Date.now(),
+      reply: async (p) => nonOwnerReplies.push(p),
+      deferred: false,
+      replied: false,
+    };
+    await resetCmd.execute(nonOwnerInteraction, {}, client);
+    assert.match(nonOwnerReplies[0].content, /الأمر ده للأونر بس/);
+
+    // Owner succeeds
+    const ownerReplies = [];
+    const ownerInteraction = {
+      id: snowflake(),
+      user: { id: SERVER_OWNER_IDS[0] },
+      guildId: HOME_GUILD_ID,
+      createdTimestamp: Date.now(),
+      reply: async (p) => ownerReplies.push(p),
+      deferred: false,
+      replied: false,
+    };
+    await resetCmd.execute(ownerInteraction, {}, client);
+    assert.match(ownerReplies[0].content, /تم تصفير عداد البلاغات/);
+    assert.equal(await nextBugReportNumber(client, HOME_GUILD_ID), 1);
   });
 });

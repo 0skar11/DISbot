@@ -72,6 +72,13 @@ export function nextBugReportNumber(client, guildId) {
   return run;
 }
 
+/** Resets the bug report counter to 0 for a guild, so the next report will be #1. */
+export async function resetBugReportCounter(client, guildId) {
+  if (!client?.db || client.db.isAvailable?.() === false) return false;
+  await updateGuildConfig(client, guildId, { [COUNTER_KEY]: 0 });
+  return true;
+}
+
 /** The member's attachments to upload again with the report (at most 5 files, 20 MB together); the rest stay links. */
 export function pickReuploads(attachments) {
   const uploads = [];
