@@ -125,8 +125,7 @@ export default {
         logger.error("Failed to start vote kick:", error);
       }
       try {
-        const inviteRewards = await startInviteRewards(client);
-        startupLog(`Invite rewards: ${inviteRewards.status}`);
+        // Invite rewards moved to CC-bot
       } catch (error) {
         logger.error("Failed to start invite rewards:", error);
       }

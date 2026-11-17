@@ -5,6 +5,6 @@ export default {
   name: Events.InviteCreate,
   once: false,
   execute(invite) {
-    rememberInvite(invite);
+    // Disabled: invite tracking moved to CC-bot
   },
 };

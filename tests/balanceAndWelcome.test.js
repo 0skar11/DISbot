@@ -66,4 +66,69 @@ describe('welcome message (report #175)', () => {
     await welcome.execute(member);
     assert.equal(sent[0].content, 'welcome to chaos <@200000000000000001> <a:smileywave:999>');
   });
+
+  test('Zenith gets welcome in its own room, escapes name and pings only member', async () => {
+    const ZENITH = '1569932761471524874';
+    const ZENITH_WELCOME = '1570728122259611779';
+    const sent = [];
+    const room = { id: ZENITH_WELCOME, isTextBased: () => true, permissionsFor: () => new PermissionsBitField(PermissionsBitField.All), send: async (p) => { sent.push(p); } };
+    const member = {
+      id: '200000000000000002',
+      user: { bot: false, tag: 'zenith_user' },
+      guild: {
+        id: ZENITH,
+        name: 'Zenith **Club** @everyone',
+        members: { me: {} },
+        channels: { cache: new Map([[ZENITH_WELCOME, room]]) },
+      },
+    };
+    await welcome.execute(member);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /^welcome to Zenith \\\*\\\*Club\\\*\\\* \\@everyone <@200000000000000002>/);
+    assert.deepEqual(sent[0].allowedMentions, { users: ['200000000000000002'] });
+
+    // Bots skipped
+    sent.length = 0;
+    await welcome.execute({ ...member, user: { bot: true } });
+    assert.equal(sent.length, 0);
+  });
+
+  test('falls back to system channel, then text channel named welcome', async () => {
+    const OTHER_GUILD = '100000000000000999';
+    const sentSystem = [];
+    const systemRoom = { id: 'sys1', isTextBased: () => true, permissionsFor: () => new PermissionsBitField(PermissionsBitField.All), send: async (p) => { sentSystem.push(p); } };
+    const member = {
+      id: '200000000000000003',
+      user: { bot: false },
+      guild: {
+        id: OTHER_GUILD,
+        name: 'Other',
+        members: { me: {} },
+        systemChannelId: 'sys1',
+        systemChannel: systemRoom,
+        channels: { cache: new Map([['sys1', systemRoom]]) },
+      },
+    };
+    await welcome.execute(member);
+    assert.equal(sentSystem.length, 1);
+    assert.match(sentSystem[0].content, /^welcome to Other <@200000000000000003>/);
+
+    // Named welcome channel fallback
+    const sentNamed = [];
+    const namedRoom = { id: 'named1', name: '👋・welcome', isTextBased: () => true, permissionsFor: () => new PermissionsBitField(PermissionsBitField.All), send: async (p) => { sentNamed.push(p); } };
+    const member2 = {
+      id: '200000000000000004',
+      user: { bot: false },
+      guild: {
+        id: OTHER_GUILD,
+        name: 'NamedServer',
+        members: { me: {} },
+        systemChannel: null,
+        channels: { cache: new Map([['named1', namedRoom]]) },
+      },
+    };
+    await welcome.execute(member2);
+    assert.equal(sentNamed.length, 1);
+    assert.match(sentNamed[0].content, /^welcome to NamedServer <@200000000000000004>/);
+  });
 });

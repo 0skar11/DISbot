@@ -102,11 +102,7 @@ export const addXp = wrapServiceBoundary(async function addXp(client, guild, mem
 
     await saveUserLevelData(client, guild.id, member.user.id, levelData);
 
-    // Reaching the invite level can pay whoever invited the member. Not awaited: it takes its own lock.
-    if (didLevelUp && levelData.level >= INVITE_REWARDS.level) {
-      checkInviteReward(client, guild, member.user.id, { level: levelData.level })
-        .catch((error) => logger.error(`Failed to check the invite reward for ${member.user.id}:`, error));
-    }
+    // Invite rewards moved to CC-bot
 
     return {
       level: levelData.level,

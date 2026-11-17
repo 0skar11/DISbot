@@ -6,7 +6,6 @@ export default {
   name: Events.GuildMemberRemove,
   once: false,
   async execute(member) {
-    if (member.user?.bot) return;
-    await markLeft(member.client, member.guild.id, member.id);
+    // Disabled: invite rewards moved to CC-bot
   },
 };

@@ -7,14 +7,6 @@ export default {
   name: Events.ClientReady,
   once: true,
   async execute(client) {
-    for (const guild of client.guilds.cache.values()) {
-      try {
-        const cached = await cacheGuildInvites(guild);
-        if (cached) startupLog(`Invite tracking ready in ${guild.name}`);
-        else logger.warn(`Invite tracking skipped for ${guild.name}: bot needs Manage Server.`);
-      } catch (error) {
-        logger.error(`Failed to cache invites in ${guild.name}:`, error);
-      }
-    }
+    // Disabled: invite tracking moved to CC-bot
   },
 };
