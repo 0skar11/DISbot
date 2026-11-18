@@ -11,6 +11,9 @@
 //              يلعن دينك / يلعن ابوك, ميتين امك / ميتين ابو / ميتين دين / ميتين اهل ("ksomak", "zanya",
 //              "meteen omak"). The bare number "ميتين" is fine. Deleted every time, no timeout; the 3rd hit
 //              by the same member within 30 minutes gives ONE warning and the count starts again.
+//              Exception (owner, 2026-11-18): كسمك / كسمكو / كس امك / ksomak aimed at a member (a reply to a member's
+//              message or a mention of a member) = deleted + a one-hour timeout + the line "كسمين امك خد تايم يبن
+//              الشرموطه 🖕" that deletes itself after 5 seconds.
 //   • banned — words that are only deleted, with no punishment (none at the moment).
 // A warning goes through warnEscalation, so 3 warnings still give the automatic timeout.
 // Hidden spellings count too (dots/spaces/symbols between letters, tashkeel, tatweel, zero-width,
@@ -28,7 +31,7 @@ import { issueWarning } from './warnEscalation.js';
 import { sendModerationActionLog } from './moderationActionLogService.js';
 import { postAuditRoom } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
-import { checkText } from './chatFilterRules.js';
+import { checkText, normalizeForFilter } from './chatFilterRules.js';
 import { recordRepeat } from './chatFilterRepeats.js';
 export { checkText, normalizeForFilter, IBN_AL_ALLOWED, IBN_AL_INSULTS, INSULTS, BANNED_WORDS } from './chatFilterRules.js';
 
@@ -42,6 +45,23 @@ const RULES = {
     insult: { label: 'شتيمة', warn: true },
     banned: { label: 'كلمة ممنوعة' },
 };
+
+// `كسمك` / `كسمكو` / `كس امك` / ksomak aimed at a member (a reply to someone's message, or a mention of someone):
+// the owner's rule (2026-11-18): the message is deleted, the swearer gets a one-hour timeout and the bot answers with
+// the owner's line, which deletes itself after 5 seconds. Said to nobody in particular it stays a plain family insult.
+const KOSOMAK = /(?<![\p{L}])(?:كسمك|كس امك|ksomak|kosomak)/u;
+const KOSOMAK_TIMEOUT_MS = 60 * 60_000;
+const kosomakReply = (userId) => `<@${userId}> كسمين امك خد تايم يبن الشرموطه 🖕`;
+
+/** Whether the message is addressed to another member: a reply to a member's message, or a mention of a member. */
+async function isAimedAtMember(message) {
+    const self = message.author?.id;
+    const mentioned = message.mentions?.users;
+    if (mentioned && [...mentioned.values()].some((user) => user && !user.bot && user.id !== self)) return true;
+    if (!message.reference?.messageId) return false;
+    const replied = await message.fetchReference?.().catch(() => null);
+    return Boolean(replied?.author && !replied.author.bot && replied.author.id !== self);
+}
 
 async function notice(message, text) {
     const sent = await message.channel.send({ content: text, allowedMentions: { users: [message.author.id] } }).catch(() => null);
@@ -61,13 +81,24 @@ export async function handleChatFilter(message, { now = Date.now(), warn = issue
     if (!ruleName) return false;
     // Trusted staff (the Anti-Nuke trusted list: members or roles) may swear.
     if (await canLiftHardBan(message.guild, message.author.id).catch(() => false)) return false;
-    const rule = RULES[ruleName];
+    let rule = RULES[ruleName];
+    // The reference of a deleted message is gone: look at who it is aimed at first.
+    const aimedKosomak = ruleName === 'family' && KOSOMAK.test(normalizeForFilter(message.content)) && await isAimedAtMember(message);
 
     await message.delete().catch(() => {});
     const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
     const me = message.guild.members.me;
-    const reason = `فلتر الشات: ${rule.label}`;
+    let reason = `فلتر الشات: ${rule.label}`;
     let punishment = '🗑️ الرسالة اتمسحت';
+    let timedOut = false;
+    if (aimedKosomak && member?.moderatable) {
+        reason = 'فلتر الشات: شتيمة (كسمك) لعضو';
+        timedOut = await member.timeout(KOSOMAK_TIMEOUT_MS, reason).then(() => true).catch(() => false);
+        if (timedOut) {
+            rule = { label: 'شتيمة (كسمك) لعضو', silent: true };
+            punishment = '⏳ تايم ساعة';
+        }
+    }
     let shouldWarn = Boolean(rule.warn);
     if (rule.repeat) {
         const { count, reached } = recordRepeat(`${message.guild.id}:${message.author.id}`, rule.repeat, now);
@@ -104,6 +135,7 @@ export async function handleChatFilter(message, { now = Date.now(), warn = issue
         logger.debug('Failed to post chat filter action to automode room:', auditErr);
     }
 
-    if (!rule.silent || shouldWarn) await notice(message, `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
+    if (timedOut) await notice(message, kosomakReply(message.author.id));
+    else if (!rule.silent || shouldWarn) await notice(message, `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
     return true;
 }
