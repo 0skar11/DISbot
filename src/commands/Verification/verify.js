@@ -3,14 +3,35 @@ import { infoEmbed, successEmbed } from '../../utils/embeds.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { verifyUser } from '../../services/verificationService.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { executeVerification } from '../../services/verification/directVerifyService.js';
 
 export default {
     data: new SlashCommandBuilder()
         .setName('verify')
-        .setDescription('Verify yourself and gain access to the server'),
+        .setDescription('Verify a member or yourself')
+        .addUserOption(option =>
+            option
+                .setName('member')
+                .setDescription('The member to verify (verifiers/staff only)')
+                .setRequired(false)
+        ),
 
     async execute(interaction, config, client) {
         const guild = interaction.guild;
+        const targetUser = interaction.options.getUser('member');
+
+        if (targetUser) {
+            const targetMember = await guild.members.fetch(targetUser.id).catch(() => null);
+            return await executeVerification({
+                guild,
+                executorMember: interaction.member,
+                targetMember,
+                respond: async (payload) => {
+                    await InteractionHelper.safeReply(interaction, payload);
+                    return payload;
+                },
+            });
+        }
 
         const result = await verifyUser(client, guild.id, interaction.user.id, {
             source: 'command_self',
