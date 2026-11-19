@@ -12,3 +12,7 @@ export const ZENITH_GUILD_ID = '1569932761471524874';
 export function isProtectedGuild(guildId) {
     return isHomeGuild(guildId) || String(guildId) === ZENITH_GUILD_ID;
 }
+
+export function isTicketGuild(guildId) {
+    return isHomeGuild(guildId) || String(guildId) === ZENITH_GUILD_ID;
+}

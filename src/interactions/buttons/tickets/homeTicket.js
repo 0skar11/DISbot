@@ -2,7 +2,7 @@ import { MessageFlags } from 'discord.js';
 import {
     TICKET_BUTTON_PREFIX, TICKET_FAILURE_TEXT, openTicket, claimTicket, closeTicket, verifyTicket, ticketControls,
 } from '../../../services/tickets/homeTickets.js';
-import { isHomeGuild } from '../../../config/homeGuild.js';
+import { isTicketGuild } from '../../../config/homeGuild.js';
 
 // The buttons of our server's tickets (services/tickets/homeTickets.js): `hticket:open:<type>` on the
 // panel, and `hticket:claim|close|verify` inside a ticket.
@@ -10,7 +10,7 @@ const privately = (interaction, content) => interaction.reply({ content, flags: 
 
 async function execute(interaction, client, [action, type]) {
     if (!interaction.inGuild()) return;
-    if (!isHomeGuild(interaction.guildId)) return privately(interaction, TICKET_FAILURE_TEXT.not_home);
+    if (!isTicketGuild(interaction.guildId)) return privately(interaction, TICKET_FAILURE_TEXT.not_home);
     const member = interaction.member?.roles?.cache ? interaction.member : await interaction.guild.members.fetch(interaction.user.id).catch(() => null);
     if (!member) return;
 

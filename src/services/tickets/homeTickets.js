@@ -15,7 +15,7 @@
 import {
     ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, OverwriteType, PermissionFlagsBits,
 } from 'discord.js';
-import { isHomeGuild } from '../../config/homeGuild.js';
+import { HOME_GUILD_ID, ZENITH_GUILD_ID, isTicketGuild } from '../../config/homeGuild.js';
 import { isServerOwner } from '../../config/serverOwners.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { filterStaffRoles } from '../staffRoleHierarchyService.js';
@@ -28,13 +28,37 @@ export const TICKET_NAMES = {
     panel: '📩・افتح-تكت',
     log: '📁・سجل-التكتات',
 };
-// The verified girl role, given by ✅ in a verification ticket.
-export const VERIFIED_ROLE_ID = '1551151228833234985';
-// The role mentioned (and given access) when a ticket of each section opens.
+
+// Verified girl role per guild.
+export const VERIFIED_ROLE_IDS = {
+    [HOME_GUILD_ID]: '1551151228833234985',
+    [ZENITH_GUILD_ID]: '1570728144086765640',
+};
+
+export const VERIFIED_ROLE_ID = VERIFIED_ROLE_IDS[HOME_GUILD_ID];
+
+export function getVerifiedRoleId(guildId) {
+    return VERIFIED_ROLE_IDS[String(guildId)] || null;
+}
+
+// Section team roles per guild.
 export const SECTION_ROLE_IDS = {
     problem: '1552756864712708275',
     verify: '1552416342278414376',
 };
+
+export const GUILD_SECTION_ROLE_IDS = {
+    [HOME_GUILD_ID]: SECTION_ROLE_IDS,
+    [ZENITH_GUILD_ID]: {
+        problem: null,
+        verify: null,
+    },
+};
+
+export function getSectionRoleIds(guildId) {
+    return GUILD_SECTION_ROLE_IDS[String(guildId)] || SECTION_ROLE_IDS;
+}
+
 const PANEL_KEY = 'homeTicketsPanel';
 const OPEN_COOLDOWN_MS = 60_000;
 const CLOSE_DELAY_MS = 5_000;
@@ -55,7 +79,7 @@ export const SECTIONS = {
         channelEmoji: '🎀',
         label: 'توثيق بنات',
         title: '🎀 تكت توثيق',
-        panelLine: `🎀 **توثيق بنات** — للبنات بس، عشان تاخدي رول <@&${VERIFIED_ROLE_ID}>`,
+        panelLine: `🎀 **توثيق بنات** — للبنات بس، عشان تاخدي رول التوثيق`,
         intro: 'أهلاً بيكي 🎀 المسؤولة عن التوثيق هتكلمك هنا وتقولك تعملي إيه. محدش غير المسؤولين عن التوثيق يقدر يشوف التكت ده.',
         style: ButtonStyle.Secondary,
     },
@@ -73,7 +97,12 @@ async function writeState(client, guildId, state) {
     await client.db.set(stateKey(guildId), state);
 }
 
-function panelPayload() {
+function panelPayload(guildId) {
+    const verifiedRoleId = getVerifiedRoleId(guildId);
+    const verifyLine = verifiedRoleId
+        ? `🎀 **توثيق بنات** — للبنات بس، عشان تاخدي رول <@&${verifiedRoleId}>`
+        : SECTIONS.verify.panelLine;
+
     const row = new ActionRowBuilder().addComponents(
         ...Object.entries(SECTIONS).map(([type, section]) => new ButtonBuilder()
             .setCustomId(`${TICKET_BUTTON_PREFIX}:open:${type}`)
@@ -88,7 +117,8 @@ function panelPayload() {
             description: [
                 'اختار القسم اللي محتاجه، والبوت هيفتحلك روم خاصة بيك:',
                 '',
-                ...Object.values(SECTIONS).map((section) => section.panelLine),
+                SECTIONS.problem.panelLine,
+                verifyLine,
                 '',
                 '• تكت واحد مفتوح لكل قسم.',
                 '• متفتحش تكت من غير سبب.',
@@ -112,13 +142,23 @@ async function staffRoleIds(guild) {
 
 /** The team that handles a section: its role, plus the staff roles for problems. */
 async function sectionTeam(guild, type) {
-    const own = [SECTION_ROLE_IDS[type]].filter((id) => guild.roles.cache.has(id));
-    if (type === 'verify') return own;
+    const roles = getSectionRoleIds(guild.id);
+    const ownId = roles?.[type];
+    const own = ownId ? [ownId].filter((id) => guild.roles.cache.has(id)) : [];
+    if (type === 'verify') {
+        if (own.length) return own;
+        // When verify role is not set, staff can view and verify.
+        return await staffRoleIds(guild);
+    }
     return [...new Set([...own, ...(await staffRoleIds(guild))])];
 }
 
 /** The role mentioned when a ticket of `type` opens. */
-const sectionPing = (guild, type) => [SECTION_ROLE_IDS[type]].filter((id) => guild.roles.cache.has(id));
+const sectionPing = (guild, type) => {
+    const roles = getSectionRoleIds(guild.id);
+    const ownId = roles?.[type];
+    return ownId ? [ownId].filter((id) => guild.roles.cache.has(id)) : [];
+};
 
 async function canHandle(member, type, state) {
     if (!member) return false;
@@ -129,11 +169,10 @@ async function canHandle(member, type, state) {
 
 /** Makes the category, the panel and log rooms, the two roles, and posts or edits the panel. */
 export async function setupHomeTickets(guild) {
-    if (!isHomeGuild(guild?.id)) return null;
+    if (!isTicketGuild(guild?.id)) return null;
     const { client } = guild;
     const state = await readState(client, guild.id);
     const me = guild.members.me;
-
 
     let category = state.categoryId && guild.channels.cache.get(state.categoryId);
     if (!category) {
@@ -142,10 +181,11 @@ export async function setupHomeTickets(guild) {
     }
     state.categoryId = category.id;
 
-    const inCategory = (name) => guild.channels.cache.find((channel) => channel.parentId === category.id && channel.name === name);
     const botAllow = me ? [{ id: me.id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ReadMessageHistory] }] : [];
 
-    let panel = (state.panelChannelId && guild.channels.cache.get(state.panelChannelId)) || inCategory(TICKET_NAMES.panel);
+    // Find panel by saved ID (even if moved!) or by name anywhere in the guild so we never duplicate or move it back.
+    let panel = (state.panelChannelId && guild.channels.cache.get(state.panelChannelId))
+        || guild.channels.cache.find((channel) => channel.name === TICKET_NAMES.panel);
     if (!panel) {
         panel = await guild.channels.create({
             name: TICKET_NAMES.panel,
@@ -160,9 +200,11 @@ export async function setupHomeTickets(guild) {
     }
     state.panelChannelId = panel.id;
 
-    // The log room is for the staff and both sections' teams.
-    const staffIds = [...new Set([...(await staffRoleIds(guild)), ...Object.values(SECTION_ROLE_IDS).filter((id) => guild.roles.cache.has(id))])];
-    let log = (state.logChannelId && guild.channels.cache.get(state.logChannelId)) || inCategory(TICKET_NAMES.log);
+    // Find log room by saved ID or by name anywhere in guild.
+    const roles = getSectionRoleIds(guild.id);
+    const staffIds = [...new Set([...(await staffRoleIds(guild)), ...Object.values(roles).filter((id) => id && guild.roles.cache.has(id))])];
+    let log = (state.logChannelId && guild.channels.cache.get(state.logChannelId))
+        || guild.channels.cache.find((channel) => channel.name === TICKET_NAMES.log);
     if (!log) {
         log = await guild.channels.create({
             name: TICKET_NAMES.log,
@@ -180,9 +222,9 @@ export async function setupHomeTickets(guild) {
     await writeState(client, guild.id, state);
 
     const board = await findBoardMessage(panel, PANEL_KEY, isPanel).catch(() => null);
-    if (board) await board.edit(panelPayload()).catch(() => {});
+    if (board) await board.edit(panelPayload(guild.id)).catch(() => {});
     else {
-        const sent = await panel.send(panelPayload());
+        const sent = await panel.send(panelPayload(guild.id));
         await rememberBoardMessage(panel, PANEL_KEY, sent.id);
     }
     return { categoryId: category.id, panelChannelId: panel.id, logChannelId: log.id };
@@ -205,7 +247,7 @@ export function ticketControls(type, { claimedBy = null } = {}) {
  */
 export async function openTicket(member, type, { now = Date.now() } = {}) {
     const { guild } = member;
-    if (!isHomeGuild(guild.id)) return { ok: false, reason: 'not_home' };
+    if (!isTicketGuild(guild.id)) return { ok: false, reason: 'not_home' };
     const section = SECTIONS[type];
     if (!section) return { ok: false, reason: 'bad_type' };
     const state = await readState(guild.client, guild.id);
@@ -276,11 +318,12 @@ export async function verifyTicket(channel, member) {
     const ticket = state.open[channel.id];
     if (!ticket || ticket.type !== 'verify') return { ok: false, reason: 'not_ticket' };
     if (!(await canHandle(member, 'verify', state))) return { ok: false, reason: 'not_team' };
-    const role = guild.roles.cache.get(VERIFIED_ROLE_ID);
+    const roleId = getVerifiedRoleId(guild.id);
+    const role = roleId && guild.roles.cache.get(roleId);
     const owner = await guild.members.fetch(ticket.ownerId).catch(() => null);
-    if (!role || !owner) return { ok: false, reason: 'no_role' };
+    if (!role || !owner) return { ok: false, reason: 'no_role', roleId };
     const added = await owner.roles.add(role, `Verified by ${member.id}`).then(() => true).catch(() => false);
-    return added ? { ok: true, ticket, roleId: role.id } : { ok: false, reason: 'no_role' };
+    return added ? { ok: true, ticket, roleId: role.id } : { ok: false, reason: 'no_role', roleId };
 }
 
 function transcript(messages) {
@@ -340,15 +383,16 @@ export const TICKET_FAILURE_TEXT = {
     not_ticket: 'ℹ️ التكت ده اتقفل خلاص.',
     not_team: '❌ الزرار ده للإدارة المسؤولة عن التكت ده بس.',
     claimed: 'ℹ️ التكت ده حد استلمه خلاص.',
-    no_role: `❌ مقدرتش أدي الرول، اتأكد إن رول البوت فوق <@&${VERIFIED_ROLE_ID}>.`,
+    no_role: `❌ مقدرتش أدي الرول، اتأكد إن رول البوت فوق رول التوثيق.`,
 };
 
 /** Startup: sets up the tickets in our server. */
 export async function startHomeTickets(client) {
+    const results = {};
     for (const guild of client.guilds.cache.values()) {
-        if (!isHomeGuild(guild.id)) continue;
-        return { status: 'ready', ...(await setupHomeTickets(guild)) };
+        if (!isTicketGuild(guild.id)) continue;
+        results[guild.id] = await setupHomeTickets(guild);
     }
-    return { status: 'skipped' };
+    return { status: Object.keys(results).length ? 'ready' : 'skipped', results };
 }
 

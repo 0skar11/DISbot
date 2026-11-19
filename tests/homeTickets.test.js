@@ -1,10 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionFlagsBits } from 'discord.js';
-import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
+import { HOME_GUILD_ID, ZENITH_GUILD_ID } from '../src/config/homeGuild.js';
 import { ROLE_DEFINITIONS } from '../src/services/staffRoleHierarchyService.js';
 import {
   setupHomeTickets, openTicket, claimTicket, verifyTicket, closeTicket, SECTION_ROLE_IDS, TICKET_NAMES, VERIFIED_ROLE_ID,
+  getVerifiedRoleId,
 } from '../src/services/tickets/homeTickets.js';
 
 const MEMBER = '200000000000000001';
@@ -121,5 +122,41 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal(await setupHomeTickets(guild), null);
     assert.equal((await openTicket(member(MEMBER), 'problem')).reason, 'not_home');
     assert.equal(created.length, 0);
+  });
+
+  test('Zenith server: tickets set up once, preserved if moved, and verify gives Zenith role', async () => {
+    const zenithRoleId = '1570728144086765640';
+    const { guild, created, member, roles } = setup(ZENITH_GUILD_ID);
+    roles.set(zenithRoleId, { id: zenithRoleId, name: 'Zenith girl', managed: false });
+
+    // 1. Initial setup creates category, panel, and log rooms
+    const result = await setupHomeTickets(guild);
+    assert.ok(result);
+    assert.equal(created.length, 3);
+    const [category, panel, log] = created;
+
+    // 2. If channels are moved (e.g. panel parent changed or category moved), setup does NOT move them back or recreate them
+    panel.parentId = 'other_cat';
+    log.parentId = 'other_cat';
+    const secondSetup = await setupHomeTickets(guild);
+    assert.equal(created.length, 3); // No new channels created
+    assert.equal(panel.parentId, 'other_cat'); // Not moved back
+    assert.equal(log.parentId, 'other_cat');
+
+    // 3. Problem ticket works in Zenith
+    const probResult = await openTicket(member(MEMBER), 'problem', { now: 1_000_000 });
+    assert.equal(probResult.ok, true);
+
+    // 4. Verify ticket gives Zenith's verified role (1570728144086765640)
+    const girl = member(GIRL);
+    const verResult = await openTicket(girl, 'verify', { now: 2_000_000 });
+    assert.equal(verResult.ok, true);
+    const ticketChannel = created[created.length - 1];
+
+    const staffMember = member('200000000000000010', [STAFF_ROLE.id]);
+    const verified = await verifyTicket(ticketChannel, staffMember);
+    assert.equal(verified.ok, true);
+    assert.equal(verified.roleId, zenithRoleId);
+    assert.ok(girl.roles.cache.has(zenithRoleId));
   });
 });
