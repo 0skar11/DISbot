@@ -22,6 +22,7 @@ describe('heartbeat', () => {
     const stop = startHeartbeat(s.client, { selfName: 'me', peer: { id: 'peer', name: 'Peer' }, log: { warn() {} }, now: s.now, beatEveryMs: 1_000_000, watchEveryMs: 10 });
     await new Promise((resolve) => { setTimeout(resolve, 60); });
     assert.equal(s.sent.filter((p) => p.content.startsWith('💓')).length, 1);
+    assert.ok(s.sent[0].content.includes('آخر ريستارت:'));
     const alerts = s.sent.filter((p) => p.content.includes('🔴'));
     assert.equal(alerts.length, 1);
     assert.ok(alerts[0].content.startsWith('@everyone'));

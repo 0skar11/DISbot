@@ -12,10 +12,11 @@ export const STALE_MS = 5 * 60_000;
 const marker = (botId) => `💓 heartbeat ${botId}`;
 
 /** Starts the heartbeat and the watcher. `peer` is `{ id, name }` of the other bot. Returns a stop function. */
-export function startHeartbeat(client, { selfName, peer, log = console, now = () => Date.now(), beatEveryMs = HEARTBEAT_EVERY_MS, watchEveryMs = WATCH_EVERY_MS } = {}) {
+export function startHeartbeat(client, { selfName, peer, log = console, now = () => Date.now(), beatEveryMs = HEARTBEAT_EVERY_MS, watchEveryMs = WATCH_EVERY_MS, startedAt = null } = {}) {
   let message = null;
   let peerDown = false;
   const timers = [];
+  const bootTimestampSec = startedAt ?? Math.floor((client.readyTimestamp || now()) / 1000);
 
   async function room() {
     const guild = client.guilds.cache.get(STATUS_GUILD_ID);
@@ -28,7 +29,8 @@ export function startHeartbeat(client, { selfName, peer, log = console, now = ()
     try {
       const channel = await room();
       if (!channel) return;
-      const content = `${marker(client.user.id)} • ${selfName} • <t:${Math.floor(now() / 1000)}:R>`;
+      const currentSec = Math.floor(now() / 1000);
+      const content = `${marker(client.user.id)} • ${selfName} • <t:${currentSec}:R> • آخر ريستارت: <t:${bootTimestampSec}:R> (<t:${bootTimestampSec}:f>)`;
       if (!message) {
         const recent = await channel.messages.fetch({ limit: 30 }).catch(() => null);
         message = recent?.find((m) => m.author.id === client.user.id && m.content.startsWith(marker(client.user.id))) || null;
