@@ -12,7 +12,7 @@ export default {
     .setDescription('Post a bot info board once (skipped if it already exists)')
     .addSubcommand((sub) => sub.setName('moderation-commands').setDescription('Post the Arabic moderation commands list'))
     .addSubcommand((sub) => sub.setName('admin-permissions').setDescription('Refresh the staff permission board (edit only)'))
-    .addSubcommand((sub) => sub.setName('strip-admin').setDescription('Remove Administrator from roles and grant all other permissions (Report #302)'))
+    .addSubcommand((sub) => sub.setName('strip-admin').setDescription('Keep Administrator for top 3 roles only, remove from lower roles (Report #302)'))
     .addSubcommand((sub) => sub.setName('trusted').setDescription('Post or refresh the Anti-Nuke trusted list'))
     .addSubcommand((sub) => sub.setName('rules').setDescription('Post (with @everyone) or refresh the server rules')),
 
@@ -38,7 +38,7 @@ export default {
         const changed = result.changed?.length ? result.changed.join(', ') : 'لا يوجد';
         const failed = result.failed?.length ? `\n⚠️ تعذر تعديل: ${result.failed.join(', ')}` : '';
         return interaction.editReply({
-          content: `✅ تم إزالة صلاحية Administrator ومنح جميع الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`,
+          content: `✅ تم الإبقاء على صلاحية Administrator لأول 3 رتب فقط، وإزالتها من الرتب الأقل مع تفعيل كافة الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`,
         });
       } else if (interaction.options.getSubcommand() === 'trusted') {
         const result = await publishTrustedBoard(interaction.client, { allowSend: true });

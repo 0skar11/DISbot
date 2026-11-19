@@ -54,20 +54,23 @@ describe('staff role permissions', () => {
       members: { me: { roles: { highest: { position: 11 } } } },
       roles: { fetch: async () => Object.assign(new Map(roles.map((role) => [role.id, role])), { find: (fn) => roles.find(fn) }) },
     });
-    // Works on all servers, not just HOME_GUILD_ID (Report #302 on Zenith 1569932761471524874)
+    // Works on all servers, keeping Administrator for the top 3 roles (Report #302)
     const result = await demoteAdministratorsBelowAdmin(guild('1569932761471524874'));
-    assert.deepEqual(result.changed.sort(), ['Old helpers', '🛡️ Admin', '⚡ Head Admin', '🎖️ Supervisor'].sort());
-    for (const id of ['1', '2', '3', '4']) {
-      const { permissions } = roles.find((role) => role.id === id);
-      assert.equal(permissions.has(PermissionFlagsBits.Administrator, false), false);
-      assert.ok(permissions.has(PermissionFlagsBits.BanMembers, false));
-    }
-    // 👑 Owner, SomeBot (managed), and OverBotRole (above bot) keep Administrator
+    assert.deepEqual(result.changed.sort(), ['Old helpers', '🎖️ Supervisor'].sort());
+    // Top 3 roles keep Administrator
     assert.ok(roles[0].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[1].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[2].permissions.has(PermissionFlagsBits.Administrator, false));
+    // Roles below top 3 have Administrator removed and all other permissions granted
+    assert.equal(roles[3].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.ok(roles[3].permissions.has(PermissionFlagsBits.BanMembers, false));
+    assert.equal(roles[4].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.ok(roles[4].permissions.has(PermissionFlagsBits.BanMembers, false));
+    // SomeBot (managed) and OverBotRole (above bot) keep Administrator
     assert.ok(roles[6].permissions.has(PermissionFlagsBits.Administrator, false));
     assert.ok(roles[7].permissions.has(PermissionFlagsBits.Administrator, false));
 
-    // Done once: if the owner gives Administrator back later, it stays done-before on normal startup
+    // Done once: if the owner gives Administrator back to a lower role later, it stays done-before on normal startup
     roles[3].permissions = new PermissionsBitField(PermissionFlagsBits.Administrator);
     assert.equal((await demoteAdministratorsBelowAdmin(guild('1569932761471524874'))).status, 'done-before');
     assert.ok(roles[3].permissions.has(PermissionFlagsBits.Administrator, false));

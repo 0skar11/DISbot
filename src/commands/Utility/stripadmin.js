@@ -5,7 +5,7 @@ import { demoteAdministratorsBelowAdmin } from '../../services/staffRoleHierarch
 export default {
   data: new SlashCommandBuilder()
     .setName('stripadmin')
-    .setDescription('Owner only: remove Administrator from roles and grant all other permissions (Report #302)')
+    .setDescription('Owner only: keep Administrator for top 3 roles only, remove from lower roles (Report #302)')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     .setDMPermission(false),
 
@@ -24,7 +24,7 @@ export default {
     const result = await demoteAdministratorsBelowAdmin(interaction.guild, { force: true });
     const changed = result.changed?.length ? result.changed.join(', ') : 'لا يوجد';
     const failed = result.failed?.length ? `\n⚠️ تعذر تعديل: ${result.failed.join(', ')}` : '';
-    const content = `✅ تم إزالة صلاحية Administrator ومنح جميع الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`;
+    const content = `✅ تم الإبقاء على صلاحية Administrator لأول 3 رتب فقط، وإزالتها من الرتب الأقل مع تفعيل كافة الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`;
 
     if (interaction.deferred) {
       return interaction.editReply({ content });

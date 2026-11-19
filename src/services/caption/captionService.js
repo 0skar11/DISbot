@@ -1,5 +1,8 @@
 // captionService.js: `.caption <text>` / `.كابشن <text>` and `/caption`, report #297:
 // writes the text above the picture on a solid white background (meme caption style).
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import sharp from 'sharp';
 import { findImageUrl, isSafeUrl, download } from '../gifConverterService.js';
 import { logger } from '../../utils/logger.js';
@@ -9,6 +12,8 @@ export const MAX_TEXT_LENGTH = 500;
 export const COOLDOWN_MS = 3_000;
 export const CAPTION_WORDS = new Set(['caption', 'كابشن']);
 const CAPTION_SYMBOL_PREFIX = /^[.!/-]$/u;
+
+const FONT_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../promo/fonts/Cairo-Bold.ttf');
 
 export const TEXT = {
   noImage: '🖼️ ابعت صورة مع الأمر أو اعمل ريبلاي على صورة: `.caption الكلام هنا`',
@@ -21,7 +26,7 @@ export const TEXT = {
   cooldown: (s) => `⏳ استنى ${s} ثانية قبل ما تستخدم الأمر تاني.`,
 };
 
-function escapeXml(unsafe) {
+function escapeMarkup(unsafe) {
   return String(unsafe || '').replace(/[<>&'"]/g, (c) => {
     switch (c) {
       case '<': return '&lt;';
@@ -56,6 +61,7 @@ export function wrapText(text, maxCharsPerLine = 35) {
 
 /**
  * Creates an image with text written above it on a solid white background.
+ * Uses the bundled Cairo-Bold font directly to render on Linux (Railway) and all platforms without relying on OS fonts.
  */
 export async function generateCaption(imageBuffer, text) {
   const image = sharp(imageBuffer, { limitInputPixels: 40_000_000 });
@@ -69,30 +75,51 @@ export async function generateCaption(imageBuffer, text) {
     height = Math.round(height * scale);
   }
 
-  const fontSize = Math.max(18, Math.min(44, Math.floor(width / 22)));
-  const lineHeight = Math.round(fontSize * 1.35);
-  const maxChars = Math.max(15, Math.floor(width / (fontSize * 0.55)));
-  const lines = wrapText(text, maxChars);
+  const fontSize = Math.max(20, Math.min(48, Math.round(width / 16)));
+  const paddingX = Math.round(width * 0.05);
+  const innerWidth = width - (paddingX * 2);
+
+  const textOptions = {
+    text: `<span foreground="#000000">${escapeMarkup(text)}</span>`,
+    font: `Cairo Bold ${fontSize}`,
+    rgba: true,
+    dpi: 96,
+    align: 'centre',
+    width: innerWidth,
+    wrap: 'word-char',
+    spacing: Math.round(fontSize * 0.3),
+  };
+  if (fs.existsSync(FONT_FILE)) {
+    textOptions.fontfile = FONT_FILE;
+  }
+
+  const textLayer = await sharp({ text: textOptions }).png().toBuffer({ resolveWithObject: true });
 
   const paddingTop = Math.round(fontSize * 0.8);
   const paddingBottom = Math.round(fontSize * 0.8);
-  const headerHeight = paddingTop + (lines.length * lineHeight) + paddingBottom;
+  const headerHeight = Math.max(60, textLayer.info.height + paddingTop + paddingBottom);
 
-  const tspanLines = lines.map((line, index) => {
-    const y = paddingTop + (index + 0.8) * lineHeight;
-    return `<text x="50%" y="${y}" font-family="Arial, 'Noto Sans', 'Segoe UI', Tahoma, sans-serif" font-weight="bold" font-size="${fontSize}px" fill="#000000" text-anchor="middle">${escapeXml(line)}</text>`;
-  }).join('\n');
-
-  const headerSvg = Buffer.from(`<svg width="${width}" height="${headerHeight}" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="#ffffff"/>
-    ${tspanLines}
-  </svg>`);
+  const headerBg = await sharp({
+    create: {
+      width,
+      height: headerHeight,
+      channels: 3,
+      background: { r: 255, g: 255, b: 255 },
+    },
+  })
+    .composite([
+      {
+        input: textLayer.data,
+        top: Math.round((headerHeight - textLayer.info.height) / 2),
+        left: Math.round((width - textLayer.info.width) / 2),
+      },
+    ])
+    .png()
+    .toBuffer();
 
   const resizedBase = await sharp(imageBuffer, { limitInputPixels: 40_000_000 })
     .resize({ width, height, fit: 'fill' })
     .toBuffer();
-
-  const headerPng = await sharp(headerSvg).png().toBuffer();
 
   const totalHeight = headerHeight + height;
   const result = await sharp({
@@ -104,7 +131,7 @@ export async function generateCaption(imageBuffer, text) {
     },
   })
     .composite([
-      { input: headerPng, top: 0, left: 0 },
+      { input: headerBg, top: 0, left: 0 },
       { input: resizedBase, top: headerHeight, left: 0 },
     ])
     .png()

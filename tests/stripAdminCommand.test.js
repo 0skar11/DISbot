@@ -33,8 +33,10 @@ describe('stripadmin command (Report #302)', () => {
   test('server owner execution strips administrator and replies with changed roles', async () => {
     const roles = [
       makeRole('0', '👑 Owner', 10, PermissionFlagsBits.Administrator),
-      makeRole('1', 'Co-Admin', 8, PermissionFlagsBits.Administrator),
-      makeRole('2', 'Moderator', 7, PermissionFlagsBits.Administrator),
+      makeRole('1', 'Co-Admin', 9, PermissionFlagsBits.Administrator),
+      makeRole('2', 'Head Mod', 8, PermissionFlagsBits.Administrator),
+      makeRole('3', 'Supervisor', 7, PermissionFlagsBits.Administrator),
+      makeRole('4', 'Moderator', 6, PermissionFlagsBits.Administrator),
     ];
     let editReplyPayload = null;
     let deferred = false;
@@ -46,7 +48,7 @@ describe('stripadmin command (Report #302)', () => {
         id: '1569932761471524874', // Zenith
         ownerId: 'guild-owner',
         client: { db: { get: async (key, fallback) => (store.has(key) ? store.get(key) : fallback), set: async (key, val) => { store.set(key, val); return true; } } },
-        members: { me: { roles: { highest: { position: 9 } } } },
+        members: { me: { roles: { highest: { position: 10 } } } },
         roles: { fetch: async () => Object.assign(new Map(roles.map((r) => [r.id, r])), { find: (fn) => roles.find(fn) }) },
       },
       inGuild: () => true,
@@ -57,18 +59,23 @@ describe('stripadmin command (Report #302)', () => {
 
     await stripAdminCommand.execute(interaction);
     assert.ok(deferred);
-    assert.match(editReplyPayload.content, /Co-Admin/);
+    assert.match(editReplyPayload.content, /Supervisor/);
     assert.match(editReplyPayload.content, /Moderator/);
-    // 👑 Owner kept Administrator
+    // Top 3 roles keep Administrator
     assert.ok(roles[0].permissions.has(PermissionFlagsBits.Administrator, false));
-    // Others stripped
-    assert.equal(roles[1].permissions.has(PermissionFlagsBits.Administrator, false), false);
-    assert.equal(roles[2].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.ok(roles[1].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[2].permissions.has(PermissionFlagsBits.Administrator, false));
+    // Roles below top 3 have Administrator stripped
+    assert.equal(roles[3].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.equal(roles[4].permissions.has(PermissionFlagsBits.Administrator, false), false);
   });
 
   test('publish-board strip-admin subcommand executes demotion', async () => {
     const roles = [
-      makeRole('1', 'Manager', 5, PermissionFlagsBits.Administrator),
+      makeRole('0', 'Owner', 10, PermissionFlagsBits.Administrator),
+      makeRole('1', 'Admin 1', 9, PermissionFlagsBits.Administrator),
+      makeRole('2', 'Admin 2', 8, PermissionFlagsBits.Administrator),
+      makeRole('3', 'Manager', 5, PermissionFlagsBits.Administrator),
     ];
     let deferred = false;
     let editReplyPayload = null;
@@ -93,6 +100,6 @@ describe('stripadmin command (Report #302)', () => {
     await publishBoardCommand.execute(interaction);
     assert.ok(deferred);
     assert.match(editReplyPayload.content, /Manager/);
-    assert.equal(roles[0].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.equal(roles[3].permissions.has(PermissionFlagsBits.Administrator, false), false);
   });
 });
