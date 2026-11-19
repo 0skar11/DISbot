@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { handleGifCommand, isSafeUrl, toGif, findImageUrl, isGifCommand, COOLDOWN_MS } from '../src/services/gifConverterService.js';
+import { handleGifCommand, isSafeUrl, toGif, findImageUrl, isGifCommand, isTenorOrGiphy, resolveMediaUrl, COOLDOWN_MS } from '../src/services/gifConverterService.js';
 import { parseTypedCommand } from '../src/utils/prefixParser.js';
 
 const png = () => sharp({ create: { width: 30, height: 20, channels: 4, background: '#2255ff' } }).png().toBuffer();
@@ -21,9 +21,69 @@ function fakeMessage({ attachments = [], content = '.gif', replied = null, menti
     };
 }
 
-test('isSafeUrl: only https on the Discord image hosts', () => {
-    for (const ok of ['https://cdn.discordapp.com/a.png', 'https://media.discordapp.net/a.png?x=1', 'https://images-ext-1.discordapp.net/external/a/b.png']) assert.equal(isSafeUrl(ok), true, ok);
-    for (const bad of ['http://cdn.discordapp.com/a.png', 'https://evil.example.com/a.png', 'https://cdn.discordapp.com.evil.com/a.png', 'https://127.0.0.1/a.png', 'https://localhost/a.png', 'https://user:pw@cdn.discordapp.com/a.png', 'https://cdn.discordapp.com:8443/a.png', 'https://169.254.169.254/latest', 'not a url']) assert.equal(isSafeUrl(bad), false, bad);
+test('isSafeUrl: only https on Discord, Tenor, and Giphy hosts', () => {
+    for (const ok of [
+        'https://cdn.discordapp.com/a.png',
+        'https://media.discordapp.net/a.png?x=1',
+        'https://images-ext-1.discordapp.net/external/a/b.png',
+        'https://tenor.com/view/funny-cat-gif-1234',
+        'https://media.tenor.com/m/abc/cat.gif',
+        'https://media1.tenor.com/m/abc/cat.gif',
+        'https://c.tenor.com/abc/cat.gif',
+        'https://giphy.com/gifs/funny-cat-xyz',
+        'https://i.giphy.com/media/xyz/giphy.gif',
+        'https://media.giphy.com/media/xyz/giphy.gif',
+        'https://media0.giphy.com/media/xyz/giphy.gif',
+    ]) assert.equal(isSafeUrl(ok), true, ok);
+
+    for (const bad of [
+        'http://cdn.discordapp.com/a.png',
+        'http://tenor.com/view/1',
+        'http://giphy.com/gifs/1',
+        'https://evil.example.com/a.png',
+        'https://cdn.discordapp.com.evil.com/a.png',
+        'https://tenor.com.evil.com/a.png',
+        'https://eviltenor.com/a.png',
+        'https://giphy.com.evil.com/a.png',
+        'https://evilgiphy.com/a.png',
+        'https://127.0.0.1/a.png',
+        'https://localhost/a.png',
+        'https://user:pw@cdn.discordapp.com/a.png',
+        'https://cdn.discordapp.com:8443/a.png',
+        'https://169.254.169.254/latest',
+        'not a url',
+    ]) assert.equal(isSafeUrl(bad), false, bad);
+});
+
+test('isTenorOrGiphy identifies Tenor and Giphy domains', () => {
+    assert.equal(isTenorOrGiphy('https://tenor.com/view/cat-123'), true);
+    assert.equal(isTenorOrGiphy('https://media1.tenor.com/m/abc/cat.gif'), true);
+    assert.equal(isTenorOrGiphy('https://giphy.com/gifs/cat-123'), true);
+    assert.equal(isTenorOrGiphy('https://i.giphy.com/media/123/giphy.gif'), true);
+    assert.equal(isTenorOrGiphy('https://cdn.discordapp.com/a.png'), false);
+    assert.equal(isTenorOrGiphy('https://eviltenor.com/a.gif'), false);
+    assert.equal(isTenorOrGiphy(null), false);
+});
+
+test('resolveMediaUrl resolves Tenor page HTML to direct gif', async () => {
+    const tenorHtml = `
+      <html>
+        <head>
+          <script type="application/ld+json">{"@context":"http://schema.org","@type":"Article","image":{"@type":"ImageObject","contentUrl":"https://media1.tenor.com/m/test/cat.gif","thumbnailUrl":"https://media.tenor.com/test/cat.png"}}</script>
+        </head>
+      </html>
+    `;
+    const fetchStub = async () => ({
+        ok: true,
+        text: async () => tenorHtml,
+    });
+    const result = await resolveMediaUrl('https://tenor.com/view/cat-test-123', fetchStub);
+    assert.equal(result, 'https://media1.tenor.com/m/test/cat.gif');
+});
+
+test('resolveMediaUrl resolves Giphy page URL to direct gif', async () => {
+    const result = await resolveMediaUrl('https://giphy.com/gifs/cat-funny-cute-JIX9t2j0ZTN9S');
+    assert.equal(result, 'https://i.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif');
 });
 
 test('toGif makes a real GIF and refuses a non-picture', async () => {

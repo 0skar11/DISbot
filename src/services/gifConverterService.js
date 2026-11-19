@@ -31,9 +31,103 @@ let running = 0;
 const URL_PATTERN = /https:\/\/[^\s<>]+/iu;
 const IMAGE_NAME = /\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?|$)/iu;
 
-const DISCORD_IMAGE_HOSTS = [/^cdn\.discordapp\.com$/u, /^media\.discordapp\.net$/u, /^images-ext-\d+\.discordapp\.net$/u, /^cdn\.discordapp\.net$/u];
+const DISCORD_IMAGE_HOSTS = [
+    /^cdn\.discordapp\.com$/u,
+    /^media\.discordapp\.net$/u,
+    /^images-ext-\d+\.discordapp\.net$/u,
+    /^cdn\.discordapp\.net$/u,
+    /(?:^|\.)tenor\.com$/u,
+    /(?:^|\.)giphy\.com$/u,
+];
 
-/** A link we may download: https on one of Discord's own image hosts, no credentials, no custom port. */
+/** Whether a URL belongs to Tenor or Giphy. */
+export function isTenorOrGiphy(value) {
+    if (!value) return false;
+    let url;
+    try { url = new URL(value); } catch { return false; }
+    const host = url.hostname.toLowerCase();
+    return /(?:^|\.)tenor\.com$/u.test(host) || /(?:^|\.)giphy\.com$/u.test(host);
+}
+
+const resolvedCache = new Map();
+
+function cacheResolved(key, value) {
+    if (resolvedCache.size > 200) {
+        const first = resolvedCache.keys().next().value;
+        resolvedCache.delete(first);
+    }
+    resolvedCache.set(key, value);
+}
+
+/** Resolves a Tenor or Giphy link to its direct animated .gif URL. */
+export async function resolveMediaUrl(rawUrl, fetchImpl = fetch) {
+    if (!rawUrl) return null;
+    if (resolvedCache.has(rawUrl)) return resolvedCache.get(rawUrl);
+
+    try {
+        const u = new URL(rawUrl);
+        const host = u.hostname.toLowerCase();
+
+        // Direct gif link on Tenor / Giphy
+        if (IMAGE_NAME.test(u.pathname) && (host.endsWith('tenor.com') || host.endsWith('giphy.com'))) {
+            return rawUrl;
+        }
+
+        // Tenor page link: https://tenor.com/view/... or https://tenor.com/...
+        if (host === 'tenor.com' || host === 'www.tenor.com') {
+            const res = await fetchImpl(rawUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            });
+            if (res.ok) {
+                const html = await res.text();
+                const contentUrl = html.match(/"contentUrl":\s*"([^"]+\.gif)"/i)?.[1]?.replace(/\\u002F/g, '/');
+                if (contentUrl) {
+                    cacheResolved(rawUrl, contentUrl);
+                    return contentUrl;
+                }
+                const imageSrc = html.match(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+\.gif)["']/i)?.[1];
+                if (imageSrc) {
+                    cacheResolved(rawUrl, imageSrc);
+                    return imageSrc;
+                }
+                const anyGif = html.match(/https:\/\/(?:media\d*|c)\.tenor\.com\/[^\s"'<>]+\.gif/i)?.[0];
+                if (anyGif) {
+                    cacheResolved(rawUrl, anyGif);
+                    return anyGif;
+                }
+            }
+        }
+
+        // Giphy page link: https://giphy.com/gifs/...
+        if (host === 'giphy.com' || host === 'www.giphy.com') {
+            const match = rawUrl.match(/\/gifs\/(?:.*-)?([a-zA-Z0-9]+)(?:$|\/|\?)/);
+            if (match?.[1]) {
+                const direct = `https://i.giphy.com/media/${match[1]}/giphy.gif`;
+                cacheResolved(rawUrl, direct);
+                return direct;
+            }
+            const res = await fetchImpl(rawUrl, {
+                headers: { 'User-Agent': 'Mozilla/5.0' },
+                signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+            });
+            if (res.ok) {
+                const html = await res.text();
+                const gifMatch = html.match(/https:\/\/media\d*\.giphy\.com\/media\/[^\s"'<>]+\/giphy\.gif/i)?.[0];
+                if (gifMatch) {
+                    cacheResolved(rawUrl, gifMatch);
+                    return gifMatch;
+                }
+            }
+        }
+    } catch (err) {
+        logger.warn(`[MEDIA] resolve failed for ${rawUrl}: ${err.message}`);
+    }
+
+    return rawUrl;
+}
+
+/** A link we may download: https on one of Discord, Tenor, or Giphy image hosts, no credentials, no custom port. */
 export function isSafeUrl(value) {
     let url;
     try { url = new URL(value); } catch { return false; }
@@ -47,27 +141,44 @@ function imageFromMessage(message) {
     const attachment = [...(message?.attachments?.values?.() || [])].find(isImageAttachment);
     if (attachment) return attachment.url;
     for (const embed of message?.embeds || []) {
-        // Prefer Discord's proxy copy: the plain URL of a link embed is the outside site, which isSafeUrl refuses.
-        const url = embed.image?.proxyURL || embed.thumbnail?.proxyURL || embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
-        if (url) return url;
+        if (embed.url && isTenorOrGiphy(embed.url)) {
+            return embed.url;
+        }
+        if (embed.image?.url && isSafeUrl(embed.image.url)) {
+            return embed.image.url;
+        }
+        if (embed.thumbnail?.url && isSafeUrl(embed.thumbnail.url) && (IMAGE_NAME.test(embed.thumbnail.url) || isTenorOrGiphy(embed.thumbnail.url))) {
+            return embed.thumbnail.url;
+        }
+        // Prefer Discord's proxy copy for external images: the plain URL of a link embed is an outside site.
+        const fallback = embed.image?.proxyURL || embed.thumbnail?.proxyURL || embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
+        if (fallback) return fallback;
     }
     const link = URL_PATTERN.exec(message?.content || '')?.[0];
-    return link && IMAGE_NAME.test(link) ? link : null;
+    if (link && (isTenorOrGiphy(link) || IMAGE_NAME.test(link))) return link;
+    return null;
 }
 
 /** Where the picture is: a URL, or null when the message gives none. */
-export async function findImageUrl(message, args = []) {
-    const own = imageFromMessage(message);
-    if (own) return own;
-    if (message.reference?.messageId) {
+export async function findImageUrl(message, args = [], deps = {}) {
+    const fetchImpl = deps?.fetch || fetch;
+    let url = imageFromMessage(message);
+    if (!url && message.reference?.messageId) {
         const replied = await message.fetchReference().catch(() => null);
-        const fromReply = imageFromMessage(replied);
-        if (fromReply) return fromReply;
+        url = imageFromMessage(replied);
     }
-    const link = args.map((arg) => URL_PATTERN.exec(arg)?.[0]).find(Boolean);
-    if (link) return link;
-    const mentioned = message.mentions?.users?.first?.();
-    return mentioned?.displayAvatarURL?.({ extension: 'png', size: 1024 }) || null;
+    if (!url) {
+        const link = args.map((arg) => URL_PATTERN.exec(arg)?.[0]).find(Boolean);
+        if (link && (isTenorOrGiphy(link) || IMAGE_NAME.test(link))) url = link;
+    }
+    if (!url) {
+        const mentioned = message.mentions?.users?.first?.();
+        url = mentioned?.displayAvatarURL?.({ extension: 'png', size: 1024 }) || null;
+    }
+    if (url && isTenorOrGiphy(url)) {
+        url = await (deps?.resolveMediaUrl || resolveMediaUrl)(url, fetchImpl);
+    }
+    return url;
 }
 
 /** Downloads a picture, streamed and stopped at `maxBytes` (error 'too big'). Also used by `شيل الخلفية`. */
@@ -123,7 +234,7 @@ export async function handleGifCommand(message, args = [], deps = {}) {
     lastUse.set(message.author?.id, now);
     running += 1;
     try {
-        const url = await findImageUrl(message, args);
+        const url = await findImageUrl(message, args, deps);
         if (!url) return await say(message, '🖼️ ابعت صورة مع الأمر، أو اعمل ريبلاي على صورة واكتب `gif`.');
         if (!(deps.isSafeUrl || isSafeUrl)(url)) return await say(message, '❌ بحوّل الصور اللي على ديسكورد بس: ارفع الصورة أو اعمل ريبلاي عليها.');
         const bytes = await download(url, deps.fetch);

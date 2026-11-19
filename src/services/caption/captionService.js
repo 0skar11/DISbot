@@ -246,7 +246,7 @@ export async function handleCaptionCommand(message, args = [], deps = {}) {
     text,
     getImage: async () => {
       message.channel?.sendTyping?.().catch?.(() => {});
-      const url = await findImageUrl(message, args);
+      const url = await findImageUrl(message, args, deps);
       return url ? { url } : null;
     },
     respond,

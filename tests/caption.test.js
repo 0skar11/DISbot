@@ -175,4 +175,75 @@ describe('caption command (Report #297)', () => {
       globalThis.fetch = origFetch;
     }
   });
+
+  test('handleCaptionCommand keeps Tenor GIF animated as caption.gif', async () => {
+    const { fileURLToPath } = await import('node:url');
+    const gifPath = fileURLToPath(new URL('../src/assets/emojis/animated/face_angel.gif', import.meta.url));
+    const fs = await import('node:fs/promises');
+    const gifBytes = await fs.readFile(gifPath);
+
+    let sent = null;
+    const repliedMessage = {
+      attachments: new Map(),
+      content: 'https://tenor.com/view/wumpus-wave-gif-12345',
+      embeds: [
+        {
+          type: 'gifv',
+          url: 'https://tenor.com/view/wumpus-wave-gif-12345',
+          thumbnail: {
+            url: 'https://media.tenor.com/wumpus.png',
+            proxyURL: 'https://images-ext-1.discordapp.net/external/xyz/https/media.tenor.com/wumpus.png',
+          },
+        },
+      ],
+    };
+
+    const message = {
+      guild: { id: 'g1' },
+      author: { id: 'u-tenor' },
+      content: '.caption معاذ نيكوتين',
+      reference: { messageId: 'm-orig' },
+      fetchReference: async () => repliedMessage,
+      channel: { sendTyping: async () => {} },
+      reply: async (payload) => { sent = payload; return payload; },
+    };
+
+    const tenorHtml = `
+      <html>
+        <script type="application/ld+json">{"@context":"http://schema.org","@type":"Article","image":{"@type":"ImageObject","contentUrl":"https://media1.tenor.com/m/test/wumpus.gif"}}</script>
+      </html>
+    `;
+
+    const fetchStub = async (url) => {
+      if (String(url).includes('tenor.com/view/')) {
+        return { ok: true, text: async () => tenorHtml };
+      }
+      return {
+        ok: true,
+        headers: new Headers({ 'content-length': String(gifBytes.length) }),
+        body: {
+          getReader() {
+            let done = false;
+            return {
+              read: async () => {
+                if (done) return { done: true };
+                done = true;
+                return { done: false, value: gifBytes };
+              },
+            };
+          },
+        },
+      };
+    };
+
+    const { handleCaptionCommand } = await import('../src/services/caption/captionService.js');
+    await handleCaptionCommand(message, ['معاذ', 'نيكوتين'], { fetch: fetchStub, now: () => 10_000_000 });
+
+    assert.ok(sent);
+    assert.ok(sent.files);
+    assert.equal(sent.files[0].name, 'caption.gif');
+    const meta = await sharp(sent.files[0].attachment, { animated: true }).metadata();
+    assert.equal(meta.format, 'gif');
+    assert.ok((meta.pages || 0) > 1);
+  });
 });
