@@ -51,7 +51,7 @@ export const GUILD_SECTION_ROLE_IDS = {
     [HOME_GUILD_ID]: SECTION_ROLE_IDS,
     [ZENITH_GUILD_ID]: {
         problem: null,
-        verify: null,
+        verify: '1572977938092134410',
     },
 };
 

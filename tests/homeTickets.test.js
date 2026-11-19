@@ -124,10 +124,12 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal(created.length, 0);
   });
 
-  test('Zenith server: tickets set up once, preserved if moved, and verify gives Zenith role', async () => {
+  test('Zenith server: tickets set up once, preserved if moved, and verify role restricts access and gives Zenith role', async () => {
     const zenithRoleId = '1570728144086765640';
+    const zenithVerifierRoleId = '1572977938092134410';
     const { guild, created, member, roles } = setup(ZENITH_GUILD_ID);
     roles.set(zenithRoleId, { id: zenithRoleId, name: 'Zenith girl', managed: false });
+    roles.set(zenithVerifierRoleId, { id: zenithVerifierRoleId, name: 'Zenith female verifiers', managed: false });
 
     // 1. Initial setup creates category, panel, and log rooms
     const result = await setupHomeTickets(guild);
@@ -147,14 +149,22 @@ describe('our server\'s tickets (owner\'s request)', () => {
     const probResult = await openTicket(member(MEMBER), 'problem', { now: 1_000_000 });
     assert.equal(probResult.ok, true);
 
-    // 4. Verify ticket gives Zenith's verified role (1570728144086765640)
+    // 4. Verify ticket is seen only by Zenith verifiers role (1572977938092134410) and gives Zenith role (1570728144086765640)
     const girl = member(GIRL);
     const verResult = await openTicket(girl, 'verify', { now: 2_000_000 });
     assert.equal(verResult.ok, true);
     const ticketChannel = created[created.length - 1];
+    const allowed = ticketChannel.options.permissionOverwrites.filter((overwrite) => overwrite.allow).map((overwrite) => overwrite.id);
+    assert.ok(allowed.includes(zenithVerifierRoleId));
+    assert.ok(!allowed.includes(STAFF_ROLE.id));
 
-    const staffMember = member('200000000000000010', [STAFF_ROLE.id]);
-    const verified = await verifyTicket(ticketChannel, staffMember);
+    // Staff without verifier role cannot verify
+    const regularStaff = member('200000000000000010', [STAFF_ROLE.id]);
+    assert.equal((await verifyTicket(ticketChannel, regularStaff)).reason, 'not_team');
+
+    // Verifier with 1572977938092134410 can verify
+    const verifierMember = member('200000000000000011', [zenithVerifierRoleId]);
+    const verified = await verifyTicket(ticketChannel, verifierMember);
     assert.equal(verified.ok, true);
     assert.equal(verified.roleId, zenithRoleId);
     assert.ok(girl.roles.cache.has(zenithRoleId));
