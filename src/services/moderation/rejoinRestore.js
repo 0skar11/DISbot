@@ -20,15 +20,16 @@ import { logger } from '../../utils/logger.js';
 // Where staff roles wait for approval: the trusted channel.
 export const REJOIN_APPROVAL_CHANNEL_ID = TRUSTED_BOARD_CHANNEL_ID;
 // Where the decision is written once the request is deleted (the owner's log channel).
-export const REJOIN_LOG_CHANNEL_ID = '1550564287129456810';
+export const REJOIN_LOG_CHANNEL_ID = '1570184305895018506';
 export const REJOIN_BUTTON_PREFIX = 'rejoinroles';
 
-// Zenith works the same way: its approval requests (and the decisions) go to its permissions room.
+// Zenith works the same way: its approval requests go to its permissions room, and decisions go to the rejoin log channel.
 const ZENITH_APPROVAL_CHANNEL_ID = '1571076213705809941';
+const ZENITH_LOG_CHANNEL_ID = '1570184305895018506';
 const ZENITH_GUILD_ID = '1569932761471524874';
 const isRejoinGuild = (guildId) => isHomeGuild(guildId) || String(guildId) === ZENITH_GUILD_ID;
 const approvalChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_APPROVAL_CHANNEL_ID : ZENITH_APPROVAL_CHANNEL_ID);
-const logChannelFor = (guildId) => (isHomeGuild(guildId) ? REJOIN_LOG_CHANNEL_ID : ZENITH_APPROVAL_CHANNEL_ID);
+const logChannelFor = (guildId) => (String(guildId) === ZENITH_GUILD_ID ? ZENITH_LOG_CHANNEL_ID : REJOIN_LOG_CHANNEL_ID);
 
 // Roles with any of these need approval like the staff roles.
 const DANGEROUS = [
