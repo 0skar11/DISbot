@@ -15,6 +15,7 @@ import { getCountingGameConfig, saveCountingGameConfig, isValidCountingMessage, 
 import { handleTrustedListCommand } from '../utils/trustedCommand.js';
 import { handleGifCommand, isGifCommand } from '../services/gifConverterService.js';
 import { handleRemoveBgCommand, isRemoveBgCommand, removeBgArgs } from '../services/backgroundRemoval/removeBgService.js';
+import { handleCaptionCommand, isCaptionCommand } from '../services/caption/captionService.js';
 import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullShortcut } from '../utils/arabicModerationShortcuts.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { handleReportChannelMessage } from '../services/reportChannelService.js';
@@ -167,6 +168,8 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
     if (parsed && await handleStreakCommand(message, parsed.commandName, parsed.args)) return;
     // `.شيل الخلفية` / `.removebg` (everyone, report #286): before the role shortcuts, where `شيل` is "remove role".
     if (isRemoveBgCommand(parsed) && await handleRemoveBgCommand(message, removeBgArgs(parsed))) return;
+    // `.caption` / `.كابشن` (everyone, report #297): writes text above the picture on a white background.
+    if (isCaptionCommand(parsed) && await handleCaptionCommand(message, parsed.args)) return;
     if (await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
     if (!parsed) return;
 
