@@ -49,6 +49,33 @@ export function isTenorOrGiphy(value) {
     return /(?:^|\.)tenor\.com$/u.test(host) || /(?:^|\.)giphy\.com$/u.test(host);
 }
 
+/** Unwraps a Discord proxy URL like https://images-ext-1.discordapp.net/external/.../https/media.tenor.com/... */
+export function unwrapDiscordProxyUrl(url) {
+    if (!url) return url;
+    try {
+        const u = new URL(url);
+        if (/^images-ext-\d+\.discordapp\.net$/u.test(u.hostname.toLowerCase())) {
+            const match = u.pathname.match(/\/external\/[^/]+\/(https?)\/(.+)/i);
+            if (match) {
+                const scheme = match[1];
+                const rest = match[2];
+                let unwrapped = `${scheme}://${rest}${u.search || ''}`;
+                // Only unwrap if the destination is Tenor or Giphy; external hosts like Imgur need Discord's proxy to satisfy isSafeUrl
+                try {
+                    const host = new URL(unwrapped).hostname.toLowerCase();
+                    if (host.includes('tenor.com') || host.includes('giphy.com')) {
+                        if (host.includes('tenor.com')) {
+                            unwrapped = unwrapped.replace(/\.png(?:\?.*)?$/i, '.gif').replace('AAAAC/', 'AAAAM/');
+                        }
+                        return unwrapped;
+                    }
+                } catch {}
+            }
+        }
+    } catch {}
+    return url;
+}
+
 const resolvedCache = new Map();
 
 function cacheResolved(key, value) {
@@ -62,52 +89,73 @@ function cacheResolved(key, value) {
 /** Resolves a Tenor or Giphy link to its direct animated .gif URL. */
 export async function resolveMediaUrl(rawUrl, fetchImpl = fetch) {
     if (!rawUrl) return null;
-    if (resolvedCache.has(rawUrl)) return resolvedCache.get(rawUrl);
+    const cleanUrl = unwrapDiscordProxyUrl(rawUrl);
+    if (resolvedCache.has(cleanUrl)) return resolvedCache.get(cleanUrl);
 
     try {
-        const u = new URL(rawUrl);
-        const host = u.hostname.toLowerCase();
+        let u = new URL(cleanUrl);
+        let host = u.hostname.toLowerCase();
+
+        // If it's a Tenor png, switch to gif
+        if (host.includes('tenor.com') && u.pathname.endsWith('.png')) {
+            const gifUrl = cleanUrl.replace(/\.png(?:\?.*)?$/i, '.gif').replace('AAAAC/', 'AAAAM/');
+            cacheResolved(cleanUrl, gifUrl);
+            return gifUrl;
+        }
 
         // Direct gif link on Tenor / Giphy
         if (IMAGE_NAME.test(u.pathname) && (host.endsWith('tenor.com') || host.endsWith('giphy.com'))) {
-            return rawUrl;
+            const direct = host.includes('tenor.com') && cleanUrl.includes('AAAAC/')
+                ? cleanUrl.replace('AAAAC/', 'AAAAM/')
+                : cleanUrl;
+            cacheResolved(cleanUrl, direct);
+            return direct;
         }
 
         // Tenor page link: https://tenor.com/view/... or https://tenor.com/...
         if (host === 'tenor.com' || host === 'www.tenor.com') {
-            const res = await fetchImpl(rawUrl, {
+            const res = await fetchImpl(cleanUrl, {
                 headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
                 signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             });
             if (res.ok) {
                 const html = await res.text();
+                // Prefer AAAAM (medium ~2MB) over AAAAC (giant ~30MB)
+                const mediumMatch = html.match(/https:\/\/(?:media\d*|c)\.tenor\.com\/[^\s"'<>]+AAAAM\/[^\s"'<>]+\.gif/i)?.[0];
+                if (mediumMatch) {
+                    cacheResolved(cleanUrl, mediumMatch);
+                    return mediumMatch;
+                }
                 const contentUrl = html.match(/"contentUrl":\s*"([^"]+\.gif)"/i)?.[1]?.replace(/\\u002F/g, '/');
                 if (contentUrl) {
-                    cacheResolved(rawUrl, contentUrl);
-                    return contentUrl;
+                    const optimized = contentUrl.includes('AAAAC/') ? contentUrl.replace('AAAAC/', 'AAAAM/') : contentUrl;
+                    cacheResolved(cleanUrl, optimized);
+                    return optimized;
                 }
                 const imageSrc = html.match(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+\.gif)["']/i)?.[1];
                 if (imageSrc) {
-                    cacheResolved(rawUrl, imageSrc);
-                    return imageSrc;
+                    const optimized = imageSrc.includes('AAAAC/') ? imageSrc.replace('AAAAC/', 'AAAAM/') : imageSrc;
+                    cacheResolved(cleanUrl, optimized);
+                    return optimized;
                 }
                 const anyGif = html.match(/https:\/\/(?:media\d*|c)\.tenor\.com\/[^\s"'<>]+\.gif/i)?.[0];
                 if (anyGif) {
-                    cacheResolved(rawUrl, anyGif);
-                    return anyGif;
+                    const optimized = anyGif.includes('AAAAC/') ? anyGif.replace('AAAAC/', 'AAAAM/') : anyGif;
+                    cacheResolved(cleanUrl, optimized);
+                    return optimized;
                 }
             }
         }
 
         // Giphy page link: https://giphy.com/gifs/...
         if (host === 'giphy.com' || host === 'www.giphy.com') {
-            const match = rawUrl.match(/\/gifs\/(?:.*-)?([a-zA-Z0-9]+)(?:$|\/|\?)/);
+            const match = cleanUrl.match(/\/gifs\/(?:.*-)?([a-zA-Z0-9]+)(?:$|\/|\?)/);
             if (match?.[1]) {
                 const direct = `https://i.giphy.com/media/${match[1]}/giphy.gif`;
-                cacheResolved(rawUrl, direct);
+                cacheResolved(cleanUrl, direct);
                 return direct;
             }
-            const res = await fetchImpl(rawUrl, {
+            const res = await fetchImpl(cleanUrl, {
                 headers: { 'User-Agent': 'Mozilla/5.0' },
                 signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             });
@@ -115,16 +163,16 @@ export async function resolveMediaUrl(rawUrl, fetchImpl = fetch) {
                 const html = await res.text();
                 const gifMatch = html.match(/https:\/\/media\d*\.giphy\.com\/media\/[^\s"'<>]+\/giphy\.gif/i)?.[0];
                 if (gifMatch) {
-                    cacheResolved(rawUrl, gifMatch);
+                    cacheResolved(cleanUrl, gifMatch);
                     return gifMatch;
                 }
             }
         }
     } catch (err) {
-        logger.warn(`[MEDIA] resolve failed for ${rawUrl}: ${err.message}`);
+        logger.warn(`[MEDIA] resolve failed for ${cleanUrl}: ${err.message}`);
     }
 
-    return rawUrl;
+    return cleanUrl;
 }
 
 /** A link we may download: https on one of Discord, Tenor, or Giphy image hosts, no credentials, no custom port. */
@@ -140,22 +188,38 @@ const isImageAttachment = (attachment) => Boolean(attachment?.contentType?.start
 function imageFromMessage(message) {
     const attachment = [...(message?.attachments?.values?.() || [])].find(isImageAttachment);
     if (attachment) return attachment.url;
+
+    // Check message content for Tenor / Giphy or direct safe Discord attachment links FIRST
+    // so animated GIFs take precedence over static proxy thumbnails, while external links still use Discord's proxy.
+    const words = String(message?.content || '').split(/\s+/u);
+    for (const w of words) {
+        const link = URL_PATTERN.exec(w)?.[0];
+        if (link && (isTenorOrGiphy(link) || (isSafeUrl(link) && IMAGE_NAME.test(link)))) {
+            return link;
+        }
+    }
+
     for (const embed of message?.embeds || []) {
         if (embed.url && isTenorOrGiphy(embed.url)) {
             return embed.url;
         }
+        const proxyCandidate = embed.thumbnail?.url || embed.image?.url || embed.thumbnail?.proxyURL || embed.image?.proxyURL;
+        if (proxyCandidate) {
+            const unwrapped = unwrapDiscordProxyUrl(proxyCandidate);
+            if (isTenorOrGiphy(unwrapped)) {
+                return unwrapped;
+            }
+        }
         if (embed.image?.url && isSafeUrl(embed.image.url)) {
             return embed.image.url;
         }
-        if (embed.thumbnail?.url && isSafeUrl(embed.thumbnail.url) && (IMAGE_NAME.test(embed.thumbnail.url) || isTenorOrGiphy(embed.thumbnail.url))) {
+        if (embed.thumbnail?.url && isSafeUrl(embed.thumbnail.url) && IMAGE_NAME.test(embed.thumbnail.url)) {
             return embed.thumbnail.url;
         }
         // Prefer Discord's proxy copy for external images: the plain URL of a link embed is an outside site.
         const fallback = embed.image?.proxyURL || embed.thumbnail?.proxyURL || embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
         if (fallback) return fallback;
     }
-    const link = URL_PATTERN.exec(message?.content || '')?.[0];
-    if (link && (isTenorOrGiphy(link) || IMAGE_NAME.test(link))) return link;
     return null;
 }
 
@@ -175,8 +239,13 @@ export async function findImageUrl(message, args = [], deps = {}) {
         const mentioned = message.mentions?.users?.first?.();
         url = mentioned?.displayAvatarURL?.({ extension: 'png', size: 1024 }) || null;
     }
-    if (url && isTenorOrGiphy(url)) {
-        url = await (deps?.resolveMediaUrl || resolveMediaUrl)(url, fetchImpl);
+    if (url) {
+        const unwrapped = unwrapDiscordProxyUrl(url);
+        if (isTenorOrGiphy(unwrapped)) {
+            url = await (deps?.resolveMediaUrl || resolveMediaUrl)(unwrapped, fetchImpl);
+        } else {
+            url = unwrapped;
+        }
     }
     return url;
 }

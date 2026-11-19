@@ -65,7 +65,7 @@ export function wrapText(text, maxCharsPerLine = 35) {
  * Uses the bundled Cairo-Bold font directly to render on Linux (Railway) and all platforms without relying on OS fonts.
  */
 export async function generateCaption(imageBuffer, text) {
-  const metadata = await sharp(imageBuffer, { animated: true, limitInputPixels: 40_000_000 }).metadata();
+  const metadata = await sharp(imageBuffer, { animated: true, limitInputPixels: 150_000_000 }).metadata();
   const isGif = metadata.format === 'gif';
   const pages = metadata.pages || 1;
   const isAnimated = pages > 1;
@@ -73,13 +73,13 @@ export async function generateCaption(imageBuffer, text) {
   let width = metadata.width || 500;
   let pageHeight = metadata.pageHeight || (metadata.height ? Math.round(metadata.height / pages) : 500);
 
-  const maxWidth = isAnimated ? 640 : 1200;
+  const maxWidth = isAnimated ? 540 : 1200;
   let resizedBuffer = imageBuffer;
   if (width > maxWidth) {
     const scale = maxWidth / width;
     width = maxWidth;
     pageHeight = Math.round(pageHeight * scale);
-    resizedBuffer = await sharp(imageBuffer, { animated: isAnimated, limitInputPixels: 40_000_000 })
+    resizedBuffer = await sharp(imageBuffer, { animated: isAnimated, limitInputPixels: 150_000_000 })
       .resize({ width, withoutEnlargement: true })
       .toBuffer();
   }
@@ -125,11 +125,11 @@ export async function generateCaption(imageBuffer, text) {
     .toBuffer();
 
   if (isAnimated || isGif) {
-    const extended = await sharp(resizedBuffer, { animated: isAnimated, limitInputPixels: 40_000_000 })
+    const extended = await sharp(resizedBuffer, { animated: isAnimated, limitInputPixels: 150_000_000 })
       .extend({ top: headerHeight, background: '#ffffff' })
       .toBuffer();
 
-    const extMeta = await sharp(extended, { animated: isAnimated }).metadata();
+    const extMeta = await sharp(extended, { animated: isAnimated, limitInputPixels: 150_000_000 }).metadata();
     const extPageHeight = extMeta.pageHeight || extMeta.height;
 
     const compositeInputs = [];
@@ -141,7 +141,7 @@ export async function generateCaption(imageBuffer, text) {
       });
     }
 
-    const output = await sharp(extended, { animated: isAnimated })
+    const output = await sharp(extended, { animated: isAnimated, limitInputPixels: 150_000_000 })
       .composite(compositeInputs)
       .gif({ delay: metadata.delay, loop: metadata.loop ?? 0 })
       .toBuffer();
