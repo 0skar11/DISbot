@@ -43,12 +43,32 @@ describe('caption command (Report #297)', () => {
     }).png().toBuffer();
 
     const result = await generateCaption(baseImg, 'لما تصحى بدري وتلاقي نفسك نشيط');
-    assert.ok(Buffer.isBuffer(result));
+    const buffer = Buffer.isBuffer(result) ? result : result.buffer;
+    assert.ok(Buffer.isBuffer(buffer));
+    assert.equal(result.filename, 'caption.png');
+    assert.equal(result.isGif, false);
 
-    const meta = await sharp(result).metadata();
+    const meta = await sharp(buffer).metadata();
     assert.equal(meta.width, 300);
     assert.ok(meta.height > 200); // Height increased due to the white caption bar
     assert.equal(meta.format, 'png');
+  });
+
+  test('generateCaption keeps GIF animated when input is a GIF', async () => {
+    const { fileURLToPath } = await import('node:url');
+    const gifPath = fileURLToPath(new URL('../src/assets/emojis/animated/face_angel.gif', import.meta.url));
+    const fs = await import('node:fs/promises');
+    const gifBytes = await fs.readFile(gifPath);
+
+    const result = await generateCaption(gifBytes, 'us لما نكون كدا');
+    const buffer = Buffer.isBuffer(result) ? result : result.buffer;
+    assert.ok(Buffer.isBuffer(buffer));
+    assert.equal(result.filename, 'caption.gif');
+    assert.equal(result.isGif, true);
+
+    const meta = await sharp(buffer, { animated: true }).metadata();
+    assert.equal(meta.format, 'gif');
+    assert.ok((meta.pages || 0) > 1);
   });
 
   test('runCaption validates text and image requirements', async () => {

@@ -60,22 +60,31 @@ export function wrapText(text, maxCharsPerLine = 35) {
 }
 
 /**
- * Creates an image with text written above it on a solid white background.
+ * Creates an image or GIF with text written above it on a solid white background.
+ * If input is a GIF (animated), keeps it animated as a GIF; if static, outputs PNG.
  * Uses the bundled Cairo-Bold font directly to render on Linux (Railway) and all platforms without relying on OS fonts.
  */
 export async function generateCaption(imageBuffer, text) {
-  const image = sharp(imageBuffer, { limitInputPixels: 40_000_000 });
-  const metadata = await image.metadata();
-  let width = metadata.width || 600;
-  let height = metadata.height || 600;
+  const metadata = await sharp(imageBuffer, { animated: true, limitInputPixels: 40_000_000 }).metadata();
+  const isGif = metadata.format === 'gif';
+  const pages = metadata.pages || 1;
+  const isAnimated = pages > 1;
 
-  if (width > 1200) {
-    const scale = 1200 / width;
-    width = 1200;
-    height = Math.round(height * scale);
+  let width = metadata.width || 500;
+  let pageHeight = metadata.pageHeight || (metadata.height ? Math.round(metadata.height / pages) : 500);
+
+  const maxWidth = isAnimated ? 640 : 1200;
+  let resizedBuffer = imageBuffer;
+  if (width > maxWidth) {
+    const scale = maxWidth / width;
+    width = maxWidth;
+    pageHeight = Math.round(pageHeight * scale);
+    resizedBuffer = await sharp(imageBuffer, { animated: isAnimated, limitInputPixels: 40_000_000 })
+      .resize({ width, withoutEnlargement: true })
+      .toBuffer();
   }
 
-  const fontSize = Math.max(20, Math.min(48, Math.round(width / 16)));
+  const fontSize = Math.max(18, Math.min(44, Math.round(width / 16)));
   const paddingX = Math.round(width * 0.05);
   const innerWidth = width - (paddingX * 2);
 
@@ -89,22 +98,20 @@ export async function generateCaption(imageBuffer, text) {
     wrap: 'word-char',
     spacing: Math.round(fontSize * 0.3),
   };
-  if (fs.existsSync(FONT_FILE)) {
-    textOptions.fontfile = FONT_FILE;
-  }
+  if (fs.existsSync(FONT_FILE)) textOptions.fontfile = FONT_FILE;
 
   const textLayer = await sharp({ text: textOptions }).png().toBuffer({ resolveWithObject: true });
 
   const paddingTop = Math.round(fontSize * 0.8);
   const paddingBottom = Math.round(fontSize * 0.8);
-  const headerHeight = Math.max(60, textLayer.info.height + paddingTop + paddingBottom);
+  const headerHeight = Math.max(50, textLayer.info.height + paddingTop + paddingBottom);
 
   const headerBg = await sharp({
     create: {
       width,
       height: headerHeight,
-      channels: 3,
-      background: { r: 255, g: 255, b: 255 },
+      channels: 4,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
     },
   })
     .composite([
@@ -117,12 +124,33 @@ export async function generateCaption(imageBuffer, text) {
     .png()
     .toBuffer();
 
-  const resizedBase = await sharp(imageBuffer, { limitInputPixels: 40_000_000 })
-    .resize({ width, height, fit: 'fill' })
-    .toBuffer();
+  if (isAnimated || isGif) {
+    const extended = await sharp(resizedBuffer, { animated: isAnimated, limitInputPixels: 40_000_000 })
+      .extend({ top: headerHeight, background: '#ffffff' })
+      .toBuffer();
 
-  const totalHeight = headerHeight + height;
-  const result = await sharp({
+    const extMeta = await sharp(extended, { animated: isAnimated }).metadata();
+    const extPageHeight = extMeta.pageHeight || extMeta.height;
+
+    const compositeInputs = [];
+    for (let i = 0; i < pages; i++) {
+      compositeInputs.push({
+        input: headerBg,
+        top: Math.round(i * extPageHeight),
+        left: 0,
+      });
+    }
+
+    const output = await sharp(extended, { animated: isAnimated })
+      .composite(compositeInputs)
+      .gif({ delay: metadata.delay, loop: metadata.loop ?? 0 })
+      .toBuffer();
+
+    return { buffer: output, filename: 'caption.gif', isGif: true };
+  }
+
+  const totalHeight = headerHeight + pageHeight;
+  const output = await sharp({
     create: {
       width,
       height: totalHeight,
@@ -132,12 +160,12 @@ export async function generateCaption(imageBuffer, text) {
   })
     .composite([
       { input: headerBg, top: 0, left: 0 },
-      { input: resizedBase, top: headerHeight, left: 0 },
+      { input: resizedBuffer, top: headerHeight, left: 0 },
     ])
     .png()
     .toBuffer();
 
-  return result;
+  return { buffer: output, filename: 'caption.png', isGif: false };
 }
 
 const lastUse = new Map();
@@ -188,9 +216,11 @@ export async function runCaption({ userId, text, getImage, respond }, deps = {})
 
   try {
     const bytes = await (deps.download || download)(image.url, deps.fetch, MAX_INPUT_BYTES);
-    const outputBuffer = await (deps.generateCaption || generateCaption)(bytes, cleanText);
+    const result = await (deps.generateCaption || generateCaption)(bytes, cleanText);
+    const buffer = Buffer.isBuffer(result) ? result : result.buffer;
+    const filename = result?.filename || (result?.isGif ? 'caption.gif' : 'caption.png');
     return respond({
-      files: [{ attachment: outputBuffer, name: 'caption.png' }],
+      files: [{ attachment: buffer, name: filename }],
     });
   } catch (error) {
     logger.warn('Caption generation failed:', error.message || error);
