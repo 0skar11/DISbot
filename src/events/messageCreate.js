@@ -53,6 +53,7 @@ import {
 } from '../services/moderation/nameConfirmation.js';
 
 const AFK_COMMAND = /^\s*[^\p{L}\p{N}\s]{0,3}(?:afk|افك|أفك)(?:\s|$)/iu;
+const CC_BOT_ID = '1567561044472103103';
 
 export default {
   name: Events.MessageCreate,
@@ -220,6 +221,10 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
 
     const resolvedCommandName = homeOnlyCommandAlias(message.guild.id, commandName) || resolveCommandAlias(commandName);
     if (isSilentCommand(resolvedCommandName)) return;
+    if (resolvedCommandName === 'cc' && message.guild?.members?.cache?.has(CC_BOT_ID)) {
+      // CC-bot is in this server and handles `cc` directly; don't send a duplicate response (Report #294)
+      return;
+    }
     const command = client.commands.get(resolvedCommandName);
     if (!command) return;
     await runTypedCommand(message, client, {
