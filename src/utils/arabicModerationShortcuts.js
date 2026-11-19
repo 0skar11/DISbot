@@ -11,6 +11,7 @@ import { mayChangeRole } from '../services/moderation/staffRoleGuard.js';
 import { issueWarning, warningCard } from '../services/moderation/warnEscalation.js';
 import { moderationCard, cardReason, formatDurationMs, NO_REASON } from './moderationCard.js';
 import { unbanDmLine } from '../services/moderation/punishmentDm.js';
+import { filterStaffRoles } from '../services/staffRoleHierarchyService.js';
 import {
   assertCanActOn, hierarchyRuleApplies, lookupMember, HIERARCHY_REFUSAL, LOOKUP_FAILED_MESSAGE,
 } from '../services/moderation/memberHierarchy.js';
@@ -206,13 +207,22 @@ async function changeRole(message, targetMember, roleOrName, add) {
   return sendCard(message, { emoji: '➖', title: 'ROLE REMOVED', fields: [['User', `<@${targetMember.id}>`], ['Role', `${role}`]], moderatorId: message.author.id });
 }
 
+async function canMoveMembers(member) {
+  if (!member) return false;
+  if (member.guild?.ownerId === member.id || isServerOwner(member.id)) return true;
+  if (hasPermission(member, PermissionFlagsBits.MoveMembers)) return true;
+  const staff = await filterStaffRoles(member.guild, member.roles?.cache?.values?.() || []).catch(() => []);
+  return staff.length > 0;
+}
+
 /**
  * `سحب @العضو` (or as a reply): moves the member to the voice room the staff member is in. Staff only (Move Members);
  * the owner and members of a higher or equal role can't be pulled by a lower one. Without the permission it stays silent.
+ * Staff can pull from any voice room, even if locked (GH-304).
  */
 export async function pullToVoice(message, targetMember) {
   const staff = message.member;
-  if (!hasPermission(staff, PermissionFlagsBits.MoveMembers)) return reply(message, '🚫 No Permission');
+  if (!(await canMoveMembers(staff))) return reply(message, '🚫 No Permission');
   if (!targetMember) return true;
   const room = staff.voice?.channel;
   if (!room) return reply(message, '❌ ادخل روم صوتي الأول.');
@@ -225,11 +235,10 @@ export async function pullToVoice(message, targetMember) {
   } else if (!isOwner && (message.guild.ownerId === targetMember.id || targetMember.roles.highest.position >= staff.roles.highest.position)) {
     return reply(message, '❌ ماتقدرش تسحب عضو رتبته أعلى منك أو زيك.');
   }
-  // The bot does the move, so the staff member's own rights count on both rooms (a deny on a room is not bypassed).
-  // The pulled member needs no right on the room (staff may bring anyone anywhere). Owners skip the staff check.
-  const from = targetMember.voice.channel;
+  // The bot does the move. The staff member needs rights on their destination room;
+  // they can pull from ANY room, even if locked (GH-304).
   const allowed = (channel, who, flags) => channel?.permissionsFor?.(who)?.has(flags) ?? true;
-  if (!isOwner && !(allowed(from, staff, PermissionFlagsBits.MoveMembers) && allowed(room, staff, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]))) {
+  if (!isOwner && !allowed(room, staff, [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect])) {
     return reply(message, '🚫 No Permission');
   }
   await withInvoker(message.guild.id, 'voice', targetMember.id, message.author, () => targetMember.voice.setChannel(room, `Pulled by ${message.author.tag}`));
@@ -432,7 +441,7 @@ export async function handlePullShortcut(message, args = [], { prefixed = false 
 /** Pulls `targetId` (pullToVoice checks the permission, the rooms and the role hierarchy). */
 async function pullMember(message, targetId) {
   const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
-  if (!targetMember && nameTargetsEnabled(message.guild) && hasPermission(message.member, PermissionFlagsBits.MoveMembers)) {
+  if (!targetMember && nameTargetsEnabled(message.guild) && (await canMoveMembers(message.member))) {
     return replyMemberNotFound(message);
   }
   try {
