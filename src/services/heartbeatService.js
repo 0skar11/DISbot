@@ -9,7 +9,7 @@ export const HEARTBEAT_EVERY_MS = 60_000;
 export const WATCH_EVERY_MS = 120_000;
 export const STALE_MS = 5 * 60_000;
 
-const marker = (botId) => `💓 heartbeat ${botId}`;
+const isHeartbeatMessage = (m, botId) => m.author?.id === botId && m.content?.includes('💓');
 
 /** Starts the heartbeat and the watcher. `peer` is `{ id, name }` of the other bot. Returns a stop function. */
 export function startHeartbeat(client, { selfName, peer, log = console, now = () => Date.now(), beatEveryMs = HEARTBEAT_EVERY_MS, watchEveryMs = WATCH_EVERY_MS, startedAt = null } = {}) {
@@ -30,10 +30,10 @@ export function startHeartbeat(client, { selfName, peer, log = console, now = ()
       const channel = await room();
       if (!channel) return;
       const currentSec = Math.floor(now() / 1000);
-      const content = `${marker(client.user.id)} • ${selfName} • <t:${currentSec}:R> • آخر ريستارت: <t:${bootTimestampSec}:R> (<t:${bootTimestampSec}:f>)`;
+      const content = `💓 **${selfName}** • متصل (<t:${currentSec}:R>) • 🔄 آخر ريستارت: \u200E<t:${bootTimestampSec}:R>`;
       if (!message) {
         const recent = await channel.messages.fetch({ limit: 30 }).catch(() => null);
-        message = recent?.find((m) => m.author.id === client.user.id && m.content.startsWith(marker(client.user.id))) || null;
+        message = recent?.find((m) => isHeartbeatMessage(m, client.user.id)) || null;
       }
       message = message ? await message.edit({ content }).catch(() => null) : null;
       if (!message) message = await channel.send({ content, allowedMentions: { parse: [] } });
@@ -48,7 +48,7 @@ export function startHeartbeat(client, { selfName, peer, log = console, now = ()
       const channel = await room();
       if (!channel) return;
       const recent = await channel.messages.fetch({ limit: 30 });
-      const theirs = recent.find((m) => m.author.id === peer.id && m.content.startsWith(marker(peer.id)));
+      const theirs = recent.find((m) => isHeartbeatMessage(m, peer.id));
       if (!theirs) return; // the other bot never reported yet: nothing to compare
       const last = theirs.editedTimestamp || theirs.createdTimestamp;
       const stale = now() - last > STALE_MS;
