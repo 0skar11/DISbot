@@ -1,8 +1,9 @@
 import { PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
-import { publishStaffPermissionBoard } from '../../services/staffRoleHierarchyService.js';
+import { publishStaffPermissionBoard, demoteAdministratorsBelowAdmin } from '../../services/staffRoleHierarchyService.js';
 import { publishArabicModerationCommands } from '../../services/moderationCommandsBoardService.js';
 import { publishTrustedBoard } from '../../services/trustedBoardService.js';
 import { publishRulesBoard } from '../../services/rulesBoardService.js';
+import { isServerOwner } from '../../config/serverOwners.js';
 
 // One command with subcommands keeps the bot under Discord's 100 global command limit.
 export default {
@@ -11,6 +12,7 @@ export default {
     .setDescription('Post a bot info board once (skipped if it already exists)')
     .addSubcommand((sub) => sub.setName('moderation-commands').setDescription('Post the Arabic moderation commands list'))
     .addSubcommand((sub) => sub.setName('admin-permissions').setDescription('Refresh the staff permission board (edit only)'))
+    .addSubcommand((sub) => sub.setName('strip-admin').setDescription('Remove Administrator from roles and grant all other permissions (Report #302)'))
     .addSubcommand((sub) => sub.setName('trusted').setDescription('Post or refresh the Anti-Nuke trusted list'))
     .addSubcommand((sub) => sub.setName('rules').setDescription('Post (with @everyone) or refresh the server rules')),
 
@@ -27,6 +29,17 @@ export default {
           missing: `ℹ️ رسالة الصلاحيات غير موجودة في الروم <#${result.channelId}>، والبوت لا يرسل رسائل جديدة هناك.`,
         }[result.status] || `ℹ️ لم يتم العثور على رتب الستاف.`;
         return interaction.reply({ content, ephemeral: true });
+      } else if (interaction.options.getSubcommand() === 'strip-admin') {
+        if (!isServerOwner(interaction.user.id) && interaction.guild.ownerId !== interaction.user.id && !interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) {
+          return interaction.reply({ content: '❌ هذا الإجراء مخصص للأونر أو حاملي Administrator فقط.', ephemeral: true });
+        }
+        await interaction.deferReply({ ephemeral: true });
+        const result = await demoteAdministratorsBelowAdmin(interaction.guild, { force: true });
+        const changed = result.changed?.length ? result.changed.join(', ') : 'لا يوجد';
+        const failed = result.failed?.length ? `\n⚠️ تعذر تعديل: ${result.failed.join(', ')}` : '';
+        return interaction.editReply({
+          content: `✅ تم إزالة صلاحية Administrator ومنح جميع الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`,
+        });
       } else if (interaction.options.getSubcommand() === 'trusted') {
         const result = await publishTrustedBoard(interaction.client, { allowSend: true });
         const verb = result.status === 'sent' ? 'إرسال' : 'تحديث';

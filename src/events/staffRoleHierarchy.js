@@ -19,12 +19,14 @@ export default {
       } catch (error) {
         logger.error(`Failed to find the staff roles in ${guild.name}:`, error);
       }
-      // Report #208, once: Administrator taken off the roles below 🛡️ Admin (our server only).
+      // Reports #208 & #302: Administrator taken off roles across all servers and granted all other permissions.
       try {
         const demoted = await demoteAdministratorsBelowAdmin(guild);
-        if (demoted.status === 'done') startupLog(`Administrator taken off below Admin: ${demoted.changed.join(', ') || 'none'}${demoted.failed.length ? ` (failed: ${demoted.failed.join(', ')})` : ''}`);
+        if (demoted.status === 'done' && (demoted.changed.length || demoted.failed.length)) {
+          startupLog(`Administrator taken off in ${guild.name}: ${demoted.changed.join(', ') || 'none'}${demoted.failed.length ? ` (failed: ${demoted.failed.join(', ')})` : ''}`);
+        }
       } catch (error) {
-        logger.error(`Failed to take Administrator off the roles below Admin in ${guild.name}:`, error);
+        logger.error(`Failed to take Administrator off roles in ${guild.name}:`, error);
       }
       try {
         const board = await refreshStaffPermissionBoard(guild);

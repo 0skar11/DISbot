@@ -32,41 +32,51 @@ describe('staff role permissions', () => {
     });
   }
 
-  test('once, in our server: roles below Admin with Administrator get every permission but it', async () => {
+  test('Reports #208 & #302: all editable roles with Administrator (except 👑 Owner) get every permission but it', async () => {
     const make = (id, name, position, permissions, managed = false) => {
       const role = { id, name, position, managed, permissions: new PermissionsBitField(permissions), setPermissions: async (bits) => { role.permissions = new PermissionsBitField(bits); return role; } };
       return role;
     };
     const roles = [
+      make('0', '👑 Owner', 10, PermissionFlagsBits.Administrator),
       make('1', '⚡ Head Admin', 9, PermissionFlagsBits.Administrator),
       make('2', '🛡️ Admin', 8, PermissionFlagsBits.Administrator),
       make('3', '🎖️ Supervisor', 7, PermissionFlagsBits.Administrator),
       make('4', 'Old helpers', 3, PermissionFlagsBits.Administrator),
       make('5', 'Members', 1, PermissionFlagsBits.SendMessages),
       make('6', 'SomeBot', 5, PermissionFlagsBits.Administrator, true),
+      make('7', 'OverBotRole', 12, PermissionFlagsBits.Administrator),
     ];
     const store = new Map();
     const guild = (id) => ({
       id,
       client: { db: { get: async (key, fallback) => (store.has(key) ? store.get(key) : fallback), set: async (key, value) => { store.set(key, value); return true; } } },
+      members: { me: { roles: { highest: { position: 11 } } } },
       roles: { fetch: async () => Object.assign(new Map(roles.map((role) => [role.id, role])), { find: (fn) => roles.find(fn) }) },
     });
-    const result = await demoteAdministratorsBelowAdmin(guild(HOME_GUILD_ID));
-    assert.deepEqual(result.changed.sort(), ['Old helpers', '🎖️ Supervisor'].sort());
-    for (const id of ['3', '4']) {
+    // Works on all servers, not just HOME_GUILD_ID (Report #302 on Zenith 1569932761471524874)
+    const result = await demoteAdministratorsBelowAdmin(guild('1569932761471524874'));
+    assert.deepEqual(result.changed.sort(), ['Old helpers', '🛡️ Admin', '⚡ Head Admin', '🎖️ Supervisor'].sort());
+    for (const id of ['1', '2', '3', '4']) {
       const { permissions } = roles.find((role) => role.id === id);
       assert.equal(permissions.has(PermissionFlagsBits.Administrator, false), false);
       assert.ok(permissions.has(PermissionFlagsBits.BanMembers, false));
     }
+    // 👑 Owner, SomeBot (managed), and OverBotRole (above bot) keep Administrator
     assert.ok(roles[0].permissions.has(PermissionFlagsBits.Administrator, false));
-    assert.ok(roles[1].permissions.has(PermissionFlagsBits.Administrator, false));
-    assert.ok(roles[5].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[6].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[7].permissions.has(PermissionFlagsBits.Administrator, false));
 
-    // Done once: if the owner gives Administrator back later, it stays.
+    // Done once: if the owner gives Administrator back later, it stays done-before on normal startup
     roles[3].permissions = new PermissionsBitField(PermissionFlagsBits.Administrator);
-    assert.equal((await demoteAdministratorsBelowAdmin(guild(HOME_GUILD_ID))).status, 'done-before');
+    assert.equal((await demoteAdministratorsBelowAdmin(guild('1569932761471524874'))).status, 'done-before');
     assert.ok(roles[3].permissions.has(PermissionFlagsBits.Administrator, false));
-    assert.equal((await demoteAdministratorsBelowAdmin(guild('100000000000000099'))).status, 'skipped');
+
+    // Force option re-runs it on demand
+    const forced = await demoteAdministratorsBelowAdmin(guild('1569932761471524874'), { force: true });
+    assert.equal(forced.status, 'done');
+    assert.deepEqual(forced.changed, ['🎖️ Supervisor']);
+    assert.equal(roles[3].permissions.has(PermissionFlagsBits.Administrator, false), false);
   });
 
   test('Chat Moderator can timeout, warn and write notes but not kick or ban', () => {

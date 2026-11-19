@@ -135,7 +135,11 @@ function allButAdministratorLines(role) {
 // A plain embed object rather than an EmbedBuilder: src/utils/embeds.js drops builder footers (and strips emojis),
 // and the footer is how the bot recognizes its board message to edit it instead of posting a new one.
 function buildBoardEmbed(role, definition) {
-  const permissionLines = definition.allButAdministrator ? allButAdministratorLines(role) : permissionNames(role.permissions.toArray());
+  const isAllExceptAdmin = definition.allButAdministrator || (
+    !role.permissions.has(PermissionFlagsBits.Administrator) &&
+    (BigInt(role.permissions.bitfield) & BigInt(ALL_EXCEPT_ADMINISTRATOR)) === BigInt(ALL_EXCEPT_ADMINISTRATOR)
+  );
+  const permissionLines = isAllExceptAdmin ? allButAdministratorLines(role) : permissionNames(role.permissions.toArray());
   return {
     color: role.color || parseInt(definition.color.slice(1), 16),
     title: `${role.name} — الصلاحيات`,
@@ -192,25 +196,30 @@ export async function rememberStaffRoles(guild) {
   return { found };
 }
 
-// Report #208, done once (the bot doesn't keep editing roles: they are the owner's): every role below
-// 🛡️ Admin that has Administrator gets every permission except Administrator. Bump the version to run
-// it again on the next startup.
-const ADMIN_STRIP_VERSION = 1;
+// Reports #208 & #302: remove Administrator from any editable role (except 👑 Owner) across all servers
+// and grant all other permissions. Bump the version to run it again on startup, or pass { force: true }.
+const ADMIN_STRIP_VERSION = 2;
 const ADMIN_STRIP_KEY = 'adminStripVersion';
 
-export async function demoteAdministratorsBelowAdmin(guild) {
-  if (!isHomeGuild(guild?.id)) return { status: 'skipped' };
+export async function demoteAdministratorsBelowAdmin(guild, { force = false } = {}) {
+  if (!guild?.roles?.fetch) return { status: 'skipped', changed: [], failed: [] };
   const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
-  if ((config?.[ADMIN_STRIP_KEY] || 0) >= ADMIN_STRIP_VERSION) return { status: 'done-before', changed: [], failed: [] };
+  if (!force && (config?.[ADMIN_STRIP_KEY] || 0) >= ADMIN_STRIP_VERSION) return { status: 'done-before', changed: [], failed: [] };
   const roles = await guild.roles.fetch();
-  const admin = findStaffRole(roles, ROLE_DEFINITIONS.find((definition) => definition.name === '🛡️ Admin'), await savedStaffRoleIds(guild));
-  if (!admin) return { status: 'no-admin-role', changed: [], failed: [] };
-  const targets = [...roles.values()].filter((role) => role.position < admin.position && role.id !== guild.id && !role.managed
-    && role.permissions.has(PermissionFlagsBits.Administrator));
+  const me = guild.members?.me || await guild.members?.fetchMe?.().catch(() => null);
+  const botHighest = me?.roles?.highest?.position ?? Infinity;
+  const targets = [...roles.values()].filter((role) =>
+    role.id !== guild.id &&
+    !role.managed &&
+    role.position < botHighest &&
+    role.name !== '👑 Owner' &&
+    role.name.toLowerCase() !== 'owner' &&
+    role.permissions.has(PermissionFlagsBits.Administrator)
+  );
   const changed = [];
   const failed = [];
   for (const role of targets) {
-    const done = await role.setPermissions(ALL_EXCEPT_ADMINISTRATOR, 'Report #208: below Admin, every permission but Administrator')
+    const done = await role.setPermissions(ALL_EXCEPT_ADMINISTRATOR, 'Report #302: remove Administrator and grant all other permissions')
       .then(() => true)
       .catch((error) => {
         logger.warn(`Could not take Administrator off ${role.name}: ${error.message}`);
@@ -219,7 +228,7 @@ export async function demoteAdministratorsBelowAdmin(guild) {
     (done ? changed : failed).push(role.name);
   }
   // A role the bot couldn't change (above the bot's role) is tried again on the next startup.
-  if (!failed.length) await updateGuildConfig(guild.client, guild.id, { [ADMIN_STRIP_KEY]: ADMIN_STRIP_VERSION }).catch(() => {});
+  if (!failed.length && guild.client?.db) await updateGuildConfig(guild.client, guild.id, { [ADMIN_STRIP_KEY]: ADMIN_STRIP_VERSION }).catch(() => {});
   return { status: 'done', changed, failed };
 }
 
