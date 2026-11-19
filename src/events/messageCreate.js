@@ -16,6 +16,7 @@ import { handleTrustedListCommand } from '../utils/trustedCommand.js';
 import { handleGifCommand, isGifCommand } from '../services/gifConverterService.js';
 import { handleRemoveBgCommand, isRemoveBgCommand, removeBgArgs } from '../services/backgroundRemoval/removeBgService.js';
 import { handleCaptionCommand, isCaptionCommand } from '../services/caption/captionService.js';
+import { buildAwamerMainPayload } from '../services/help/awamerService.js';
 import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullShortcut } from '../utils/arabicModerationShortcuts.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { handleReportChannelMessage } from '../services/reportChannelService.js';
@@ -170,6 +171,12 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
     if (isRemoveBgCommand(parsed) && await handleRemoveBgCommand(message, removeBgArgs(parsed))) return;
     // `.caption` / `.كابشن` (everyone, report #297): writes text above the picture on a white background.
     if (isCaptionCommand(parsed) && await handleCaptionCommand(message, parsed.args)) return;
+    // `اوامر` / `.اوامر` / `/awamer` (everyone, report #306): interactive GUI command menu.
+    if (parsed && (parsed.commandName === 'اوامر' || parsed.commandName === 'أوامر' || parsed.commandName?.toLowerCase() === 'awamer')) {
+      const payload = buildAwamerMainPayload(client);
+      await message.reply(payload).catch(() => message.channel.send(payload)).catch(() => {});
+      return;
+    }
     if (await handleArabicRoleShortcut(message, [prefix, getCommandPrefix()])) return;
     if (!parsed) return;
 
