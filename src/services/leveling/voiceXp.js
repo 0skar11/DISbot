@@ -2,6 +2,7 @@ import { logger } from '../../utils/logger.js';
 import { VOICE_XP } from '../../config/voiceXp.js';
 import { getLevelingConfig } from './leveling.js';
 import { addXp } from './xpSystem.js';
+import { ownLevelingEnabled } from '../../config/homeGuild.js';
 
 // Voice XP and `top voice`: once a minute (cron in app.js) every member in voice who is talking-ready
 // and not alone gets a minute counted and XP into their normal level (level-ups are announced like chat
@@ -51,6 +52,7 @@ export function rankVoiceMinutes(minutes, isMember = () => true) {
 }
 
 async function tickGuild(client, guild) {
+    if (!ownLevelingEnabled(guild.id)) return;
     const earners = [];
     for (const channel of guild.channels.cache.values()) {
         if (!channel.isVoiceBased?.() || channel.members.size < 2) continue;

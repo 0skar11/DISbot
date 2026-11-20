@@ -2,6 +2,7 @@ import { logger } from '../../utils/logger.js';
 import { checkRateLimit } from '../../utils/rateLimiter.js';
 import { getLevelingConfig, getUserLevelData } from './leveling.js';
 import { addXp } from './xpSystem.js';
+import { ownLevelingEnabled } from '../../config/homeGuild.js';
 
 // Chat XP: a random amount per message, at most once per cooldown per member. Ignored channels, roles
 // and blacklisted members get nothing. The level-up message is sent by xpSystem.
@@ -19,7 +20,7 @@ export function rollXp(config, random = Math.random) {
 
 export async function handleMessageXp(message, client) {
   try {
-    if (!message.member) return;
+    if (!message.member || !ownLevelingEnabled(message.guild.id)) return;
     const canProcess = await checkRateLimit(`xp-event:${message.guild.id}:${message.author.id}`, RATE_LIMIT_ATTEMPTS, RATE_LIMIT_WINDOW_MS);
     if (!canProcess) return;
 

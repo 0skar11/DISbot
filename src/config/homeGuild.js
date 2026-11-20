@@ -16,3 +16,7 @@ export function isProtectedGuild(guildId) {
 export function isTicketGuild(guildId) {
     return isHomeGuild(guildId) || String(guildId) === ZENITH_GUILD_ID;
 }
+
+// Another level bot runs in Zenith, so DISbot's own XP (chat and voice) is off there (owner's request, 2026-11-20).
+export const OWN_LEVELING_OFF_GUILD_IDS = new Set([ZENITH_GUILD_ID]);
+export const ownLevelingEnabled = (guildId) => !OWN_LEVELING_OFF_GUILD_IDS.has(String(guildId));
