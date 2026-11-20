@@ -81,6 +81,17 @@ export function buildModerationLogData(event, botId = null) {
   };
 }
 
+/** The target's real profile picture (cached user, else fetched), or null: the log then keeps the default avatar. */
+export async function targetAvatarUrl(client, userId) {
+  if (!userId || !client?.users) return null;
+  try {
+    const user = client.users.cache?.get?.(userId) ?? await client.users.fetch(userId);
+    return user?.displayAvatarURL?.({ extension: 'png', size: 256 }) || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function logEvent({ client, guild, guildId, event }) {
   try {
     if (!guild && guildId) {
@@ -93,6 +104,8 @@ export async function logEvent({ client, guild, guildId, event }) {
 
     const eventType = ACTION_TO_EVENT_TYPE[event.action] || EVENT_TYPES.MODERATION_CONFIG;
     const data = buildModerationLogData(event, client?.user?.id || guild.client?.user?.id || null);
+    const avatar = await targetAvatarUrl(client || guild.client, data.userId);
+    if (avatar) data.thumbnail = avatar;
 
     await logAuditEvent({
       client,
