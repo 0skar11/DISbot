@@ -36,7 +36,9 @@ export async function handleUntrustedBotJoin(member) {
     ? await member.kick('Anti-Raid: untrusted bot added').then(() => true).catch(() => false)
     : false;
   // The inviter keeps their place but loses their dangerous roles.
-  const inviterRemoved = inviter ? await removeDangerousRoles(inviter, 'Anti-Raid: invited an untrusted bot') : false;
+  let inviterRemoved = inviter ? await removeDangerousRoles(inviter, 'Anti-Raid: invited an untrusted bot') : false;
+  // Fallback: kick when the roles could not be taken off.
+  if (!inviterRemoved && inviter?.kickable) inviterRemoved = await inviter.kick('Anti-Raid: invited an untrusted bot').then(() => true).catch(() => false);
 
   await sendAntiNukeLog(member.guild, {
     action: 'Untrusted bot blocked',

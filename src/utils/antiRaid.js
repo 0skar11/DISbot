@@ -32,8 +32,9 @@ async function revertAdminGrantOnRole(oldRole, role) {
 }
 
 export async function inspectRoleUpdate(role, oldRole = null) {
-  if (oldRole && await revertAdminGrantOnRole(oldRole, role)) return true;
-  return inspectAuditAction(role?.guild, 'permissionUpdate', role?.id);
+  const reverted = oldRole ? await revertAdminGrantOnRole(oldRole, role) : false;
+  // Still counted against the executor, so repeated attempts reach the limit.
+  return await inspectAuditAction(role?.guild, 'permissionUpdate', role?.id) || reverted;
 }
 
 export async function inspectMessageDelete(channel) {
@@ -69,7 +70,9 @@ export async function inspectAdminRoleGrant(oldMember, newMember) {
   const executor = await guild.members.fetch(executorId).catch(() => null);
   // The roles are taken off both of them; nobody is kicked.
   const receiverStripped = await newMember.roles.remove([...adminRoles.keys()], reason).then(() => true).catch(() => false);
-  const executorStripped = executor ? await removeDangerousRoles(executor, reason) : false;
+  let executorStripped = executor ? await removeDangerousRoles(executor, reason) : false;
+  // Fallback: if the roles could not be taken off, the executor is kicked.
+  if (!executorStripped && executor?.kickable) executorStripped = await executor.kick(reason).then(() => true).catch(() => false);
 
   await sendAntiNukeLog(guild, {
     action: 'Administrator role given',
