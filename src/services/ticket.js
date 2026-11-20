@@ -17,6 +17,25 @@ import { logTicketEvent } from '../utils/ticket/ticketLogging.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { ensureTypedServiceError, wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
 import { PRIORITY_MAP } from '../utils/helpers.js';
+import { filterStaffRoles } from './staffRoleHierarchyService.js';
+const TICKET_STAFF_ALLOW = [
+  PermissionFlagsBits.ViewChannel,
+  PermissionFlagsBits.SendMessages,
+  PermissionFlagsBits.AttachFiles,
+  PermissionFlagsBits.ReadMessageHistory,
+];
+
+/** Overwrites that let every staff role (and every Administrator role) see and answer a ticket. */
+export async function ticketStaffOverwrites(guild, extraRoleId = null) {
+  const roles = [...(guild.roles?.cache?.values?.() || [])];
+  const staff = await filterStaffRoles(guild, roles).catch(() => []);
+  const admins = roles.filter((role) => !role.managed && role.permissions?.has?.(PermissionFlagsBits.Administrator));
+  const ids = new Set([...staff, ...admins].map((role) => role.id));
+  if (extraRoleId) ids.add(String(extraRoleId));
+  ids.delete(guild.id);
+  return [...ids].map((id) => ({ id, allow: TICKET_STAFF_ALLOW }));
+}
+
 const TICKET_DELETE_DELAY_MS = 3000;
 const TICKET_DELETE_DELAY_SECONDS = Math.floor(TICKET_DELETE_DELAY_MS / 1000);
 const TICKET_SERVICE = 'ticketService';
@@ -145,15 +164,7 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
             PermissionFlagsBits.ReadMessageHistory,
           ],
         },
-        ...(config.ticketStaffRoleId ? [{
-          id: config.ticketStaffRoleId,
-          allow: [
-            PermissionFlagsBits.ViewChannel,
-            PermissionFlagsBits.SendMessages,
-            PermissionFlagsBits.AttachFiles,
-            PermissionFlagsBits.ReadMessageHistory,
-          ],
-        }] : []),
+        ...(await ticketStaffOverwrites(guild, config.ticketStaffRoleId)),
       ],
     });
     
@@ -200,8 +211,7 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       );
     }
     
-    const staffMention = config.ticketStaffRoleId ? ` <@&${config.ticketStaffRoleId}>` : '';
-    const messageContent = `${member.toString()}${staffMention}`;
+    const messageContent = member.toString();
     
     const ticketMessage = await channel.send({ 
       content: messageContent,

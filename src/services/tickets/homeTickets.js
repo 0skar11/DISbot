@@ -140,25 +140,25 @@ async function staffRoleIds(guild) {
         .filter((id) => guild.roles.cache.has(id));
 }
 
-/** The team that handles a section: its role, plus the staff roles for problems. */
+/** The team that handles a section: its role, every staff role and every Administrator role. */
 async function sectionTeam(guild, type) {
     const roles = getSectionRoleIds(guild.id);
     const ownId = roles?.[type];
     const own = ownId ? [ownId].filter((id) => guild.roles.cache.has(id)) : [];
-    if (type === 'verify') {
-        if (own.length) return own;
-        // When verify role is not set, staff can view and verify.
-        return await staffRoleIds(guild);
-    }
-    return [...new Set([...own, ...(await staffRoleIds(guild))])];
+    const admins = [...guild.roles.cache.values()]
+        .filter((role) => !role.managed && role.id !== guild.id && role.permissions?.has?.(PermissionFlagsBits.Administrator))
+        .map((role) => role.id);
+    return [...new Set([...own, ...(await staffRoleIds(guild)), ...admins])];
 }
 
-/** The role mentioned when a ticket of `type` opens. */
-const sectionPing = (guild, type) => {
-    const roles = getSectionRoleIds(guild.id);
-    const ownId = roles?.[type];
-    return ownId ? [ownId].filter((id) => guild.roles.cache.has(id)) : [];
-};
+/** Giving the verified role stays with the verification team (staff can still see, claim and close). */
+async function canVerify(member) {
+    if (!member) return false;
+    if (isServerOwner(member.id) || member.permissions?.has?.(PermissionFlagsBits.Administrator)) return true;
+    const ownId = getSectionRoleIds(member.guild.id)?.verify;
+    if (ownId && member.guild.roles.cache.has(ownId)) return member.roles?.cache?.has(ownId) === true;
+    return await canHandle(member, 'verify');
+}
 
 async function canHandle(member, type, state) {
     if (!member) return false;
@@ -264,7 +264,6 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
     state.counter += 1;
     const number = String(state.counter).padStart(4, '0');
     const team = await sectionTeam(guild, type);
-    const ping = sectionPing(guild, type);
     const me = guild.members.me;
     const channel = await guild.channels.create({
         name: `${section.channelEmoji}・${section.label.split(' ')[0]}-${number}`,
@@ -287,14 +286,14 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
     state.open[channel.id] = { type, ownerId: member.id, number, claimedBy: null, createdAt: now };
     await writeState(guild.client, guild.id, state);
     await channel.send({
-        content: [`<@${member.id}>`, ...ping.map((id) => `<@&${id}>`)].join(' '),
+        content: `<@${member.id}>`,
         embeds: [{
             color: type === 'verify' ? 0xff6fa8 : 0x3498db,
             title: `${section.title} #${number}`,
             description: [section.intro, '', `👤 فتحه: <@${member.id}>`, '🔒 لما تخلص دوس **قفل**.'].join('\n'),
         }],
         components: ticketControls(type),
-        allowedMentions: { users: [member.id], roles: ping },
+        allowedMentions: { users: [member.id], roles: [] },
     }).catch(() => {});
     return { ok: true, channel, number };
 }
@@ -317,7 +316,7 @@ export async function verifyTicket(channel, member) {
     const state = await readState(channel.client, guild.id);
     const ticket = state.open[channel.id];
     if (!ticket || ticket.type !== 'verify') return { ok: false, reason: 'not_ticket' };
-    if (!(await canHandle(member, 'verify', state))) return { ok: false, reason: 'not_team' };
+    if (!(await canVerify(member))) return { ok: false, reason: 'not_team' };
     const roleId = getVerifiedRoleId(guild.id);
     const role = roleId && guild.roles.cache.get(roleId);
     const owner = await guild.members.fetch(ticket.ownerId).catch(() => null);

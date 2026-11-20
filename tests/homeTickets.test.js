@@ -75,7 +75,7 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal(created.length, 3);
   });
 
-  test('a problem ticket pings its role, the staff can see it, and one per member', async () => {
+  test('a problem ticket pings only the opener, the staff can see it, and one per member', async () => {
     const { guild, created, member } = setup();
     await setupHomeTickets(guild);
     const result = await openTicket(member(MEMBER), 'problem', { now: 1_000_000 });
@@ -84,8 +84,8 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.match(ticket.name, /مشكلة-0001/u);
     const allowed = ticket.options.permissionOverwrites.filter((overwrite) => overwrite.allow).map((overwrite) => overwrite.id);
     assert.ok(allowed.includes(MEMBER) && allowed.includes(SECTION_ROLE_IDS.problem) && allowed.includes(STAFF_ROLE.id));
-    assert.equal(ticket.sent[0].content, `<@${MEMBER}> <@&${SECTION_ROLE_IDS.problem}>`);
-    assert.deepEqual(ticket.sent[0].allowedMentions.roles, [SECTION_ROLE_IDS.problem]);
+    assert.equal(ticket.sent[0].content, `<@${MEMBER}>`);
+    assert.deepEqual(ticket.sent[0].allowedMentions.roles, []);
     assert.equal((await openTicket(member(MEMBER), 'problem', { now: 2_000_000 })).reason, 'has_open');
 
     const staff = member('200000000000000009', [SECTION_ROLE_IDS.problem]);
@@ -98,7 +98,7 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.match(log.sent[0].embeds[0].description, new RegExp(`استلمه: <@200000000000000009>`));
   });
 
-  test('a verification ticket is seen only by its role, pings it, and ✅ gives the verified girl role', async () => {
+  test('a verification ticket is seen by its role and the staff, pings only the opener, and ✅ gives the verified girl role', async () => {
     const { guild, created, member } = setup();
     await setupHomeTickets(guild);
     const girl = member(GIRL);
@@ -106,10 +106,10 @@ describe('our server\'s tickets (owner\'s request)', () => {
     const ticket = created[3];
     const allowed = ticket.options.permissionOverwrites.filter((overwrite) => overwrite.allow).map((overwrite) => overwrite.id);
     assert.ok(allowed.includes(SECTION_ROLE_IDS.verify));
-    assert.ok(!allowed.includes(STAFF_ROLE.id) && !allowed.includes(SECTION_ROLE_IDS.problem));
-    assert.equal(ticket.sent[0].content, `<@${GIRL}> <@&${SECTION_ROLE_IDS.verify}>`);
+    assert.ok(allowed.includes(STAFF_ROLE.id) && !allowed.includes(SECTION_ROLE_IDS.problem));
+    assert.equal(ticket.sent[0].content, `<@${GIRL}>`);
 
-    assert.equal((await verifyTicket(ticket, member('200000000000000009', [STAFF_ROLE.id]))).reason, 'not_team');
+    assert.equal((await verifyTicket(ticket, member('200000000000000011'))).reason, 'not_team');
     const verifier = member('200000000000000010', [SECTION_ROLE_IDS.verify]);
     const verified = await verifyTicket(ticket, verifier);
     assert.equal(verified.ok, true);
@@ -156,7 +156,7 @@ describe('our server\'s tickets (owner\'s request)', () => {
     const ticketChannel = created[created.length - 1];
     const allowed = ticketChannel.options.permissionOverwrites.filter((overwrite) => overwrite.allow).map((overwrite) => overwrite.id);
     assert.ok(allowed.includes(zenithVerifierRoleId));
-    assert.ok(!allowed.includes(STAFF_ROLE.id));
+    assert.ok(allowed.includes(STAFF_ROLE.id));
 
     // Staff without verifier role cannot verify
     const regularStaff = member('200000000000000010', [STAFF_ROLE.id]);
