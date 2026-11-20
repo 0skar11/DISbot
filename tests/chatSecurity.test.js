@@ -123,8 +123,8 @@ describe('anti spam (#144) and owner mentions (#148)', () => {
     const t = 1_000_000;
     for (let i = 0; i < FLOOD_MESSAGES - 1; i += 1) assert.equal(trackMessage(message(`m${i}`, { userId: 'a' }), t + i * 100), null);
     assert.equal(trackMessage(message('m10', { userId: 'a' }), t + (FLOOD_MESSAGES - 1) * 100).kind, 'flood');
-    for (let i = 0; i < 4; i += 1) assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + i * 3000), null);
-    assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + 12000).kind, 'duplicate');
+    for (let i = 0; i < 4; i += 1) assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + i * 1500), null);
+    assert.equal(trackMessage(message('نفس الكلام', { userId: 'b' }), t + 6000).kind, 'duplicate');
     assert.equal(trackMessage(message('نفس الكلام', { userId: 'c' }), t), null);
   });
 

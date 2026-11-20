@@ -54,3 +54,20 @@ describe('image-only channel', () => {
     assert.equal(state.deleted, false);
   });
 });
+
+describe('reveal room (silent image-only)', () => {
+  test('deletes a text-only message without sending anything', async () => {
+    const { message, state } = makeMessage({ channelId: '1569932762125705323' });
+    let sent = 0;
+    message.channel.send = async () => { sent += 1; return null; };
+    assert.equal(await handleImageOnlyChannelMessage(message), true);
+    assert.equal(state.deleted, true);
+    assert.equal(sent, 0);
+  });
+
+  test('keeps an image', async () => {
+    const { message, state } = makeMessage({ channelId: '1569932762125705323', attachments: [{ name: 'a.png', contentType: 'image/png' }] });
+    assert.equal(await handleImageOnlyChannelMessage(message), false);
+    assert.equal(state.deleted, false);
+  });
+});

@@ -1,5 +1,5 @@
 import { Events, PermissionFlagsBits } from 'discord.js';
-import { inspectAuditAction, findRecentAuditEntry, sendAntiNukeLog, isTrusted, AuditLogEvent } from './antiNukeLogging.js';
+import { inspectAuditAction, findRecentAuditEntry, sendAntiNukeLog, isTrusted, removeDangerousRoles, AuditLogEvent } from './antiNukeLogging.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
 
 export async function inspectChannelDelete(channel) {
@@ -10,7 +10,29 @@ export async function inspectRoleDelete(role) {
   return inspectAuditAction(role?.guild, 'roleDelete', role?.id);
 }
 
-export async function inspectRoleUpdate(role) {
+/** An untrusted member who gives a role the Administrator permission gets it reverted at once, with a warning. */
+async function revertAdminGrantOnRole(oldRole, role) {
+  const guild = role?.guild;
+  if (!guild || !oldRole?.permissions || role.managed) return false;
+  if (oldRole.permissions.has(PermissionFlagsBits.Administrator) || !role.permissions.has(PermissionFlagsBits.Administrator)) return false;
+  const entry = await findRecentAuditEntry(guild, AuditLogEvent.RoleUpdate, role.id);
+  const executorId = entry?.executor?.id;
+  if (!executorId || executorId === guild.client.user?.id) return false;
+  const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
+  if (await isTrusted(guild, config, executorId)) return false;
+  const reverted = await role.setPermissions(oldRole.permissions, 'Anti-Nuke: Administrator added to a role by an untrusted member').then(() => true).catch(() => false);
+  await sendAntiNukeLog(guild, {
+    action: 'Administrator added to role',
+    target: `${role.name} (${role.id})`,
+    executor: entry.executor,
+    punishment: reverted ? 'تم إرجاع صلاحيات الرتبة زي ما كانت' : 'فشل إرجاع الصلاحيات — يحتاج تدخل يدوي',
+    reason: `ضاف صلاحية Administrator على رتبة <@&${role.id}>`,
+  });
+  return reverted;
+}
+
+export async function inspectRoleUpdate(role, oldRole = null) {
+  if (oldRole && await revertAdminGrantOnRole(oldRole, role)) return true;
   return inspectAuditAction(role?.guild, 'permissionUpdate', role?.id);
 }
 
@@ -45,17 +67,19 @@ export async function inspectAdminRoleGrant(oldMember, newMember) {
 
   const reason = 'Anti-Nuke: Administrator role given by an untrusted member';
   const executor = await guild.members.fetch(executorId).catch(() => null);
-  const receiverKicked = newMember.kickable ? await newMember.kick(reason).then(() => true).catch(() => false) : false;
-  const executorKicked = executor?.kickable ? await executor.kick(reason).then(() => true).catch(() => false) : false;
+  // The roles are taken off both of them; nobody is kicked.
+  const receiverStripped = await newMember.roles.remove([...adminRoles.keys()], reason).then(() => true).catch(() => false);
+  const executorStripped = executor ? await removeDangerousRoles(executor, reason) : false;
 
   await sendAntiNukeLog(guild, {
     action: 'Administrator role given',
     target: `${newMember.user.tag} (${newMember.id})`,
     executor: entry.executor,
-    punishment: executorKicked ? 'تم طرده' : 'فشل طرده — يحتاج تدخل يدوي',
-    reason: `أعطى رتبة Administrator (${adminRoles.map((role) => role.name).join(', ')}) لـ <@${newMember.id}>${receiverKicked ? ' وتم طرده هو كمان' : ''}`,
+    punishment: executorStripped ? 'تم سحب رتبه الخطيرة' : 'فشل سحب الرتب — يحتاج تدخل يدوي',
+    reason: `أعطى رتبة Administrator (${adminRoles.map((role) => role.name).join(', ')}) لـ <@${newMember.id}>${receiverStripped ? ' وتم سحبها منه' : ''}`,
+    pingEveryone: true,
   });
-  return receiverKicked || executorKicked;
+  return receiverStripped || executorStripped;
 }
 
 export async function inspectMemberRemoval(member, event = Events.GuildMemberRemove) {

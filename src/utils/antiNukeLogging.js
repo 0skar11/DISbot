@@ -12,12 +12,12 @@ const counters = new Map();
 const seenEntries = new Map();
 // threshold = actions within windowMs that trigger stripping permissions; threshold + 2 triggers a ban.
 const ACTIONS = Object.freeze({
-  channelDelete: { audit: AuditLogEvent.ChannelDelete, threshold: 1, windowMs: TEN_SECONDS },
+  channelDelete: { audit: AuditLogEvent.ChannelDelete, threshold: 3, windowMs: TEN_SECONDS },
   roleDelete: { audit: AuditLogEvent.RoleDelete, threshold: 2, windowMs: TEN_SECONDS },
   memberBan: { audit: AuditLogEvent.MemberBanAdd, threshold: 5, windowMs: TEN_SECONDS },
   memberKick: { audit: AuditLogEvent.MemberKick, threshold: 5, windowMs: TEN_SECONDS },
   bulkDelete: { audit: AuditLogEvent.MessageBulkDelete, threshold: 10, windowMs: ONE_MINUTE },
-  permissionUpdate: { audit: [AuditLogEvent.RoleUpdate, AuditLogEvent.ChannelOverwriteUpdate], threshold: 2, windowMs: ONE_MINUTE },
+  permissionUpdate: { audit: [AuditLogEvent.RoleUpdate, AuditLogEvent.ChannelOverwriteUpdate], threshold: 5, windowMs: ONE_MINUTE },
   roleCreate: { audit: AuditLogEvent.RoleCreate, threshold: 3, windowMs: TEN_SECONDS },
 });
 
@@ -61,12 +61,12 @@ export async function isTrusted(guild, config, executorId) {
 
 // Takes the member's dangerous roles off them. The roles themselves are never edited, so everyone else
 // who holds them keeps their permissions.
-async function removeDangerousRoles(member) {
+export async function removeDangerousRoles(member, reason = 'Anti-Nuke: excessive destructive activity') {
   if (!member?.manageable) return false;
   const dangerous = [PermissionFlagsBits.Administrator, PermissionFlagsBits.ManageGuild, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.ManageRoles, PermissionFlagsBits.BanMembers, PermissionFlagsBits.KickMembers];
   const roles = member.roles.cache.filter((role) => role.editable && !role.managed && role.id !== member.guild.id && role.permissions.any(dangerous));
   if (!roles.size) return false;
-  return member.roles.remove([...roles.keys()], 'Anti-Nuke: excessive destructive activity').then(() => true).catch(() => false);
+  return member.roles.remove([...roles.keys()], reason).then(() => true).catch(() => false);
 }
 
 const ACTION_LABELS = Object.freeze({
@@ -96,7 +96,7 @@ function warn(guild, executorId, action, count, threshold) {
 }
 
 // Sent only after the member has already been dealt with: red, pings the alert role.
-function alert(guild, executorId, punishment, reason) {
+function alert(guild, executorId, punishment, reason, pingEveryone = false) {
   const embed = new EmbedBuilder().setColor(0xed4245).setTitle(`🚨 ${punishment}`)
     .setDescription(`**العضو:** <@${executorId}>\n**السبب:** ${reason}\n**الوقت:** ${time()}`);
   postAuditRoom(guild, 'automode', {
@@ -105,6 +105,7 @@ function alert(guild, executorId, punishment, reason) {
     description: `👤 **العضو:** <@${executorId}>\n📄 **السبب:** ${reason}\n🤖 **المنفذ:** <@${guild.client?.user?.id}> (بوت)`,
     timestamp: new Date().toISOString(),
   }).catch(() => {});
+  if (pingEveryone) return send(guild, { content: '@everyone', embeds: [embed], allowedMentions: { parse: ['everyone'] } });
   return send(guild, { content: `<@&${ALERT_ROLE_ID}>`, embeds: [embed], allowedMentions: { roles: [ALERT_ROLE_ID] } });
 }
 
@@ -136,6 +137,6 @@ export async function inspectAuditAction(guild, action, targetId = null, filter)
 export async function findRecentAuditEntry(guild, auditType, targetId, filter) { return getEntry(guild, auditType, targetId, filter); }
 export async function sendAntiNukeLog(guild, data) {
   logger.warn(`[Anti-Nuke] ${data.action}: ${data.target || 'unknown'}`);
-  await alert(guild, data.executor?.id, data.punishment || 'تم طرده', data.reason || data.action);
+  await alert(guild, data.executor?.id, data.punishment || 'تم طرده', data.reason || data.action, data.pingEveryone === true);
 }
 export { AuditLogEvent };

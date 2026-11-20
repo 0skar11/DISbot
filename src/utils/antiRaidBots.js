@@ -1,6 +1,6 @@
 import { AuditLogEvent, Events } from 'discord.js';
 import { getGuildConfig } from '../services/config/guildConfig.js';
-import { sendAntiNukeLog } from './antiNukeLogging.js';
+import { sendAntiNukeLog, removeDangerousRoles } from './antiNukeLogging.js';
 import { isServerOwner } from '../config/serverOwners.js';
 
 
@@ -35,15 +35,15 @@ export async function handleUntrustedBotJoin(member) {
   const botRemoved = member.kickable
     ? await member.kick('Anti-Raid: untrusted bot added').then(() => true).catch(() => false)
     : false;
-  const inviterRemoved = inviter?.kickable
-    ? await inviter.kick('Anti-Raid: invited an untrusted bot').then(() => true).catch(() => false)
-    : false;
+  // The inviter keeps their place but loses their dangerous roles.
+  const inviterRemoved = inviter ? await removeDangerousRoles(inviter, 'Anti-Raid: invited an untrusted bot') : false;
 
   await sendAntiNukeLog(member.guild, {
     action: 'Untrusted bot blocked',
     target: `${member.user.tag} (${member.id})`,
     executor: inviter?.user || member.user,
-    punishment: inviterRemoved ? 'تم طرده' : 'فشل طرده — يحتاج تدخل يدوي',
+    punishment: inviterRemoved ? 'تم سحب رتبه الخطيرة' : 'فشل سحب الرتب — يحتاج تدخل يدوي',
+    pingEveryone: true,
     reason: `أضاف بوت غير موثوق <@${member.id}>${botRemoved ? ' وتم طرد البوت' : ''}`,
   });
 

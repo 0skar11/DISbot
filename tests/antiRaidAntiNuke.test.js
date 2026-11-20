@@ -1,3 +1,4 @@
+import { Collection } from 'discord.js';
 import { test, describe, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { isTrusted } from '../src/utils/antiNukeLogging.js';
@@ -59,7 +60,11 @@ describe('isTrusted', () => {
 describe('handleUntrustedBotJoin', () => {
   function makeBotJoin({ inviterId, config }) {
     const kicked = [];
-    const inviter = { id: inviterId, kickable: true, user: { id: inviterId }, kick: async () => { kicked.push(inviterId); } };
+    const adminRole = { id: 'r1', editable: true, managed: false, permissions: { any: () => true } };
+    const inviter = {
+      id: inviterId, kickable: true, manageable: true, user: { id: inviterId }, guild: { id: 'g' },
+      roles: { cache: new Collection([['r1', adminRole]]), remove: async () => { kicked.push(inviterId); } },
+    };
     const guild = makeGuild({ config, members: { [inviterId]: inviter } });
     guild.fetchAuditLogs = async () => ({
       entries: [{ target: { id: '900' }, executor: { id: inviterId }, createdTimestamp: Date.now() }],
@@ -81,7 +86,7 @@ describe('handleUntrustedBotJoin', () => {
     assert.deepEqual(kicked, []);
   });
 
-  test('kicks the bot and whoever added it when they are not trusted', async () => {
+  test('kicks the bot and strips the dangerous roles of whoever added it when they are not trusted', async () => {
     const { bot, kicked } = makeBotJoin({ inviterId: '600', config: {} });
     assert.equal(await handleUntrustedBotJoin(bot), true);
     assert.deepEqual(kicked.sort(), ['600', '900']);

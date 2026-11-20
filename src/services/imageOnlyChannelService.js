@@ -5,6 +5,8 @@ import { canLiftHardBan } from './moderation/hardBanService.js';
 // Anything else is deleted and the author gets a short notice (gone after 1 second).
 // Owners and trusted members may write normally.
 export const IMAGE_ONLY_CHANNEL_ID = '1547310561505837277';
+// Reveal room (Zenith): same rule, but the bot stays completely silent (no notice).
+export const SILENT_IMAGE_ONLY_CHANNEL_IDS = new Set(['1569932762125705323']);
 const IMAGE_EXTENSION = /\.(?:png|jpe?g|gif|webp|bmp|heic|heif|avif|tiff?)$/iu;
 const BLOCKED_NOTICE_DELETE_MS = 1_000;
 
@@ -24,11 +26,13 @@ async function canWriteWithoutImage(message) {
 
 /** Returns true when the message was deleted for having no image in the image-only channel. */
 export async function handleImageOnlyChannelMessage(message) {
-  if (message.channelId !== IMAGE_ONLY_CHANNEL_ID || !message.guild) return false;
+  const silent = SILENT_IMAGE_ONLY_CHANNEL_IDS.has(message.channelId);
+  if ((message.channelId !== IMAGE_ONLY_CHANNEL_ID && !silent) || !message.guild) return false;
   if (hasImage(message)) return false;
   if (await canWriteWithoutImage(message)) return false;
 
   await message.delete().catch(() => {});
+  if (silent) return true;
   const notice = await message.channel.send({
     content: `🚫 <@${message.author.id}> الروم دي للصور بس، ابعت صورة (ومعاها كلام لو حابب).`,
     allowedMentions: { users: [message.author.id] },
