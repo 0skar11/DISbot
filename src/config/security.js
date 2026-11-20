@@ -5,7 +5,7 @@
 export const CLEANUP_VERSION = 2;
 
 // The main invite link (report #152). Invites are never deleted by the bot (owner request).
-export const MAIN_INVITE_CODE = 'paaHzAssVG';
+export const MAIN_INVITE_CODE = '2mJmzqVy5';
 export const MAIN_INVITE_URL = `https://discord.gg/${MAIN_INVITE_CODE}`;
 
 // Taken out of the Anti-Nuke / Anti-Raid trusted list (reports #149, #150).
