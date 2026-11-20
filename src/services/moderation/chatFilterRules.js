@@ -153,7 +153,39 @@ export const BUILT_IN_GROUPS = {
     ibnAl: ['فرانكو: ebn el zanya / ebn el a7ba / ebn el labwa'],
 };
 
-const anyMatch = (patterns, texts) => texts.some((text) => patterns.some((pattern) => pattern.test(text)));
+// Every rule returns the matched fragment (a string) or null, so the service can hand the insult back.
+const firstMatch = (patterns, texts) => {
+    for (const text of texts) {
+        for (const pattern of patterns) {
+            const found = pattern.exec(text);
+            if (found) return found[0];
+        }
+    }
+    return null;
+};
+const anyMatch = (patterns, texts) => Boolean(firstMatch(patterns, texts));
+
+/** The source tokens behind a match in a view made of `viewTokens` joined with spaces (the skeleton views). */
+function tokensAt(found, viewTokens, sourceTokens) {
+    if (!found) return null;
+    const start = found.index;
+    const end = start + found[0].length;
+    const picked = [];
+    let offset = 0;
+    viewTokens.forEach((token, i) => {
+        if (offset < end && offset + token.length > start && sourceTokens[i]) picked.push(sourceTokens[i]);
+        offset += token.length + 1;
+    });
+    return picked.join(' ') || found[0];
+}
+
+function skeletonMatch(patterns, v) {
+    for (const pattern of patterns) {
+        const found = pattern.exec(v.skeleton);
+        if (found) return tokensAt(found, v.skeletonTokens, v.tokens);
+    }
+    return null;
+}
 
 /**
  * Compiles the built-in rules. `disabled` (normalized words the owner switched off) removes words from the
@@ -173,16 +205,29 @@ function buildRuleSet({ disabled = new Set(), english = false, custom = null } =
     const insultSkeleton = new RegExp(`${START}(?:ي\\s?)?(?:${skeletonAlternatives(on(SKELETON_INSULTS), 4) || NEVER})(?:ك|كم|ت|ن)?${END}`, 'u');
     const englishOn = english ? INSULTS_ENGLISH.filter((entry) => !disabled.has(entry.word)) : [];
 
-    const insultIn = (text, minLength = 0) => [...text.matchAll(insultPattern)].some((match) => !NOT_INSULTS.has(match[1]) && match[1].length >= minLength);
-    const latinInsultIn = (text, minLength = 0) => [...text.matchAll(insultLatinPattern)].some((match) => match[1].length >= minLength);
+    const insultIn = (texts, minLength = 0) => {
+        for (const text of texts) {
+            const found = [...text.matchAll(insultPattern)].find((match) => !NOT_INSULTS.has(match[1]) && match[1].length >= minLength);
+            if (found) return found[1];
+        }
+        return null;
+    };
+    const latinInsultIn = (texts, minLength = 0) => {
+        for (const text of texts) {
+            const found = [...text.matchAll(insultLatinPattern)].find((match) => match[1].length >= minLength);
+            if (found) return found[1];
+        }
+        return null;
+    };
 
+    // Each returns the matched fragment or null (a skeleton match gives back the chunks it came from).
     const builtIn = {
-        ibnAl: (v) => anyMatch([ibnAlPattern], v.arabic) || anyMatch([IBN_AL_LATIN], v.latin) || ibnAlSkeleton.test(v.skeleton),
-        insult: (v) => v.arabic.some((t) => insultIn(t)) || v.latin.some((t) => latinInsultIn(t)) || insultSkeleton.test(v.skeleton)
-            || v.arabicPairs.some((t) => insultIn(t, 5)) || v.latinPairs.some((t) => latinInsultIn(t, 5))
-            || insultSkeleton.test(v.skeletonPairs),
-        family: (v) => anyMatch(FAMILY_PATTERNS, v.arabic) || anyMatch(FAMILY_LATIN, v.latin) || anyMatch(FAMILY_SKELETON, [v.skeleton]),
-        banned: (v) => anyMatch(BANNED_WORDS, [...v.arabic, ...v.latin]),
+        ibnAl: (v) => firstMatch([ibnAlPattern], v.arabic) || firstMatch([IBN_AL_LATIN], v.latin) || skeletonMatch([ibnAlSkeleton], v),
+        insult: (v) => insultIn(v.arabic) || latinInsultIn(v.latin) || skeletonMatch([insultSkeleton], v)
+            || insultIn(v.arabicPairs, 5) || latinInsultIn(v.latinPairs, 5)
+            || tokensAt(insultSkeleton.exec(v.skeletonPairs), v.skeletonPairList, v.latinPairList),
+        family: (v) => firstMatch(FAMILY_PATTERNS, v.arabic) || firstMatch(FAMILY_LATIN, v.latin) || skeletonMatch(FAMILY_SKELETON, v),
+        banned: (v) => firstMatch(BANNED_WORDS, [...v.arabic, ...v.latin]),
     };
     const extra = english || custom ? compileCustomRules(custom || [], { english: englishOn }) : null;
     return { builtIn, extra, extended: Boolean(extra) };
@@ -209,8 +254,8 @@ export function getCustomRules() {
     return { custom: currentRules.custom.map((entry) => ({ ...entry })), disabled: [...currentRules.disabled] };
 }
 
-/** Rule name (and what matched) for one text, with a given rule set. */
-function matchOf(text, set) {
+/** Rule name (and what matched) for one text, with a given rule set. `fragment` adds the matched text itself. */
+function matchOf(text, set, fragment = false) {
     const source = set.extended ? maskNames(text) : text;
     // normalizeForFilter(source) in two steps, keeping the repeated letters for the English "a$$" / "nigga" forms.
     const keepRepeats = normalizeKeepRepeats(source);
@@ -224,9 +269,10 @@ function matchOf(text, set) {
         return extraHits.get(rule) || null;
     };
     for (const rule of RULE_ORDER) {
-        if (set.builtIn[rule](views)) return { rule, source: 'builtin' };
+        const found = set.builtIn[rule](views);
+        if (found) return fragment ? { rule, source: 'builtin', fragment: found } : { rule, source: 'builtin' };
         const hit = extraHit(rule);
-        if (hit) return { rule, source: hit.source, word: hit.word };
+        if (hit) return fragment ? { rule, source: hit.source, word: hit.word, fragment: hit.word } : { rule, source: hit.source, word: hit.word };
     }
     return null;
 }
@@ -238,7 +284,7 @@ const LINK = /(?:\bhttps?:\/\/|\bwww\.|\b(?=discord(?:app)?\.(?:gg|com)\/))([^\s
 const ASCII_HOST = /^[a-z0-9.-]+(?::\d+)?$/iu;
 const ASCII_PATH = /^[\x21-\x7e]*$/u;
 
-function explainWith(text, set) {
+function explainWith(text, set, fragment = false) {
     const raw = String(text || '');
     const paths = [];
     const stripped = raw.replace(LINK, (link, host, path = '') => {
@@ -246,10 +292,10 @@ function explainWith(text, set) {
         paths.push(path);
         return link.slice(0, link.length - path.length) + ' ';
     });
-    const match = matchOf(stripped, set);
+    const match = matchOf(stripped, set, fragment);
     if (match || !paths.length) return match;
     // Only a link path changed the answer: ignore it when that path alone explains the match.
-    const withPaths = matchOf(raw, set);
+    const withPaths = matchOf(raw, set, fragment);
     return withPaths && !paths.some((path) => matchOf(path, set)) ? withPaths : null;
 }
 
@@ -264,4 +310,12 @@ export function checkText(text, { legacy = false } = {}) {
 /** Like checkText, with where the match came from: { rule, source: 'builtin'|'english'|'custom', word? } or null. */
 export function explainText(text, { legacy = false } = {}) {
     return explainWith(text, legacy ? LEGACY : current);
+}
+
+/**
+ * Like explainText (current rules), plus `fragment`: the matched text itself, normalized (a built-in match gives the
+ * normalized Arabic or franco words as written, an `automod` / English match gives the listed word). Null when clean.
+ */
+export function matchedFragment(text) {
+    return explainWith(text, current, true);
 }

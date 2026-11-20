@@ -190,5 +190,6 @@ export function viewsOf(normalized) {
         skeletonTokens,
         skeletonPairs: skeletonPairList.join(' '),
         skeletonPairList,
+        latinPairList: pairsOf(latinTokens),
     };
 }

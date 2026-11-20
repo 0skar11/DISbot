@@ -23,15 +23,19 @@
 // Every server (owner's rule of 2026-11-17: changes apply to all servers): the strong English insults (INSULTS_ENGLISH, rule insult) and the owner's own edits made
 // with the `automod` command (automodCommand.js / automodStore.js): added words in any of the four rules above
 // with the same punishments, their generated franco / English / hidden spellings, and built-in words switched off.
+// Hand-back (owner, 2026-11-20): an insult of the rules ibnAl / insult / family (built-in or `automod`) that mentions a
+// server owner or replies to an owner's message, or any such insult from a member who joined less than 5 hours ago,
+// gets "<@swearer> متشتمش الاونر يا <the matched word>" instead of the usual notice line (deleted after 5 seconds).
+// The punishments stay the same; the كسمك timeout line above keeps its own reply.
 
-import { isServerOwner } from '../../config/serverOwners.js';
+import { isServerOwner, SERVER_OWNER_IDS } from '../../config/serverOwners.js';
 import { canLiftHardBan } from './hardBanService.js';
 import { REPORT_CHANNEL_ID } from '../reportChannelService.js';
 import { issueWarning } from './warnEscalation.js';
 import { sendModerationActionLog } from './moderationActionLogService.js';
 import { postAuditRoom } from '../logging/auditRooms.js';
 import { logger } from '../../utils/logger.js';
-import { checkText, normalizeForFilter } from './chatFilterRules.js';
+import { matchedFragment, normalizeForFilter } from './chatFilterRules.js';
 import { recordRepeat } from './chatFilterRepeats.js';
 export { checkText, normalizeForFilter, IBN_AL_ALLOWED, IBN_AL_INSULTS, INSULTS, BANNED_WORDS } from './chatFilterRules.js';
 
@@ -53,14 +57,52 @@ const KOSOMAK = /(?<![\p{L}])(?:كسمك|كس امك|ksomak|kosomak)/u;
 const KOSOMAK_TIMEOUT_MS = 60 * 60_000;
 const kosomakReply = (userId) => `<@${userId}> كسمين امك خد تايم يبن الشرموطه 🖕`;
 
+// The insults handed back to the swearer, and the time a new member counts as new.
+const HANDBACK_RULES = new Set(['ibnAl', 'insult', 'family']);
+export const NEW_MEMBER_MS = 5 * 60 * 60_000;
+const HANDBACK_MAX = 30;
+const handbackReply = (userId, word) => `<@${userId}> متشتمش الاونر يا ${word}`;
+
+/** The matched insult made safe to echo: no "يا" in front, no mentions, markdown escaped, at most 30 characters. */
+export function handbackWord(fragment) {
+    const word = String(fragment || '')
+        .replace(/<[@#][!&]?\d+>|<a?:\w+:\d+>|@(?:everyone|here)/giu, ' ')
+        .replace(/[@<>]/gu, ' ')
+        .replace(/\s+/gu, ' ')
+        .trim()
+        .replace(/^(?:يا|ya)(?:\s+|$)/iu, '')
+        .slice(0, HANDBACK_MAX)
+        .trim();
+    return word.replace(/[\\*_~`|[\]()#-]/gu, (char) => `\\${char}`);
+}
+
+/** The author of the message this one replies to (fetched once; null when it is not a reply or is gone). */
+function repliedAuthor(message) {
+    if (!message.reference?.messageId) return Promise.resolve(null);
+    return (message.fetchReference?.() ?? Promise.resolve(null)).then((replied) => replied?.author || null, () => null);
+}
+
 /** Whether the message is addressed to another member: a reply to a member's message, or a mention of a member. */
-async function isAimedAtMember(message) {
+async function isAimedAtMember(message, replied) {
     const self = message.author?.id;
     const mentioned = message.mentions?.users;
     if (mentioned && [...mentioned.values()].some((user) => user && !user.bot && user.id !== self)) return true;
-    if (!message.reference?.messageId) return false;
-    const replied = await message.fetchReference?.().catch(() => null);
-    return Boolean(replied?.author && !replied.author.bot && replied.author.id !== self);
+    const author = await replied;
+    return Boolean(author && !author.bot && author.id !== self);
+}
+
+/** Whether the message mentions a server owner or replies to an owner's message. */
+async function isAimedAtOwner(message, replied) {
+    const mentioned = message.mentions?.users;
+    if (mentioned && SERVER_OWNER_IDS.some((id) => mentioned.has?.(id))) return true;
+    const author = await replied;
+    return Boolean(author && isServerOwner(author.id));
+}
+
+/** Joined the server less than 5 hours ago (unknown join time: no). */
+function isNewMember(member, now) {
+    const joined = member?.joinedTimestamp;
+    return Number.isFinite(joined) && joined > 0 && now - joined < NEW_MEMBER_MS;
 }
 
 async function notice(message, text) {
@@ -77,13 +119,17 @@ export async function handleChatFilter(message, { now = Date.now(), warn = issue
     // Reports quote what someone else said, so the report channel is never filtered.
     if (message.channelId === REPORT_CHANNEL_ID) return false;
     // In every server: the built-in lists, the English insults and the owner's shared `automod` edits.
-    const ruleName = checkText(message.content);
+    const match = matchedFragment(message.content);
+    const ruleName = match?.rule;
     if (!ruleName) return false;
     // Trusted staff (the Anti-Nuke trusted list: members or roles) may swear.
     if (await canLiftHardBan(message.guild, message.author.id).catch(() => false)) return false;
     let rule = RULES[ruleName];
     // The reference of a deleted message is gone: look at who it is aimed at first.
-    const aimedKosomak = ruleName === 'family' && KOSOMAK.test(normalizeForFilter(message.content)) && await isAimedAtMember(message);
+    const handbackRule = HANDBACK_RULES.has(ruleName);
+    const replied = handbackRule ? repliedAuthor(message) : Promise.resolve(null);
+    const aimedKosomak = ruleName === 'family' && KOSOMAK.test(normalizeForFilter(message.content)) && await isAimedAtMember(message, replied);
+    const atOwner = handbackRule && await isAimedAtOwner(message, replied);
 
     await message.delete().catch(() => {});
     const member = message.member || await message.guild.members.fetch(message.author.id).catch(() => null);
@@ -135,7 +181,9 @@ export async function handleChatFilter(message, { now = Date.now(), warn = issue
         logger.debug('Failed to post chat filter action to automode room:', auditErr);
     }
 
+    const echo = handbackRule ? handbackWord(match.fragment) : '';
     if (timedOut) await notice(message, kosomakReply(message.author.id));
+    else if (echo && (atOwner || isNewMember(member, now))) await notice(message, handbackReply(message.author.id, echo));
     else if (!rule.silent || shouldWarn) await notice(message, `🚫 <@${message.author.id}> ${rule.label} ممنوعة هنا ・ ${punishment}`);
     return true;
 }
