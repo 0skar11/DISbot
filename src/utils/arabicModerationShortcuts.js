@@ -229,12 +229,8 @@ export async function pullToVoice(message, targetMember) {
   if (!targetMember.voice?.channel) return reply(message, '❌ العضو مش في روم صوتي.');
   if (targetMember.voice.channelId === room.id) return reply(message, '⚠️ هو معاك في نفس الروم.');
   const isOwner = message.guild.ownerId === staff.id || isServerOwner(staff.id);
-  // Our server and Zenith use the shared rule (memberHierarchy.js); other servers keep their own check.
-  if (hierarchyRuleApplies(message.guild, staff)) {
-    if (await refusedByHierarchy(message, targetMember)) return true;
-  } else if (!isOwner && (message.guild.ownerId === targetMember.id || targetMember.roles.highest.position >= staff.roles.highest.position)) {
-    return reply(message, '❌ ماتقدرش تسحب عضو رتبته أعلى منك أو زيك.');
-  }
+  // Pulling is allowed on anyone, whatever their role (owner's request, GH-311): a member with Move Members
+  // may pull any member, so the role hierarchy rule (memberHierarchy.js) is not applied to it.
   // The bot does the move. The staff member needs rights on their destination room;
   // they can pull from ANY room, even if locked (GH-304).
   const allowed = (channel, who, flags) => channel?.permissionsFor?.(who)?.has(flags) ?? true;

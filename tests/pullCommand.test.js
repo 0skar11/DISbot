@@ -46,12 +46,12 @@ describe('سحب (pull to your voice room)', () => {
     for (const x of [s]) assert.equal(x.moved.length, 0);
   });
 
-  test('a member of an equal or higher role, or the server owner, can not be pulled by a lower staff member', async () => {
+  test('a member of an equal or higher role, or the server owner, can be pulled by any staff member with Move Members (GH-311)', async () => {
     for (const options of [{ targetPos: 10 }, { targetPos: 20 }, { targetOwner: true }]) {
       const { message, target, sent, moved } = setup(options);
       await pullToVoice(message, target);
-      assert.equal(moved.length, 0);
-      assert.match(sent[0].content, /رتبته أعلى/u);
+      assert.equal(moved.length, 1);
+      assert.match(sent[0].content, /تم سحب/u);
     }
   });
 

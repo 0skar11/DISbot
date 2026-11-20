@@ -415,12 +415,12 @@ describe('typed Arabic shortcuts', () => {
     assert.match(s.sent.at(-1).content, /@user role/u);
   });
 
-  test('سحب, مسح تحذيرات and نك refuse a member of the same or a higher role', async () => {
+  test('مسح تحذيرات and نك refuse a member of the same or a higher role (سحب is allowed on anyone)', async () => {
     const pull = setup({ staffPos: 3, targetPos: 3 });
     pull.staff.voice = { channel: { id: 'A', toString: () => '<#A>' } };
     pull.target.voice = { channel: { id: 'B' }, channelId: 'B', setChannel: async () => pull.sent.push({ moved: true }) };
     await pullToVoice(pull.message(`سحب <@${TARGET}>`), pull.target);
-    assert.equal(pull.sent.at(-1).content, HIERARCHY_REFUSAL);
+    assert.equal(pull.sent.some((entry) => entry.moved), true, 'a pull is not stopped by the role rule (GH-311)');
 
     const warnings = setup({ staffPos: 3, targetPos: 4 });
     await handleClearWarningsShortcut(warnings.message(`مسح تحذيرات <@${TARGET}>`), [`<@${TARGET}>`]);
@@ -461,11 +461,11 @@ describe('typed Arabic shortcuts', () => {
 });
 
 describe('other servers keep their checks', () => {
-  test('a lower staff member still pulls nobody higher, with the old answer', async () => {
+  test('a lower staff member can pull anyone, here too (GH-311)', async () => {
     const s = setup({ guildId: OTHER_GUILD, staffPos: 3, targetPos: 3, staffPerms: PermissionFlagsBits.MoveMembers });
     s.staff.voice = { channel: { id: 'A' } };
     s.target.voice = { channel: { id: 'B' }, channelId: 'B', setChannel: async () => {} };
     await pullToVoice(s.message(`سحب <@${TARGET}>`), s.target);
-    assert.match(s.sent.at(-1).content, /ماتقدرش تسحب/u);
+    assert.doesNotMatch(s.sent.at(-1).content, /ماتقدرش تسحب/u);
   });
 });
