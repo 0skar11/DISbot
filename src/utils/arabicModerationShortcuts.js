@@ -288,6 +288,47 @@ async function finishVoicePull(message, prompt, targetId, roomId, targetVoice, r
   await prompt.edit({ content, components: [], allowedMentions: { parse: [] } });
 }
 
+export function pullMeTarget(args) {
+  return args.length === 1 ? /^<@!?(\d{17,20})>$/u.exec(args[0])?.[1] : undefined;
+}
+
+export async function handlePullMeShortcut(message, args, { prefixed = false } = {}) {
+  const targetId = pullMeTarget(args);
+  if (!targetId) {
+    if (!prefixed) return false;
+    await reply(message, 'اكتب `اسحبني @عضو`.');
+    return true;
+  }
+
+  const requester = message.member;
+  if (!requester?.voice?.channel) {
+    await reply(message, '❌ ادخل روم صوتي الأول.');
+    return true;
+  }
+
+  const target = await message.guild.members.fetch(targetId).catch(() => null);
+  const room = target?.voice?.channel;
+  const access = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect];
+  if (!room || !room.permissionsFor?.(requester)?.has(access)) {
+    await reply(message, '❌ العضو مش في روم تقدر تدخلها.');
+  } else if (!requester.voice.channel) {
+    await reply(message, '❌ ادخل روم صوتي الأول.');
+  } else if (requester.voice.channel.id === room.id) {
+    await reply(message, '⚠️ إنت معاه في نفس الروم.');
+  } else if (room.userLimit && room.members.size >= room.userLimit) {
+    await reply(message, '❌ الروم مليانة.');
+  } else {
+    try {
+      await withInvoker(message.guild.id, 'voice', requester.id, message.author,
+        () => requester.voice.setChannel(room, 'Member requested their own voice move'));
+      await reply(message, `✅ اتنقلت لـ <#${room.id}>.`);
+    } catch {
+      await reply(message, '❌ مقدرتش أنقلك للروم.');
+    }
+  }
+  return true;
+}
+
 export async function pullToVoice(message, targetMember) {
   const staff = message.member;
   if (!staff || !targetMember) return true;
