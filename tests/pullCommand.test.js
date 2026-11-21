@@ -143,12 +143,26 @@ describe('typed `سحب` / `pull` reaches the command', () => {
   });
 });
 
-describe('اسحبني (move the requester to the mentioned member)', () => {
-  async function run({ allowed = true, full = false, sameRoom = false, connected = true, args = ['<@222222222222222222>'] } = {}) {
-    const s = setup({ staffPerms: [], staffRoom: connected ? { id: sameRoom ? 'B' : 'A' } : null });
+describe('اسحبني requires consent from the mentioned member', () => {
+  async function run({ allowed = true, full = false, sameRoom = false, connected = true, staffPerms = [], args = ['<@222222222222222222>'] } = {}) {
+    const s = setup({ staffPerms, staffRoom: connected ? { id: sameRoom ? 'B' : 'A' } : null });
     const moved = [];
+    const edits = [];
+    let finish;
+    let reject;
+    let filter;
     s.message.member.voice.setChannel = async room => { moved.push(room.id); };
-    s.message.guild.members = { fetch: async () => s.target };
+    s.message.guild.members = { fetch: async id => (id?.user ?? id) === s.message.author.id ? s.message.member : s.target };
+    s.message.channel.send = async payload => {
+      s.sent.push(payload);
+      return {
+        awaitMessageComponent: options => {
+          filter = options.filter;
+          return new Promise((resolve, fail) => { finish = resolve; reject = fail; });
+        },
+        edit: async payload => { edits.push(payload); },
+      };
+    };
     const room = s.target.voice.channel;
     room.permissionsFor = member => {
       assert.equal(member.id, s.message.author.id);
@@ -156,20 +170,43 @@ describe('اسحبني (move the requester to the mentioned member)', () => {
     };
     if (full) Object.assign(room, { userLimit: 1, members: new Map([[s.target.id, s.target]]) });
     const handled = await handlePullMeShortcut(s.message, args);
-    assert.deepEqual(s.moved, [], 'the mentioned member never moves');
-    return { handled, moved, sent: s.sent };
+    return { ...s, handled, requesterMoves: moved, room, edits, finish, reject, filter };
   }
 
-  test('moves the author directly without Move Members permission', async () => {
-    const result = await run();
-    assert.equal(result.handled, true);
-    assert.deepEqual(result.moved, ['B']);
-    assert.match(result.sent[0].content, /اتنقلت/u);
-  });
+  for (const staffPerms of [[], [PermissionFlagsBits.Administrator]]) {
+    test(`waits for the target's approval with permissions ${staffPerms}`, async () => {
+      const s = await run({ staffPerms });
+      assert.equal(s.handled, true);
+      assert.deepEqual(s.requesterMoves, []);
+      assert.equal(s.filter({ customId: 'voice-pull:accept', user: s.message.author }), false);
+      assert.equal(s.filter({ customId: 'voice-pull:accept', user: s.target }), true);
+      s.finish({ customId: 'voice-pull:accept', deferUpdate: async () => {} });
+      await new Promise(setImmediate);
+      assert.deepEqual(s.requesterMoves, ['B']);
+      assert.deepEqual(s.moved, [], 'the mentioned member never moves');
+      assert.deepEqual(s.edits[0].components, []);
+    });
+  }
+
+  for (const outcome of ['decline', 'timeout', 'room fills', 'target leaves']) {
+    test(`does not move the requester after ${outcome}`, async () => {
+      const s = await run();
+      if (outcome === 'room fills') Object.assign(s.room, { userLimit: 1, members: new Map([[s.target.id, s.target]]) });
+      if (outcome === 'target leaves') s.target.voice.channel = null;
+      if (outcome === 'timeout') s.reject(new Error('Collector ended'));
+      else s.finish({ customId: outcome === 'decline' ? 'voice-pull:decline' : 'voice-pull:accept', deferUpdate: async () => {} });
+      await new Promise(setImmediate);
+      assert.deepEqual(s.requesterMoves, []);
+      assert.deepEqual(s.moved, []);
+      assert.deepEqual(s.edits[0].components, []);
+    });
+  }
 
   test('respects locked or full rooms and requires a distinct active voice room', async () => {
     for (const options of [{ allowed: false }, { full: true }, { sameRoom: true }, { connected: false }]) {
-      assert.deepEqual((await run(options)).moved, []);
+      const s = await run(options);
+      assert.equal(s.finish, undefined);
+      assert.deepEqual(s.requesterMoves, []);
     }
   });
 
