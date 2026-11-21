@@ -141,11 +141,15 @@ async function staffRoleIds(guild) {
     return ticketStaffRoleIds(guild, config);
 }
 
-/** The team that handles a section: its role and every staff / admin role. */
+/** The team that handles a section: its role and every staff / admin role (verification tickets are exclusive to the verify role, GH #322). */
 async function sectionTeam(guild, type) {
     const roles = getSectionRoleIds(guild.id);
     const ownId = roles?.[type];
     const own = ownId ? [ownId].filter((id) => guild.roles.cache.has(id)) : [];
+    if (type === 'verify' && own.length) {
+        // GH #322: Verification tickets are exclusively for the verifier role; no other staff sees them.
+        return own;
+    }
     return [...new Set([...own, ...(await staffRoleIds(guild))])];
 }
 
@@ -172,6 +176,12 @@ async function canVerify(member) {
 async function canHandle(member, type, state) {
     if (!member) return false;
     if (isServerOwner(member.id)) return true;
+    if (type === 'verify') {
+        const ownId = getSectionRoleIds(member.guild.id)?.verify;
+        if (ownId && member.guild.roles.cache.has(ownId)) {
+            return member.roles?.cache?.has(ownId) === true || member.permissions?.has?.(PermissionFlagsBits.Administrator) === true;
+        }
+    }
     return isTicketStaffMember(member, await sectionTeam(member.guild, type));
 }
 
@@ -273,6 +283,14 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
     state.counter += 1;
     const number = String(state.counter).padStart(4, '0');
     const team = await sectionTeam(guild, type);
+    const roles = getSectionRoleIds(guild.id);
+    const ownVerifyId = roles?.verify;
+    const isExclusiveVerify = type === 'verify' && ownVerifyId && guild.roles.cache.has(ownVerifyId);
+    let deniedStaff = [];
+    if (isExclusiveVerify) {
+        const allStaff = await staffRoleIds(guild);
+        deniedStaff = allStaff.filter((id) => id !== ownVerifyId);
+    }
     const me = guild.members.me;
     const channel = await guild.channels.create({
         name: `${section.channelEmoji}・${section.label.split(' ')[0]}-${number}`,
@@ -284,6 +302,7 @@ export async function openTicket(member, type, { now = Date.now() } = {}) {
             { id: guild.id, deny: [PermissionFlagsBits.ViewChannel] },
             { id: member.id, type: OverwriteType.Member, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks] },
             ...team.map((id) => ({ id, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.EmbedLinks] })),
+            ...deniedStaff.map((id) => ({ id, deny: [PermissionFlagsBits.ViewChannel] })),
             ...(me ? [{ id: me.id, type: OverwriteType.Member, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.ManageChannels, PermissionFlagsBits.EmbedLinks, PermissionFlagsBits.AttachFiles] }] : []),
         ],
     }).catch((error) => {

@@ -73,15 +73,14 @@ describe('reveal room (silent image-only)', () => {
   });
 });
 
-describe('GH #318: reveal rooms in every server, for everyone', () => {
+describe('GH #321: trusted members and owners can write in reveal rooms', () => {
   const REVEAL = '1569932762125705323';
 
-  test('the owner and staff are not exempt in the reveal room', async () => {
-    // The guild owner (trusted) and a bot owner (SERVER_OWNER_IDS) could write without an image before.
+  test('the owner and trusted members are exempt in the reveal room (GH #321)', async () => {
     for (const authorId of ['owner', SERVER_OWNER_IDS[0]]) {
       const { message, state } = makeMessage({ channelId: REVEAL, authorId });
-      assert.equal(await handleImageOnlyChannelMessage(message), true, authorId);
-      assert.equal(state.deleted, true);
+      assert.equal(await handleImageOnlyChannelMessage(message), false, authorId);
+      assert.equal(state.deleted, false);
     }
   });
 

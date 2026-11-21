@@ -40,8 +40,8 @@ export async function handleImageOnlyChannelMessage(message) {
   const silent = isRevealRoom(message.channel, message.channelId);
   if (message.channelId !== IMAGE_ONLY_CHANNEL_ID && !silent) return false;
   if (hasImage(message)) return false;
-  // Reveal rooms have no exemptions ("لكلو"); the other image-only room lets owners and trusted members write.
-  if (!silent && await canWriteWithoutImage(message)) return false;
+  // Reveal rooms & image-only rooms let owners and trusted members write normally (GH #321).
+  if (await canWriteWithoutImage(message)) return false;
 
   await message.delete().catch(() => {});
   if (silent) return true;

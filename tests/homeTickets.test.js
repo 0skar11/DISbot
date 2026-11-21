@@ -98,7 +98,7 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.match(log.sent[0].embeds[0].description, new RegExp(`استلمه: <@200000000000000009>`));
   });
 
-  test('a verification ticket is seen by its role and the staff, pings only the opener, and ✅ gives the verified girl role', async () => {
+  test('a verification ticket is seen only by its role (GH #322), pings only the opener, and ✅ gives the verified girl role', async () => {
     const { guild, created, member } = setup();
     await setupHomeTickets(guild);
     const girl = member(GIRL);
@@ -106,7 +106,9 @@ describe('our server\'s tickets (owner\'s request)', () => {
     const ticket = created[3];
     const allowed = ticket.options.permissionOverwrites.filter((overwrite) => overwrite.allow).map((overwrite) => overwrite.id);
     assert.ok(allowed.includes(SECTION_ROLE_IDS.verify));
-    assert.ok(allowed.includes(STAFF_ROLE.id) && !allowed.includes(SECTION_ROLE_IDS.problem));
+    assert.ok(!allowed.includes(STAFF_ROLE.id) && !allowed.includes(SECTION_ROLE_IDS.problem));
+    const denied = ticket.options.permissionOverwrites.filter((overwrite) => overwrite.deny).map((overwrite) => overwrite.id);
+    assert.ok(denied.includes(STAFF_ROLE.id));
     assert.equal(ticket.sent[0].content, `<@${GIRL}>`);
 
     assert.equal((await verifyTicket(ticket, member('200000000000000011'))).reason, 'not_team');
@@ -156,11 +158,16 @@ describe('our server\'s tickets (owner\'s request)', () => {
     const ticketChannel = created[created.length - 1];
     const allowed = ticketChannel.options.permissionOverwrites.filter((overwrite) => overwrite.allow).map((overwrite) => overwrite.id);
     assert.ok(allowed.includes(zenithVerifierRoleId));
-    assert.ok(allowed.includes(STAFF_ROLE.id));
+    // GH #322: Other staff role is NOT allowed and is explicitly denied
+    assert.equal(allowed.includes(STAFF_ROLE.id), false);
+    const denied = ticketChannel.options.permissionOverwrites.filter((overwrite) => overwrite.deny).map((overwrite) => overwrite.id);
+    assert.ok(denied.includes(STAFF_ROLE.id));
 
-    // Staff without verifier role cannot verify
+    // Staff without verifier role cannot verify, claim, or close
     const regularStaff = member('200000000000000010', [STAFF_ROLE.id]);
     assert.equal((await verifyTicket(ticketChannel, regularStaff)).reason, 'not_team');
+    assert.equal((await claimTicket(ticketChannel, regularStaff)).reason, 'not_team');
+    assert.equal((await closeTicket(ticketChannel, regularStaff)).reason, 'not_team');
 
     // Verifier with 1572977938092134410 can verify
     const verifierMember = member('200000000000000011', [zenithVerifierRoleId]);
