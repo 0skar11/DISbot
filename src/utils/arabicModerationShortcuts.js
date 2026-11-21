@@ -218,32 +218,37 @@ async function canMoveMembers(member) {
 const pendingPulls = new Set();
 const pullRequestTimeout = 30_000;
 
-function canJoinPullRoom(room, requester, target) {
-  const flags = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect];
-  return room.permissionsFor?.(requester)?.has(flags) && room.permissionsFor?.(target)?.has(flags);
+function canJoinVoiceRoom(room, member) {
+  return room.permissionsFor?.(member)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]);
 }
 
-async function requestVoicePull(message, target, room) {
+function isVoiceRoomFull(room) {
+  return room.userLimit && room.members.size >= room.userLimit;
+}
+
+async function requestVoicePull(message, target, room, moveRequester = false) {
   if (target.user?.bot) return reply(message, '❌ مينفعش تبعت طلب سحب لبوت.');
-  if (!canJoinPullRoom(room, message.member, target)) return reply(message, '❌ العضو لازم يقدر يدخل الروم.');
+  if (!canJoinVoiceRoom(room, moveRequester ? message.member : target) || (!moveRequester && !canJoinVoiceRoom(room, message.member))) return reply(message, '❌ العضو لازم يقدر يدخل الروم.');
   const requesterId = message.member.id;
   const pendingKey = `${message.guild.id}:${requesterId}`;
   if (pendingPulls.has(pendingKey)) return reply(message, '⏳ عندك طلب سحب مستني الرد.');
 
   const targetVoice = { channelId: target.voice.channel.id, sessionId: target.voice.sessionId };
-  const requesterSession = message.member.voice.sessionId;
+  const requesterVoice = { channelId: message.member.voice.channel.id, sessionId: message.member.voice.sessionId };
   pendingPulls.add(pendingKey);
   let prompt;
   try {
     prompt = await message.channel.send({
-      content: `<@${target.id}>، <@${requesterId}> طالب يسحبك لـ <#${room.id}>. موافق؟`,
+      content: moveRequester
+        ? `<@${target.id}>، <@${requesterId}> طالب يدخل رومك. موافق؟`
+        : `<@${target.id}>، <@${requesterId}> طالب يسحبك لـ <#${room.id}>. موافق؟`,
       allowedMentions: { users: [target.id] },
       components: [new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('voice-pull:accept').setLabel('موافق').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId('voice-pull:decline').setLabel('رفض').setStyle(ButtonStyle.Secondary),
       )],
     });
-    void finishVoicePull(message, prompt, target.id, room.id, targetVoice, requesterSession)
+    void finishVoicePull(message, prompt, target.id, targetVoice, requesterVoice, moveRequester)
       .finally(() => pendingPulls.delete(pendingKey))
       .catch(() => {});
   } catch (error) {
@@ -253,7 +258,7 @@ async function requestVoicePull(message, target, room) {
   return true;
 }
 
-async function finishVoicePull(message, prompt, targetId, roomId, targetVoice, requesterSession) {
+async function finishVoicePull(message, prompt, targetId, targetVoice, requesterVoice, moveRequester) {
   const decision = await prompt.awaitMessageComponent({
     componentType: ComponentType.Button,
     time: pullRequestTimeout,
@@ -270,15 +275,18 @@ async function finishVoicePull(message, prompt, targetId, roomId, targetVoice, r
         const requesterId = message.member.id;
         const [requester, target] = await Promise.all([requesterId, targetId].map(user =>
           message.guild.members.fetch({ user, force: true }).catch(() => null)));
-        const room = requester?.voice?.channel;
-        if (room?.id !== roomId || requester.voice.sessionId !== requesterSession
+        const room = moveRequester ? target?.voice?.channel : requester?.voice?.channel;
+        const mover = moveRequester ? requester : target;
+        if (requester?.voice?.channel?.id !== requesterVoice.channelId || requester.voice.sessionId !== requesterVoice.sessionId
           || target?.voice?.channel?.id !== targetVoice.channelId || target.voice.sessionId !== targetVoice.sessionId
-          || !canJoinPullRoom(room, requester, target)) {
+          || !canJoinVoiceRoom(room, mover) || (!moveRequester && !canJoinVoiceRoom(room, requester))) {
           content = '❌ حالة الروم اتغيرت. ابعت طلب جديد.';
+        } else if (moveRequester && isVoiceRoomFull(room)) {
+          content = '❌ الروم مليانة.';
         } else {
-          await withInvoker(message.guild.id, 'voice', targetId, message.author,
-            () => target.voice.setChannel(room, `Voice pull accepted; requested by ${message.author.tag}`));
-          content = `✅ تم سحب <@${targetId}> إلى <#${roomId}>.`;
+          await withInvoker(message.guild.id, 'voice', mover.id, message.author,
+            () => mover.voice.setChannel(room, `Voice pull accepted; requested by ${message.author.tag}`));
+          content = `✅ تم سحب <@${mover.id}> إلى <#${room.id}>.`;
         }
       }
     } catch {
@@ -308,23 +316,16 @@ export async function handlePullMeShortcut(message, args, { prefixed = false } =
 
   const target = await message.guild.members.fetch(targetId).catch(() => null);
   const room = target?.voice?.channel;
-  const access = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect];
-  if (!room || !room.permissionsFor?.(requester)?.has(access)) {
+  if (!room || !canJoinVoiceRoom(room, requester)) {
     await reply(message, '❌ العضو مش في روم تقدر تدخلها.');
   } else if (!requester.voice.channel) {
     await reply(message, '❌ ادخل روم صوتي الأول.');
   } else if (requester.voice.channel.id === room.id) {
     await reply(message, '⚠️ إنت معاه في نفس الروم.');
-  } else if (room.userLimit && room.members.size >= room.userLimit) {
+  } else if (isVoiceRoomFull(room)) {
     await reply(message, '❌ الروم مليانة.');
   } else {
-    try {
-      await withInvoker(message.guild.id, 'voice', requester.id, message.author,
-        () => requester.voice.setChannel(room, 'Member requested their own voice move'));
-      await reply(message, `✅ اتنقلت لـ <#${room.id}>.`);
-    } catch {
-      await reply(message, '❌ مقدرتش أنقلك للروم.');
-    }
+    await requestVoicePull(message, target, room, true);
   }
   return true;
 }
