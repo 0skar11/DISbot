@@ -222,10 +222,6 @@ function canJoinVoiceRoom(room, member) {
   return room.permissionsFor?.(member)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect]);
 }
 
-function isVoiceRoomFull(room) {
-  return room.userLimit && room.members.size >= room.userLimit;
-}
-
 async function requestVoicePull(message, target, room, moveRequester = false) {
   if (target.user?.bot) return reply(message, '❌ مينفعش تبعت طلب سحب لبوت.');
   if (!canJoinVoiceRoom(room, moveRequester ? message.member : target) || (!moveRequester && !canJoinVoiceRoom(room, message.member))) return reply(message, '❌ العضو لازم يقدر يدخل الروم.');
@@ -281,9 +277,8 @@ async function finishVoicePull(message, prompt, targetId, targetVoice, requester
           || target?.voice?.channel?.id !== targetVoice.channelId || target.voice.sessionId !== targetVoice.sessionId
           || !canJoinVoiceRoom(room, mover) || (!moveRequester && !canJoinVoiceRoom(room, requester))) {
           content = '❌ حالة الروم اتغيرت. ابعت طلب جديد.';
-        } else if (moveRequester && isVoiceRoomFull(room)) {
-          content = '❌ الروم مليانة.';
         } else {
+          // A full room does not stop an accepted pull: the bot moves the member (GH-319).
           await withInvoker(message.guild.id, 'voice', mover.id, message.author,
             () => mover.voice.setChannel(room, `Voice pull accepted; requested by ${message.author.tag}`));
           content = `✅ تم سحب <@${mover.id}> إلى <#${room.id}>.`;
@@ -322,9 +317,8 @@ export async function handlePullMeShortcut(message, args, { prefixed = false } =
     await reply(message, '❌ ادخل روم صوتي الأول.');
   } else if (requester.voice.channel.id === room.id) {
     await reply(message, '⚠️ إنت معاه في نفس الروم.');
-  } else if (isVoiceRoomFull(room)) {
-    await reply(message, '❌ الروم مليانة.');
   } else {
+    // A full room does not stop the request (GH-319): once the member accepts, the bot moves the requester anyway.
     await requestVoicePull(message, target, room, true);
   }
   return true;

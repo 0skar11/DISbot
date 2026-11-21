@@ -188,10 +188,27 @@ describe('اسحبني requires consent from the mentioned member', () => {
     });
   }
 
-  for (const outcome of ['decline', 'timeout', 'room fills', 'target leaves']) {
+  test('a full room does not stop the pull: the request is sent and the requester moves after acceptance (GH-319)', async () => {
+    const s = await run({ full: true });
+    assert.equal(s.handled, true);
+    assert.equal(s.sent.length, 1, 'the approval request is sent');
+    s.finish({ customId: 'voice-pull:accept', deferUpdate: async () => {} });
+    await new Promise(setImmediate);
+    assert.deepEqual(s.requesterMoves, ['B']);
+    assert.match(s.edits[0].content, /✅/u);
+  });
+
+  test('a room that fills up while waiting still lets the accepted pull through (GH-319)', async () => {
+    const s = await run();
+    Object.assign(s.room, { userLimit: 1, members: new Map([[s.target.id, s.target]]) });
+    s.finish({ customId: 'voice-pull:accept', deferUpdate: async () => {} });
+    await new Promise(setImmediate);
+    assert.deepEqual(s.requesterMoves, ['B']);
+  });
+
+  for (const outcome of ['decline', 'timeout', 'target leaves']) {
     test(`does not move the requester after ${outcome}`, async () => {
       const s = await run();
-      if (outcome === 'room fills') Object.assign(s.room, { userLimit: 1, members: new Map([[s.target.id, s.target]]) });
       if (outcome === 'target leaves') s.target.voice.channel = null;
       if (outcome === 'timeout') s.reject(new Error('Collector ended'));
       else s.finish({ customId: outcome === 'decline' ? 'voice-pull:decline' : 'voice-pull:accept', deferUpdate: async () => {} });
@@ -202,8 +219,8 @@ describe('اسحبني requires consent from the mentioned member', () => {
     });
   }
 
-  test('respects locked or full rooms and requires a distinct active voice room', async () => {
-    for (const options of [{ allowed: false }, { full: true }, { sameRoom: true }, { connected: false }]) {
+  test('respects locked rooms and requires a distinct active voice room', async () => {
+    for (const options of [{ allowed: false }, { sameRoom: true }, { connected: false }]) {
       const s = await run(options);
       assert.equal(s.finish, undefined);
       assert.deepEqual(s.requesterMoves, []);
