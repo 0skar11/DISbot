@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionsBitField, PermissionFlagsBits } from 'discord.js';
-import { pullToVoice } from '../src/utils/arabicModerationShortcuts.js';
+import { handlePullMeShortcut, pullToVoice } from '../src/utils/arabicModerationShortcuts.js';
 
 const perms = (...flags) => new PermissionsBitField(flags);
 function setup({ staffPerms = [PermissionFlagsBits.MoveMembers], staffRoom = { id: 'A', toString: () => '<#A>' }, targetRoomId = 'B', staffPos = 10, targetPos = 3, targetOwner = false } = {}) {
@@ -140,5 +140,42 @@ describe('typed `سحب` / `pull` reaches the command', () => {
     const { readFileSync } = await import('node:fs');
     const source = readFileSync(new URL('../src/events/messageCreate.js', import.meta.url), 'utf8');
     assert.match(source, /typedCommand === 'سحب' \|\| typedCommand === 'pull'\) && await handlePullShortcut/u);
+  });
+});
+
+describe('اسحبني (move the requester to the mentioned member)', () => {
+  async function run({ allowed = true, full = false, sameRoom = false, connected = true, args = ['<@222222222222222222>'] } = {}) {
+    const s = setup({ staffPerms: [], staffRoom: connected ? { id: sameRoom ? 'B' : 'A' } : null });
+    const moved = [];
+    s.message.member.voice.setChannel = async room => { moved.push(room.id); };
+    s.message.guild.members = { fetch: async () => s.target };
+    const room = s.target.voice.channel;
+    room.permissionsFor = member => {
+      assert.equal(member.id, s.message.author.id);
+      return { has: flags => allowed && flags.includes(PermissionFlagsBits.ViewChannel) && flags.includes(PermissionFlagsBits.Connect) };
+    };
+    if (full) Object.assign(room, { userLimit: 1, members: new Map([[s.target.id, s.target]]) });
+    const handled = await handlePullMeShortcut(s.message, args);
+    assert.deepEqual(s.moved, [], 'the mentioned member never moves');
+    return { handled, moved, sent: s.sent };
+  }
+
+  test('moves the author directly without Move Members permission', async () => {
+    const result = await run();
+    assert.equal(result.handled, true);
+    assert.deepEqual(result.moved, ['B']);
+    assert.match(result.sent[0].content, /اتنقلت/u);
+  });
+
+  test('respects locked or full rooms and requires a distinct active voice room', async () => {
+    for (const options of [{ allowed: false }, { full: true }, { sameRoom: true }, { connected: false }]) {
+      assert.deepEqual((await run(options)).moved, []);
+    }
+  });
+
+  test('leaves normal chat alone', async () => {
+    const result = await run({ args: ['معاك'] });
+    assert.equal(result.handled, false);
+    assert.deepEqual(result.sent, []);
   });
 });
