@@ -18,7 +18,7 @@ import { handleRemoveBgCommand, isRemoveBgCommand, removeBgArgs } from '../servi
 import { handleCaptionCommand, isCaptionCommand } from '../services/caption/captionService.js';
 import { handleVerifyCommand, isVerifyCommand } from '../services/verification/directVerifyService.js';
 import { buildAwamerMainPayload } from '../services/help/awamerService.js';
-import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullShortcut } from '../utils/arabicModerationShortcuts.js';
+import { handleArabicRoleShortcut, handleClearWarningsShortcut, handlePullMeShortcut, handlePullShortcut, pullMeTarget } from '../utils/arabicModerationShortcuts.js';
 import { handlePurgeMessage } from '../services/moderation/channelPurgeService.js';
 import { handleReportChannelMessage } from '../services/reportChannelService.js';
 import { handleBugsReportsMessage } from '../services/bugsReportsInbox.js';
@@ -150,6 +150,7 @@ async function isBotCommand(message, client) {
   if (!parsed) return false;
   const typedCommand = parsed.commandName.toLowerCase();
   if (['trusted', 'purge', DANGER_COMMAND_WORD, 'منشن'].includes(typedCommand)) return true;
+  if (typedCommand === 'اسحبني') return parsed.prefixed || Boolean(pullMeTarget(parsed.args));
   if (isAutomodCommand(message, guildConfig?.prefix || getCommandPrefix())) return true;
   const aliased = applyWordAliases(typedCommand, parsed.args, parsed.prefixed);
   if (!aliased) return false;
@@ -201,6 +202,7 @@ export async function handlePrefixCommand(message, client, gamesOnly = false) {
       return;
     }
     if (typedCommand === DANGER_COMMAND_WORD && await handleDangerCommand(message, args, { prefixed: parsed.prefixed })) return;
+    if (typedCommand === 'اسحبني' && await handlePullMeShortcut(message, args, { prefixed: parsed.prefixed })) return;
     if ((typedCommand === 'سحب' || typedCommand === 'pull') && await handlePullShortcut(message, args, { prefixed: parsed.prefixed })) return;
     // `.gif` / `جيف` (everyone): a picture becomes a GIF. Needs the prefix or a `.`/`!` in front (`.gif` works whatever
     // PREFIX is), so the plain word in a chat is left alone.
