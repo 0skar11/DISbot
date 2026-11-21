@@ -1,4 +1,4 @@
-import { PermissionFlagsBits } from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, PermissionFlagsBits } from 'discord.js';
 import { getCommandPrefix } from '../config/bot.js';
 import { isServerOwner, isTrustManager } from '../config/serverOwners.js';
 import { getGuildConfig, updateGuildConfig } from '../services/config/guildConfig.js';
@@ -215,19 +215,88 @@ async function canMoveMembers(member) {
   return staff.length > 0;
 }
 
-/**
- * `سحب @العضو` (or as a reply): moves the member to the voice room the staff member is in. Staff only (Move Members);
- * the owner and members of a higher or equal role can't be pulled by a lower one. Without the permission it stays silent.
- * Staff can pull from any voice room, even if locked (GH-304).
- */
+const pendingPulls = new Set();
+const pullRequestTimeout = 30_000;
+
+function canJoinPullRoom(room, requester, target) {
+  const flags = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect];
+  return room.permissionsFor?.(requester)?.has(flags) && room.permissionsFor?.(target)?.has(flags);
+}
+
+async function requestVoicePull(message, target, room) {
+  if (target.user?.bot) return reply(message, '❌ مينفعش تبعت طلب سحب لبوت.');
+  if (!canJoinPullRoom(room, message.member, target)) return reply(message, '❌ العضو لازم يقدر يدخل الروم.');
+  const requesterId = message.member.id;
+  const pendingKey = `${message.guild.id}:${requesterId}`;
+  if (pendingPulls.has(pendingKey)) return reply(message, '⏳ عندك طلب سحب مستني الرد.');
+
+  const targetVoice = { channelId: target.voice.channel.id, sessionId: target.voice.sessionId };
+  const requesterSession = message.member.voice.sessionId;
+  pendingPulls.add(pendingKey);
+  let prompt;
+  try {
+    prompt = await message.channel.send({
+      content: `<@${target.id}>، <@${requesterId}> طالب يسحبك لـ <#${room.id}>. موافق؟`,
+      allowedMentions: { users: [target.id] },
+      components: [new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId('voice-pull:accept').setLabel('موافق').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId('voice-pull:decline').setLabel('رفض').setStyle(ButtonStyle.Secondary),
+      )],
+    });
+    void finishVoicePull(message, prompt, target.id, room.id, targetVoice, requesterSession)
+      .finally(() => pendingPulls.delete(pendingKey))
+      .catch(() => {});
+  } catch (error) {
+    pendingPulls.delete(pendingKey);
+    throw error;
+  }
+  return true;
+}
+
+async function finishVoicePull(message, prompt, targetId, roomId, targetVoice, requesterSession) {
+  const decision = await prompt.awaitMessageComponent({
+    componentType: ComponentType.Button,
+    time: pullRequestTimeout,
+    filter: ({ customId, user }) => user.id === targetId
+      && (customId === 'voice-pull:accept' || customId === 'voice-pull:decline'),
+  }).catch(() => null);
+  let content = '⌛ طلب السحب انتهى.';
+  if (decision) {
+    try {
+      await decision.deferUpdate();
+      if (decision.customId === 'voice-pull:decline') {
+        content = '❌ طلب السحب اترفض.';
+      } else {
+        const requesterId = message.member.id;
+        const [requester, target] = await Promise.all([requesterId, targetId].map(user =>
+          message.guild.members.fetch({ user, force: true }).catch(() => null)));
+        const room = requester?.voice?.channel;
+        if (room?.id !== roomId || requester.voice.sessionId !== requesterSession
+          || target?.voice?.channel?.id !== targetVoice.channelId || target.voice.sessionId !== targetVoice.sessionId
+          || !canJoinPullRoom(room, requester, target)) {
+          content = '❌ حالة الروم اتغيرت. ابعت طلب جديد.';
+        } else {
+          await withInvoker(message.guild.id, 'voice', targetId, message.author,
+            () => target.voice.setChannel(room, `Voice pull accepted; requested by ${message.author.tag}`));
+          content = `✅ تم سحب <@${targetId}> إلى <#${roomId}>.`;
+        }
+      }
+    } catch {
+      content = '❌ مقدرتش أنفذ طلب السحب.';
+    }
+  }
+  await prompt.edit({ content, components: [], allowedMentions: { parse: [] } });
+}
+
 export async function pullToVoice(message, targetMember) {
   const staff = message.member;
-  if (!(await canMoveMembers(staff))) return reply(message, '🚫 No Permission');
-  if (!targetMember) return true;
+  if (!staff || !targetMember) return true;
+  const staffCanMove = await canMoveMembers(staff);
   const room = staff.voice?.channel;
   if (!room) return reply(message, '❌ ادخل روم صوتي الأول.');
   if (!targetMember.voice?.channel) return reply(message, '❌ العضو مش في روم صوتي.');
   if (targetMember.voice.channelId === room.id) return reply(message, '⚠️ هو معاك في نفس الروم.');
+  if (!staffCanMove) return requestVoicePull(message, targetMember, room);
   const isOwner = message.guild.ownerId === staff.id || isServerOwner(staff.id);
   // Pulling is allowed on anyone, whatever their role (owner's request, GH-311): a member with Move Members
   // may pull any member, so the role hierarchy rule (memberHierarchy.js) is not applied to it.
@@ -409,7 +478,7 @@ export async function handleArabicRoleShortcut(message, prefixes = []) {
 }
 
 /**
- * `سحب @member` / `pull @member` (or as a reply) typed in a channel: pulls the member to the staff member's voice room.
+ * `سحب @member` / `pull @member` (or as a reply) typed in a channel: pulls the member directly for staff, or asks for consent for regular members.
  * `سحب` is also an ordinary Arabic word, so without a mentioned, id'd or replied-to member it is left alone (false).
  * Our server: the member may be written by name (`سحب محمد`): a full name pulls at once, a prefix asks ✅ / ❌
  * first, several members with the name are listed and nobody is pulled. A name nobody has gets
@@ -434,7 +503,7 @@ export async function handlePullShortcut(message, args = [], { prefixed = false 
   return pullMember(message, targetId);
 }
 
-/** Pulls `targetId` (pullToVoice checks the permission, the rooms and the role hierarchy). */
+/** Pulls `targetId` (pullToVoice chooses between a staff move and a consent request). */
 async function pullMember(message, targetId) {
   const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
   if (!targetMember && nameTargetsEnabled(message.guild) && (await canMoveMembers(message.member))) {

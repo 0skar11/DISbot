@@ -3,6 +3,7 @@ const COLLECTOR_MANAGED_PREFIXES = [
   'config_select',
   'config_wizard',
   'cmdaccess_',
+  'voice-pull',
 ];
 
 export function isCollectorManagedComponent(customId = '') {
