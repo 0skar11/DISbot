@@ -26,12 +26,55 @@ describe('سحب (pull to your voice room)', () => {
     assert.match(sent[0].content, /تم سحب <@222222222222222222>/u);
   });
 
-  test('without the permission it stays silent and moves nobody', async () => {
-    const { message, target, sent, moved } = setup({ staffPerms: [] });
-    await pullToVoice(message, target);
-    assert.equal(moved.length, 0);
-    assert.equal(sent.length, 0);
+  test('only the target can accept a one-use pull request', async () => {
+    const s = setup({ staffPerms: [], staffRoom: { id: 'A', permissionsFor: () => perms(PermissionFlagsBits.Connect, PermissionFlagsBits.ViewChannel) } });
+    let resolveDecision;
+    let filter;
+    const edited = [];
+    s.message.guild.members = { fetch: async ({ user }) => user === s.target.id ? s.target : s.message.member };
+    s.message.channel.send = async (payload) => {
+      s.sent.push(payload);
+      return {
+        awaitMessageComponent: (options) => {
+          filter = options.filter;
+          return new Promise(resolve => { resolveDecision = resolve; });
+        },
+        edit: async (payload) => edited.push(payload),
+      };
+    };
+    assert.equal(await pullToVoice(s.message, s.target), true);
+    assert.deepEqual(s.sent[0].allowedMentions.users, [s.target.id]);
+    assert.equal(filter({ customId: 'voice-pull:accept', user: s.message.author }), false);
+    assert.equal(filter({ customId: 'voice-pull:accept', user: s.target }), true);
+    assert.deepEqual(s.moved, []);
+    resolveDecision({ customId: 'voice-pull:accept', deferUpdate: async () => {} });
+    await new Promise(setImmediate);
+    assert.deepEqual(s.moved.map(([room]) => room), ['A']);
+    assert.deepEqual(edited[0].components, []);
   });
+
+  for (const outcome of ['decline', 'timeout', 'room changed', 'access revoked']) {
+    test(`a pull request never moves anyone after ${outcome}`, async () => {
+      let canConnect = true;
+      const room = { id: 'A', permissionsFor: () => ({ has: () => canConnect }) };
+      const s = setup({ staffPerms: [], staffRoom: room });
+      const edited = [];
+      s.message.guild.members = { fetch: async ({ user }) => user === s.target.id ? s.target : s.message.member };
+      s.message.channel.send = async () => ({
+        awaitMessageComponent: async () => {
+          if (outcome === 'timeout') throw new Error('Collector ended');
+          if (outcome === 'room changed') s.message.member.voice.channel = { ...room, id: 'C' };
+          if (outcome === 'access revoked') canConnect = false;
+          return { customId: outcome === 'decline' ? 'voice-pull:decline' : 'voice-pull:accept', deferUpdate: async () => {} };
+        },
+        edit: async (payload) => edited.push(payload),
+      });
+      await pullToVoice(s.message, s.target);
+      await new Promise(setImmediate);
+      assert.deepEqual(s.moved, []);
+      assert.deepEqual(edited[0].components, []);
+    });
+  }
 
   test('the staff member must be in a voice room and the target too, and not already together', async () => {
     let s = setup({ staffRoom: null });
