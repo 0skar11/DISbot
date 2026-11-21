@@ -5,6 +5,8 @@ export default {
   name: Events.GuildMemberAdd,
   once: false,
   async execute(member) {
-    // Disabled: invite tracking moved to CC-bot
+    // Log only: posts the "📨 عضو دخل" embed to the invites room. Rewards are paid by CC-bot.
+    if (member.user?.bot) return;
+    await handleMemberJoinInvite(member);
   },
 };

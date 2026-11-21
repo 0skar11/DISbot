@@ -2,7 +2,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionFlagsBits, PermissionsBitField } from 'discord.js';
 import '../src/utils/embeds.js';
-import { ROLE_DEFINITIONS, rememberStaffRoles, demoteAdministratorsBelowAdmin } from '../src/services/staffRoleHierarchyService.js';
+import { ROLE_DEFINITIONS, ALL_EXCEPT_ADMINISTRATOR, rememberStaffRoles, demoteAdministratorsBelowAdmin, removeMentionEveryoneFromStaffRoles, buildGenericBoardEmbeds } from '../src/services/staffRoleHierarchyService.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { memberHasModerationCommandAccess } from '../src/utils/permissionGuard.js';
 
@@ -23,14 +23,22 @@ describe('staff role permissions', () => {
     });
   }
 
-  // Report #208: below 🛡️ Admin, every permission but Administrator.
+  // Report #208: below 🛡️ Admin, every permission but Administrator; GH #320: and never Mention Everyone.
   for (const name of ['🎖️ Supervisor', '⚔️ Senior Moderator', '🔨 Moderator']) {
-    test(`${name} has every permission except Administrator`, () => {
+    test(`${name} has every permission except Administrator and Mention Everyone`, () => {
       const permissions = permissionsOf(name);
       assert.equal(permissions.has(PermissionFlagsBits.Administrator, false), false);
-      assert.equal(permissions.bitfield | PermissionFlagsBits.Administrator, PermissionsBitField.All);
+      assert.equal(permissions.has(PermissionFlagsBits.MentionEveryone, false), false);
+      assert.equal(permissions.bitfield | PermissionFlagsBits.Administrator | PermissionFlagsBits.MentionEveryone, PermissionsBitField.All);
     });
   }
+
+  test('GH #320: no staff role set holds Mention Everyone', () => {
+    for (const definition of ROLE_DEFINITIONS.filter((role) => !new PermissionsBitField(role.permissions).has(PermissionFlagsBits.Administrator, false))) {
+      assert.equal(new PermissionsBitField(definition.permissions).has(PermissionFlagsBits.MentionEveryone, false), false, definition.name);
+    }
+    assert.equal(new PermissionsBitField(ALL_EXCEPT_ADMINISTRATOR).has(PermissionFlagsBits.MentionEveryone, false), false);
+  });
 
   test('Reports #208 & #302: all editable roles with Administrator (except 👑 Owner) get every permission but it', async () => {
     const make = (id, name, position, permissions, managed = false) => {
@@ -66,6 +74,7 @@ describe('staff role permissions', () => {
     assert.ok(roles[3].permissions.has(PermissionFlagsBits.BanMembers, false));
     assert.equal(roles[4].permissions.has(PermissionFlagsBits.Administrator, false), false);
     assert.ok(roles[4].permissions.has(PermissionFlagsBits.BanMembers, false));
+    assert.equal(roles[4].permissions.has(PermissionFlagsBits.MentionEveryone, false), false);
     // SomeBot (managed) and OverBotRole (above bot) keep Administrator
     assert.ok(roles[6].permissions.has(PermissionFlagsBits.Administrator, false));
     assert.ok(roles[7].permissions.has(PermissionFlagsBits.Administrator, false));
@@ -130,6 +139,62 @@ describe('the bot never touches staff roles', () => {
     // The owner renames the first staff role: it is still recognised by its saved ID.
     roles.get('1').name = 'The Boss';
     assert.deepEqual(await rememberStaffRoles(guild), { found: ROLE_DEFINITIONS.length - 1 });
+  });
+});
+
+describe('GH #320: Mention Everyone is taken off existing staff roles', () => {
+  const ME = PermissionFlagsBits.MentionEveryone;
+  const make = (id, name, position, bits, managed = false) => {
+    const role = { id, name, position, managed, permissions: new PermissionsBitField(bits), setPermissions: async (next) => { role.permissions = new PermissionsBitField(next); return role; } };
+    return role;
+  };
+  const guildWith = (id, roles, owners = []) => ({
+    id,
+    client: {},
+    members: {
+      me: { roles: { highest: { position: 50 } } },
+      fetch: async () => new Map(owners.map((owner) => [owner.id, owner])),
+    },
+    roles: { fetch: async () => Object.assign(new Map(roles.map((role) => [role.id, role])), { find: (fn) => roles.find(fn) }) },
+  });
+
+  for (const guildId of [HOME_GUILD_ID, '1569932761471524874']) {
+    test(`staff roles lose it, other roles are left alone (server ${guildId})`, async () => {
+      const roles = [
+        make(guildId, '@everyone', 0, PermissionFlagsBits.SendMessages),
+        make('mod', '🔨 Moderator', 10, PermissionsBitField.All & ~PermissionFlagsBits.Administrator),
+        make('support', '🎫 Support Staff', 5, PermissionFlagsBits.SendMessages | ME),
+        make('helpers', 'Helpers', 8, PermissionFlagsBits.ManageMessages | ME),
+        make('admin', '🛡️ Admin', 20, PermissionFlagsBits.Administrator | ME),
+        make('owner', '👑 Owner', 30, PermissionFlagsBits.BanMembers | ME),
+        make('vip', 'VIP', 3, PermissionFlagsBits.SendMessages | ME),
+        make('integration', 'SomeBot', 9, PermissionFlagsBits.ManageMessages | ME, true),
+        make('above', 'Above bot', 60, PermissionFlagsBits.ManageMessages | ME),
+      ];
+      const result = await removeMentionEveryoneFromStaffRoles(guildWith(guildId, roles));
+      assert.deepEqual(result.changed.sort(), ['Helpers', '🎫 Support Staff', '🔨 Moderator'].sort());
+      const byId = Object.fromEntries(roles.map((role) => [role.id, role]));
+      for (const id of ['mod', 'support', 'helpers']) assert.equal(byId[id].permissions.has(ME, false), false, id);
+      // Everything else on those roles stays.
+      assert.ok(byId.mod.permissions.has(PermissionFlagsBits.BanMembers, false));
+      assert.ok(byId.helpers.permissions.has(PermissionFlagsBits.ManageMessages, false));
+      for (const id of ['admin', 'owner', 'vip', 'integration', 'above']) assert.ok(byId[id].permissions.has(ME, false), id);
+      // A second run has nothing left to do.
+      assert.deepEqual((await removeMentionEveryoneFromStaffRoles(guildWith(guildId, roles))).changed, []);
+    });
+  }
+
+  test('a role an owner relies on keeps it', async () => {
+    const roles = [make('mods', 'Mods', 10, PermissionFlagsBits.ManageMessages | ME)];
+    const owner = { id: '1159601661392715906', permissions: new PermissionsBitField(PermissionFlagsBits.ManageMessages | ME), roles: { cache: new Map([['mods', roles[0]]]) } };
+    const result = await removeMentionEveryoneFromStaffRoles(guildWith('1569932761471524874', roles, [owner]));
+    assert.deepEqual(result.changed, []);
+    assert.ok(roles[0].permissions.has(ME, false));
+  });
+
+  test('the permission board says @everyone is the owner\'s alone', () => {
+    const roles = new Map([['r', make('r', 'Mods', 4, PermissionFlagsBits.ManageMessages)]]);
+    assert.match(buildGenericBoardEmbeds(roles)[0].description, /@everyone/u);
   });
 });
 

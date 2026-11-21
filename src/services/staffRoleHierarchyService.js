@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { findBoardMessage, rememberBoardMessage } from '../utils/boardMessage.js';
 import { getGuildConfig, updateGuildConfig } from './config/guildConfig.js';
 import { isHomeGuild } from '../config/homeGuild.js';
+import { SERVER_OWNER_IDS } from '../config/serverOwners.js';
 
 const ROLE_PERMISSIONS_CHANNEL_ID = '1550598605382099044';
 // The permission board room of each server (Zenith has its own).
@@ -48,8 +49,10 @@ const PERMISSION_LABELS = new Map([
   [PermissionFlagsBits.UseEmbeddedActivities, 'Use Activities — الأنشطة في الفويس'],
 ]);
 
-// Every permission except Administrator: 🔨 Moderator can do everything without being an administrator.
-const ALL_EXCEPT_ADMINISTRATOR = new PermissionsBitField(PermissionsBitField.All).remove(PermissionFlagsBits.Administrator).bitfield;
+// Every permission except Administrator and Mention Everyone: 🔨 Moderator can do everything without being an
+// administrator, but no staff role may mention @everyone / @here (GH #320: that is the owner's alone).
+const ALL_EXCEPT_ADMINISTRATOR = new PermissionsBitField(PermissionsBitField.All)
+  .remove(PermissionFlagsBits.Administrator, PermissionFlagsBits.MentionEveryone).bitfield;
 
 const BASE_PERMISSIONS = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory];
 
@@ -126,11 +129,14 @@ function permissionNames(permissions) {
 }
 
 function allButAdministratorLines(role) {
-  const lines = ['✅ كل الصلاحيات ما عدا Administrator'];
+  const lines = ['✅ كل الصلاحيات ما عدا Administrator و Mention Everyone'];
   const missing = role.permissions.missing(ALL_EXCEPT_ADMINISTRATOR, false);
   if (missing.length) lines.push(`❌ ناقصة: ${missing.join(', ')}`);
   return lines;
 }
+
+// GH #320: shown on every role of the board; the guard deletes a staff @everyone / @here even with Administrator.
+const NO_EVERYONE_LINE = '🚫 منشن @everyone / @here للأونر بس';
 
 // A plain embed object rather than an EmbedBuilder: src/utils/embeds.js drops builder footers (and strips emojis),
 // and the footer is how the bot recognizes its board message to edit it instead of posting a new one.
@@ -143,7 +149,7 @@ function buildBoardEmbed(role, definition) {
   return {
     color: role.color || parseInt(definition.color.slice(1), 16),
     title: `${role.name} — الصلاحيات`,
-    description: `الرتبة: ${role}\n\n${permissionLines.join('\n') || 'لا توجد صلاحيات إضافية'}`,
+    description: `الرتبة: ${role}\n\n${permissionLines.join('\n') || 'لا توجد صلاحيات إضافية'}\n${NO_EVERYONE_LINE}`,
     footer: { text: PERMISSION_BOARD_FOOTER },
   };
 }
@@ -250,6 +256,56 @@ export async function demoteAdministratorsBelowAdmin(guild, { force = false } = 
   return { status: 'done', changed, failed };
 }
 
+// GH #320: no staff role may mention @everyone / @here. Staff roles are the ROLE_DEFINITIONS roles (by saved ID or
+// name) and, in every server, any role holding a moderation permission. Runs on every startup, all servers.
+const STAFF_POWER_PERMISSIONS = [
+  PermissionFlagsBits.ManageGuild, PermissionFlagsBits.ManageRoles, PermissionFlagsBits.ManageChannels,
+  PermissionFlagsBits.BanMembers, PermissionFlagsBits.KickMembers, PermissionFlagsBits.ModerateMembers,
+  PermissionFlagsBits.ManageMessages,
+];
+
+export async function removeMentionEveryoneFromStaffRoles(guild) {
+  if (!guild?.roles?.fetch) return { changed: [], failed: [] };
+  const roles = await guild.roles.fetch();
+  const me = guild.members?.me || await guild.members?.fetchMe?.().catch(() => null);
+  const botHighest = me?.roles?.highest?.position ?? Infinity;
+  const staffIds = new Set((await filterStaffRoles(guild, roles.values())).map((role) => role.id));
+
+  // The owners' own permissions stay: a role an owner relies on (no Administrator elsewhere) is left alone.
+  const ownerRoleIds = new Set();
+  const owners = await guild.members?.fetch?.({ user: SERVER_OWNER_IDS }).catch(() => null);
+  for (const owner of owners?.values?.() || []) {
+    if (owner.permissions?.has?.(PermissionFlagsBits.Administrator)) continue;
+    for (const roleId of owner.roles?.cache?.keys?.() || []) ownerRoleIds.add(roleId);
+  }
+
+  const targets = [...roles.values()].filter((role) =>
+    role.id !== guild.id &&
+    !role.managed &&
+    role.position < botHighest &&
+    role.name !== '👑 Owner' &&
+    role.name.toLowerCase() !== 'owner' &&
+    !ownerRoleIds.has(role.id) &&
+    // Administrator implies every permission; Discord cannot take Mention Everyone from it (the guard deletes those pings).
+    !role.permissions.has(PermissionFlagsBits.Administrator, false) &&
+    role.permissions.has(PermissionFlagsBits.MentionEveryone, false) &&
+    (staffIds.has(role.id) || role.permissions.any(STAFF_POWER_PERMISSIONS, false))
+  );
+  const changed = [];
+  const failed = [];
+  for (const role of targets) {
+    const bits = BigInt(role.permissions.bitfield) & ~PermissionFlagsBits.MentionEveryone;
+    const done = await role.setPermissions(bits, 'GH #320: staff may not mention @everyone / @here')
+      .then(() => true)
+      .catch((error) => {
+        logger.warn(`Could not take Mention Everyone off ${role.name}: ${error.message}`);
+        return false;
+      });
+    (done ? changed : failed).push(role.name);
+  }
+  return { changed, failed };
+}
+
 const BOARD_KEY = 'staffPermissions';
 // Bump this to wipe the permission channel once more and post a fresh board on the next startup.
 // Otherwise the bot never posts in that channel; it only edits its board message.
@@ -287,7 +343,7 @@ export function buildGenericBoardEmbeds(roles) {
       const names = role.permissions.has(PermissionFlagsBits.Administrator)
         ? ['Administrator (كل الصلاحيات)']
         : KEY_PERMISSIONS.filter(([flag]) => role.permissions.has(flag)).map(([, name]) => name);
-      return { color: role.color || 0x5865f2, title: role.name, description: names.map((name) => `• ${name}`).join('\n'), footer: { text: PERMISSION_BOARD_FOOTER } };
+      return { color: role.color || 0x5865f2, title: role.name, description: [...names.map((name) => `• ${name}`), NO_EVERYONE_LINE].join('\n'), footer: { text: PERMISSION_BOARD_FOOTER } };
     });
 }
 

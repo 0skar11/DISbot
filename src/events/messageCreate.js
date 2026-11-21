@@ -69,6 +69,8 @@ export default {
       if (await handleProofPinNotice(message)) return;
       // Wins announced by the games bot (Clover) pay CC here.
       if (await handleGamesBotWin(message, client)) return;
+      // GH #320: an @everyone / @here sent through a webhook (not this bot's) is deleted too.
+      if (message.webhookId && message.guild && await handleEveryoneMention(message)) return;
       if (message.author.bot || !message.guild) return;
       logger.debug(`Message received from ${message.author.tag}: ${message.content}`);
 

@@ -2,12 +2,11 @@ import { PermissionFlagsBits } from 'discord.js';
 import { getGuildConfig } from './config/guildConfig.js';
 import { getAuditLogChannelId } from './auditLogChannelsService.js';
 import { postAuditRoom } from './logging/auditRooms.js';
-import { registerJoin } from './inviteRewardService.js';
 import { logger } from '../utils/logger.js';
 
-// Works out which invite a new member used by comparing invite use counts before and after the join,
-// saves it for the invite rewards (inviteRewardService.js) and posts it to the `invites` log channel.
-// Needs Manage Server to read invites.
+// Works out which invite a new member used by comparing invite use counts before and after the join
+// and posts it to the `invites` log channel. Log only: invite rewards are paid by CC-bot, so this file
+// must never register joins or pay rewards (that would pay twice). Needs Manage Server to read invites.
 const VANITY = 'vanity';
 const cache = new Map(); // guildId -> Map<code, { uses, maxUses, inviterId }>
 const queues = new Map(); // guildId -> Promise, so joins that land together are compared one at a time
@@ -67,19 +66,16 @@ async function processJoin(member) {
   const { guild } = member;
   if (!canReadInvites(guild)) return null;
 
-  const before = cache.get(guild.id) || new Map();
+  const before = cache.get(guild.id);
   const after = await snapshot(guild);
   cache.set(guild.id, after);
-  const used = findUsedInvite(before, after);
+  // Without an earlier snapshot (Manage Server granted after startup) any used invite would look new,
+  // so this join is logged as unknown and the snapshot just taken is the baseline for the next one.
+  const used = before ? findUsedInvite(before, after) : null;
 
-  const reward = await registerJoin(member.client, member, used?.inviterId || null)
-    .catch((error) => {
-      logger.error(`Invite reward registration failed for ${member.user?.tag}:`, error);
-      return null;
-    });
   await logJoin(member, used, after)
     .catch((error) => logger.error(`Invite log failed for ${member.user?.tag} in ${guild.name}:`, error));
-  return { used, reward };
+  return { used };
 }
 
 async function logJoin(member, used, after) {
@@ -113,8 +109,8 @@ async function logJoin(member, used, after) {
 }
 
 /**
- * Handles a member's join once, however many listeners ask (the invite logger and the welcome both do).
- * Resolves to `{ used, reward }` (the invite used and registerJoin's result), or null when invites can't be read.
+ * Handles a member's join once, however many listeners ask.
+ * Resolves to `{ used }` (the invite used, or null when unknown), or null when invites can't be read.
  */
 export function handleMemberJoinInvite(member) {
   const key = `${member.guild.id}:${member.id}:${member.joinedTimestamp}`;

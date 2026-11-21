@@ -11,6 +11,7 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { sanitizeInput } from '../../utils/validation.js';
 import { isChannelArg } from '../../utils/prefixArgs.js';
+import { isServerOwner } from '../../config/serverOwners.js';
 
 // Who used `say` is only shown in the audit log and this channel, never in the target channel.
 const SAY_LOG_CHANNEL_ID = '1550596180940034079';
@@ -170,7 +171,12 @@ export default {
             });
         }
 
-        const sentMessage = await channel.send({ content: message });
+        // GH #320: only the owners may make the bot ping @everyone / @here.
+        const ownerSender = isServerOwner(interaction.user.id) || interaction.user.id === interaction.guild.ownerId;
+        const sentMessage = await channel.send({
+            content: message,
+            allowedMentions: { parse: ownerSender ? ['users', 'roles', 'everyone'] : ['users', 'roles'] },
+        });
 
         await logEvent({
             client,

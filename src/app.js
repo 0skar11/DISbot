@@ -42,8 +42,11 @@ class TitanBot extends Client {
         GatewayIntentBits.GuildModeration,
         GatewayIntentBits.AutoModerationExecution,
         GatewayIntentBits.AutoModerationConfiguration,
-        GatewayIntentBits.GuildInvites,                    
+        GatewayIntentBits.GuildInvites,
       ],
+      // GH #320: nothing the bot sends pings @everyone / @here unless that send asks for it explicitly
+      // (rules post, heartbeat and anti-nuke alerts), so staff cannot make the bot ping everyone for them.
+      allowedMentions: { parse: ['users', 'roles'], repliedUser: true },
     });
 
     this.config = config;
