@@ -5,7 +5,7 @@
 import { logger } from '../../utils/logger.js';
 import { cardReason, formatDurationMs } from '../../utils/moderationCard.js';
 import { NO_PINGS } from '../../utils/oneLine.js';
-import { EXECUTOR_LABEL, executorText } from './commandInvoker.js';
+import { EXECUTOR_LABEL, executorTextUnlessModerator } from './commandInvoker.js';
 
 export const MODERATION_ACTION_LOG_CHANNEL_ID = '1552347336976498898';
 // The proof/log channel of each server (Zenith has its own).
@@ -68,10 +68,12 @@ export function buildModerationActionLogEmbed({
 }) {
   const { title, color } = ACTIONS[action] || { title: action, color: 0x95a5a6 };
   const moderator = moderatorUser || (moderatorId ? { id: moderatorId } : null);
+  // The executor line only when it names someone other than the moderator (GH #317).
+  const executor = executorTextUnlessModerator({ invoker: executorUser, actor: moderator, botId });
   const lines = [
     `**العضو:** ${userLine(targetUser, targetId)}`,
     `**الإداري:** ${userLine(moderatorUser, moderatorId)}`,
-    `**${EXECUTOR_LABEL}:** ${executorText({ invoker: executorUser, actor: moderator, botId })}`,
+    ...(executor ? [`**${EXECUTOR_LABEL}:** ${executor}`] : []),
     `**السبب:** ${cardReason(reason)}`,
   ];
   if (durationMs) lines.push(`**المدة:** ${formatDurationMs(durationMs)}`);

@@ -17,23 +17,15 @@ import { logTicketEvent } from '../utils/ticket/ticketLogging.js';
 import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { ensureTypedServiceError, wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
 import { PRIORITY_MAP } from '../utils/helpers.js';
-import { filterStaffRoles } from './staffRoleHierarchyService.js';
-const TICKET_STAFF_ALLOW = [
-  PermissionFlagsBits.ViewChannel,
-  PermissionFlagsBits.SendMessages,
-  PermissionFlagsBits.AttachFiles,
-  PermissionFlagsBits.ReadMessageHistory,
-];
+import { TICKET_STAFF_ALLOW, ticketStaffRoleIds } from '../utils/ticket/ticketStaffAccess.js';
 
-/** Overwrites that let every staff role (and every Administrator role) see and answer a ticket. */
-export async function ticketStaffOverwrites(guild, extraRoleId = null) {
-  const roles = [...(guild.roles?.cache?.values?.() || [])];
-  const staff = await filterStaffRoles(guild, roles).catch(() => []);
-  const admins = roles.filter((role) => !role.managed && role.permissions?.has?.(PermissionFlagsBits.Administrator));
-  const ids = new Set([...staff, ...admins].map((role) => role.id));
-  if (extraRoleId) ids.add(String(extraRoleId));
-  ids.delete(guild.id);
-  return [...ids].map((id) => ({ id, allow: TICKET_STAFF_ALLOW }));
+/**
+ * Overwrites that let the staff and admins see and answer a ticket (GH #316): the staff roles, every
+ * Administrator / Manage Channels role and the staff roles of the guild's config (ticketStaffAccess.js).
+ */
+export async function ticketStaffOverwrites(guild, extraRoleId = null, config = null) {
+  const ids = await ticketStaffRoleIds(guild, config, [extraRoleId]);
+  return ids.map((id) => ({ id, allow: TICKET_STAFF_ALLOW }));
 }
 
 const TICKET_DELETE_DELAY_MS = 3000;
@@ -164,7 +156,7 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
             PermissionFlagsBits.ReadMessageHistory,
           ],
         },
-        ...(await ticketStaffOverwrites(guild, config.ticketStaffRoleId)),
+        ...(await ticketStaffOverwrites(guild, config.ticketStaffRoleId, config)),
       ],
     });
     

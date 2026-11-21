@@ -141,3 +141,23 @@ export function executorText({ invoker = null, actor = null, botId = null } = {}
   if (!actorUser?.id) return UNKNOWN_EXECUTOR;
   return isOurBotActor(actorUser, botId) ? AUTOMATED_EXECUTOR : userMentionLine(actorUser);
 }
+
+/** The person `executorText` names (the invoker, else a person or another bot as the actor), or null. */
+export function executorPerson({ invoker = null, actor = null, botId = null } = {}) {
+  const invokerUser = userOf(invoker);
+  const actorUser = userOf(actor);
+  if (invokerUser?.id && !invokerUser.bot && invokerMayBeShown(actorUser, botId)) return invokerUser;
+  if (!actorUser?.id || isOurBotActor(actorUser, botId)) return null;
+  return actorUser;
+}
+
+/**
+ * The executor line's value (EXECUTOR_LABEL) for a log that already has a moderator line (`moderator`), or null when
+ * it would only name that same person again (GH #317). AUTOMATED_EXECUTOR and UNKNOWN_EXECUTOR are kept.
+ */
+export function executorTextUnlessModerator({ invoker = null, actor = null, botId = null, moderator = actor } = {}) {
+  const person = executorPerson({ invoker, actor, botId });
+  const moderatorId = userOf(moderator)?.id;
+  if (person?.id && moderatorId && String(person.id) === String(moderatorId)) return null;
+  return executorText({ invoker, actor, botId });
+}

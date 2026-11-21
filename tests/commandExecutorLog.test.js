@@ -4,13 +4,13 @@ import { ChannelType, PermissionsBitField } from 'discord.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import {
   rememberInvoker, recentInvoker, takeInvoker, forgetInvoker, withInvoker, clearInvokers, invokerCount, executorText,
-  AUTOMATED_EXECUTOR, UNKNOWN_EXECUTOR, INVOKER_TTL_MS, MAX_INVOKERS,
+  executorTextUnlessModerator, AUTOMATED_EXECUTOR, UNKNOWN_EXECUTOR, INVOKER_TTL_MS, MAX_INVOKERS,
 } from '../src/services/moderation/commandInvoker.js';
 import { handleArabicRoleShortcut } from '../src/utils/arabicModerationShortcuts.js';
 import { AUDIT_LOG_SETTINGS, clearAuditRoomCache } from '../src/services/logging/auditRooms.js';
 import { ROLE_LOG_SETTINGS, logMemberRoles } from '../src/services/logging/roleLogs.js';
 import { buildModerationLogData } from '../src/utils/moderation.js';
-import { MODERATION_ACTION_LOG_CHANNEL_ID } from '../src/services/moderation/moderationActionLogService.js';
+import { MODERATION_ACTION_LOG_CHANNEL_ID, buildModerationActionLogEmbed } from '../src/services/moderation/moderationActionLogService.js';
 import { ModerationService } from '../src/services/moderation/moderationService.js';
 import guildBanAdd from '../src/events/guildBanAdd.js';
 import guildBanRemove from '../src/events/guildBanRemove.js';
@@ -305,7 +305,7 @@ describe('🧑‍💻 اللي نفّذ الأمر in every moderation log (owne
     assert.ok(auto.lines.some((line) => line.includes(AUTOMATED_EXECUTOR)));
   });
 
-  test('slash or typed ban and timeout pass the member who ran them to the moderation log room', async () => {
+  test('slash or typed ban and timeout name the member who ran them once in the moderation log room (GH #317)', async () => {
     const sent = [];
     const proofRoom = { isTextBased: () => true, send: async (payload) => { sent.push(payload); return { id: 'm' }; } };
     const guild = { id: HOME_GUILD_ID, ownerId: '1', client: { user: BOT }, channels: { cache: new Map([[MODERATION_ACTION_LOG_CHANNEL_ID, proofRoom]]) }, members: { me: { id: BOT.id }, cache: new Map() } };
@@ -326,6 +326,34 @@ describe('🧑‍💻 اللي نفّذ الأمر in every moderation log (owne
       Object.assign(ModerationService, originals);
     }
     assert.equal(sent.length, 2);
-    for (const payload of sent) assert.match(payload.embeds[0].description, /\*\*🧑‍💻 اللي نفّذ الأمر:\*\* <@200000000000000001> \(staff - 200000000000000001\)/u);
+    for (const payload of sent) {
+      // The moderator is the member who ran it, so only the moderator line names them.
+      assert.match(payload.embeds[0].description, /\*\*الإداري:\*\* <@200000000000000001>/u);
+      assert.doesNotMatch(payload.embeds[0].description, /اللي نفّذ الأمر/u);
+    }
+  });
+
+  test('GH #317: the moderation log card shows the executor line only for a different person', () => {
+    const card = (details) => buildModerationActionLogEmbed({ action: 'warn', targetUser: TARGET, reason: 'سبام', botId: BOT.id, ...details }).description;
+    const same = card({ moderatorUser: STAFF, executorUser: STAFF });
+    assert.match(same, /\*\*الإداري:\*\* <@200000000000000001>/u);
+    assert.doesNotMatch(same, /اللي نفّذ الأمر/u);
+    assert.equal(same.match(/200000000000000001>/gu).length, 1, 'the person is named once');
+    assert.doesNotMatch(card({ moderatorId: STAFF.id, executorUser: STAFF }), /اللي نفّذ الأمر/u, 'moderator known by ID only');
+    assert.doesNotMatch(card({ moderatorUser: STAFF }), /اللي نفّذ الأمر/u, 'no invoker: it would repeat the moderator');
+
+    const different = card({ moderatorUser: BOT, executorUser: STAFF });
+    assert.match(different, /\*\*الإداري:\*\* <@999999999999999999>/u);
+    assert.match(different, /\*\*🧑‍💻 اللي نفّذ الأمر:\*\* <@200000000000000001> \(staff - 200000000000000001\)/u, 'kept when the invoker is someone else');
+    assert.doesNotMatch(card({ moderatorUser: MODERATOR, executorUser: STAFF }), /اللي نفّذ الأمر/u, 'a person as the moderator is the executor: named once');
+    assert.match(card({ moderatorUser: BOT }), /\*\*🧑‍💻 اللي نفّذ الأمر:\*\* 🤖 تلقائي \(حماية البوت\)/u, 'the bot on its own keeps 🤖');
+  });
+
+  test('GH #317: executorTextUnlessModerator', () => {
+    assert.equal(executorTextUnlessModerator({ invoker: STAFF, actor: STAFF, botId: BOT.id }), null);
+    assert.equal(executorTextUnlessModerator({ actor: { id: STAFF.id }, botId: BOT.id }), null);
+    assert.match(executorTextUnlessModerator({ invoker: STAFF, actor: BOT, botId: BOT.id }), STAFF_TEXT);
+    assert.equal(executorTextUnlessModerator({ actor: BOT, botId: BOT.id }), AUTOMATED_EXECUTOR);
+    assert.equal(executorTextUnlessModerator({}), UNKNOWN_EXECUTOR);
   });
 });

@@ -15,7 +15,9 @@ describe('moderation action log', () => {
     assert.equal(embed.title, '⏳ تايم أوت');
     assert.match(embed.description, /\*\*العضو:\*\* <@111111111111111111> \(target - 111111111111111111\)/);
     assert.match(embed.description, /\*\*الإداري:\*\* <@222222222222222222> \(mod - 222222222222222222\)/);
-    assert.match(embed.description, EXECUTOR);
+    // GH #317: the moderator ran it themselves, so they are named once (no executor line).
+    assert.doesNotMatch(embed.description, /اللي نفّذ الأمر/u);
+    assert.equal(embed.description.match(/<@222222222222222222>/gu).length, 1);
     assert.match(embed.description, /\*\*السبب:\*\* سبام/);
     assert.match(embed.description, /\*\*المدة:\*\* 15m/);
     assert.doesNotMatch(embed.description, /ريبلاي/);
@@ -56,12 +58,14 @@ describe('moderation action log', () => {
     }
   });
 
-  test('sendModerationActionLog posts the executor line', async () => {
+  test('sendModerationActionLog posts the executor line only for someone other than the moderator', async () => {
     const sent = [];
     const channel = { isTextBased: () => true, send: async (payload) => { sent.push(payload); return { id: 'm1' }; } };
     const guild = { id: HOME_GUILD_ID, client: { user: bot }, channels: { cache: new Map([[MODERATION_ACTION_LOG_CHANNEL_ID, channel]]) } };
     assert.equal(await sendModerationActionLog(guild, { action: 'ban', targetUser: target, moderatorUser: moderator, executorUser: moderator, reason: 'x' }), true);
-    assert.match(sent[0].embeds[0].description, EXECUTOR);
+    assert.doesNotMatch(sent[0].embeds[0].description, /اللي نفّذ الأمر/u);
+    assert.equal(await sendModerationActionLog(guild, { action: 'ban', targetUser: target, moderatorUser: bot, executorUser: moderator, reason: 'x' }), true);
+    assert.match(sent[1].embeds[0].description, EXECUTOR);
   });
 
   test('replied message is only read from prefix commands that reply', async () => {

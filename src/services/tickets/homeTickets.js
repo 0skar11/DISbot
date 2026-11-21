@@ -18,7 +18,7 @@ import {
 import { HOME_GUILD_ID, ZENITH_GUILD_ID, isTicketGuild } from '../../config/homeGuild.js';
 import { isServerOwner } from '../../config/serverOwners.js';
 import { getGuildConfig } from '../config/guildConfig.js';
-import { filterStaffRoles } from '../staffRoleHierarchyService.js';
+import { grantTicketStaffAccess, isTicketStaffMember, ticketStaffRoleIds } from '../../utils/ticket/ticketStaffAccess.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { logger } from '../../utils/logger.js';
 
@@ -132,23 +132,32 @@ function panelPayload(guildId) {
 
 const isPanel = (message) => message.embeds?.[0]?.footer?.text === 'تكتات السيرفر';
 
-/** The roles that see problem tickets: the staff roles and the trusted roles. */
+/**
+ * The roles that see the tickets (GH #316): the staff roles, every Administrator / Manage Channels role and
+ * the staff roles of the guild's config (ticket staff, mod, admin, trusted) — ticketStaffAccess.js.
+ */
 async function staffRoleIds(guild) {
-    const staff = await filterStaffRoles(guild, guild.roles.cache.values());
     const config = await getGuildConfig(guild.client, guild.id).catch(() => null);
-    return [...new Set([...staff.map((role) => role.id), ...(config?.antiNukeTrustedRoles || [])])]
-        .filter((id) => guild.roles.cache.has(id));
+    return ticketStaffRoleIds(guild, config);
 }
 
-/** The team that handles a section: its role, every staff role and every Administrator role. */
+/** The team that handles a section: its role and every staff / admin role. */
 async function sectionTeam(guild, type) {
     const roles = getSectionRoleIds(guild.id);
     const ownId = roles?.[type];
     const own = ownId ? [ownId].filter((id) => guild.roles.cache.has(id)) : [];
-    const admins = [...guild.roles.cache.values()]
-        .filter((role) => !role.managed && role.id !== guild.id && role.permissions?.has?.(PermissionFlagsBits.Administrator))
-        .map((role) => role.id);
-    return [...new Set([...own, ...(await staffRoleIds(guild)), ...admins])];
+    return [...new Set([...own, ...(await staffRoleIds(guild))])];
+}
+
+/** Gives the staff access to the tickets still open (a staff role added after they opened). */
+async function syncOpenTicketAccess(guild, state) {
+    let granted = 0;
+    for (const [channelId, ticket] of Object.entries(state.open || {})) {
+        const channel = guild.channels.cache.get(channelId);
+        if (!channel) continue;
+        granted += await grantTicketStaffAccess(channel, await sectionTeam(guild, ticket.type)).catch(() => 0);
+    }
+    return granted;
 }
 
 /** Giving the verified role stays with the verification team (staff can still see, claim and close). */
@@ -162,9 +171,8 @@ async function canVerify(member) {
 
 async function canHandle(member, type, state) {
     if (!member) return false;
-    if (isServerOwner(member.id) || member.permissions?.has?.(PermissionFlagsBits.Administrator)) return true;
-    const team = await sectionTeam(member.guild, type);
-    return team.some((roleId) => member.roles?.cache?.has(roleId));
+    if (isServerOwner(member.id)) return true;
+    return isTicketStaffMember(member, await sectionTeam(member.guild, type));
 }
 
 /** Makes the category, the panel and log rooms, the two roles, and posts or edits the panel. */
@@ -220,6 +228,7 @@ export async function setupHomeTickets(guild) {
     }
     state.logChannelId = log.id;
     await writeState(client, guild.id, state);
+    await syncOpenTicketAccess(guild, state);
 
     const board = await findBoardMessage(panel, PANEL_KEY, isPanel).catch(() => null);
     if (board) await board.edit(panelPayload(guild.id)).catch(() => {});
