@@ -1,5 +1,6 @@
 import { resolveAuditRoom } from './logging/auditRooms.js';
 import { SERVER_OWNER_IDS } from '../config/serverOwners.js';
+import { logBotUpdate, recordBotAction } from './botUpdatesRoom.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -92,8 +93,28 @@ export async function reconcileDeletedBirthdayGreetings(client, { maxPerRoom = 1
     }
   }
 
+  stats.totalReplied = alreadyReplied.size;
+
   if (client.db && stats.sent > 0) {
     await client.db.set(REPLIED_USERS_DB_KEY, [...alreadyReplied]).catch(() => {});
+  }
+
+  if (stats.sent > 0) {
+    await recordBotAction(client, 'birthday_dm', stats.sent).catch(() => {});
+    await logBotUpdate(client, {
+      title: '📬 إرسال رسائل التهنئة في الخاص',
+      description: 'تم فحص سجل الرسائل المحذوفة وإرسال الرد في الخاص للأعضاء الذين أرسلوا تهاني عيد الميلاد:',
+      fields: [
+        { name: '📥 تم العثور في السجل على', value: `${stats.found} رسالة`, inline: true },
+        { name: '✅ رسايل جديدة أُرسلت الآن', value: `**${stats.sent}** رسالة`, inline: true },
+        { name: '👥 إجمالي الأعضاء المستلمين حتى الآن', value: `**${stats.totalReplied}** عضو`, inline: true },
+        ...(stats.users.length > 0 ? [{
+          name: 'الأعضاء المستلمون في هذه العملية',
+          value: stats.users.map((u) => `• <@${u.id}> (${u.tag})`).join('\n').slice(0, 1024),
+        }] : []),
+      ],
+      color: 0x2ecc71,
+    }).catch(() => {});
   }
 
   return stats;

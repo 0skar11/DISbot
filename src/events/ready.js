@@ -14,6 +14,7 @@ import { removeRetiredBoards } from "../services/retiredBoards.js";
 import { publishHoneypotNotice, publishZenithHoneypotNotice } from "../services/security/honeypotNotice.js";
 import { publishProofGuide } from "../services/moderation/proofMergeService.js";
 import { startBugsReports } from "../services/bugsReportsRoom.js";
+import { startBotUpdates } from "../services/botUpdatesRoom.js";
 import { startCCTopBoard } from "../services/games/ccTopBoard.js";
 import { startServersBoard } from "../services/serversBoard.js";
 import { startStreak } from "../services/cc/streakService.js";
@@ -81,6 +82,14 @@ export default {
         }
       } catch (error) {
         logger.error("Failed to set up the bugs-reports room:", error);
+      }
+      try {
+        // The staff-only #bot-updates room at the bottom of the Logs category.
+        for (const result of await startBotUpdates(client)) {
+          startupLog(`Bot updates room: ${result.status} (channel ${result.channelId})`);
+        }
+      } catch (error) {
+        logger.error("Failed to set up the bot-updates room:", error);
       }
       try {
         await removeRetiredBoards(client);

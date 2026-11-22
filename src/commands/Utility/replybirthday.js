@@ -23,9 +23,9 @@ export default {
 
     const stats = await reconcileDeletedBirthdayGreetings(interaction.client);
     const sentList = stats.users?.length
-      ? `\n• الأعضاء اللي تم الرد عليهم:\n${stats.users.map((u) => `- <@${u.id}> (${u.tag})`).join('\n')}`
+      ? `\n• الأعضاء اللي تم إرسال الرد لهم الآن:\n${stats.users.map((u) => `- <@${u.id}> (${u.tag})`).join('\n')}`
       : '';
-    const content = `✅ تم فحص سجل الرسائل المحذوفة:\n• تم إرسال الرد في الخاص لـ **${stats.sent}** عضو من أصل **${stats.found}** رسالة تهنئة محذوفة.${sentList}`;
+    const content = `✅ **تم فحص سجل الرسائل المحذوفة بنجاح:**\n• رسايل جديدة أُرسلت الآن: **${stats.sent}**\n• إجمالي الأعضاء الذين وصلتهم الرسالة: **${stats.totalReplied ?? stats.sent}**\n• تم تسجيل التحديث في روم **#bot-updates** باللوج.${sentList}`;
 
     if (interaction.deferred) {
       return interaction.editReply({ content });
