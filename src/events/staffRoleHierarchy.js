@@ -1,6 +1,9 @@
 import { Events } from 'discord.js';
 import { logger, startupLog } from '../utils/logger.js';
-import { rememberStaffRoles, refreshStaffPermissionBoard, demoteAdministratorsBelowAdmin, removeMentionEveryoneFromStaffRoles } from '../services/staffRoleHierarchyService.js';
+import {
+  rememberStaffRoles, refreshStaffPermissionBoard, demoteAdministratorsBelowAdmin, removeMentionEveryoneFromStaffRoles,
+  describeMentionEveryoneHolders,
+} from '../services/staffRoleHierarchyService.js';
 
 export default {
   name: Events.ClientReady,
@@ -28,12 +31,14 @@ export default {
       } catch (error) {
         logger.error(`Failed to take Administrator off roles in ${guild.name}:`, error);
       }
-      // GH #320: no staff role may mention @everyone / @here, in every server.
+      // GH #320: no staff role may mention @everyone / @here, in every server (the trusted roles keep it).
       try {
         const stripped = await removeMentionEveryoneFromStaffRoles(guild);
         if (stripped.changed.length || stripped.failed.length) {
           startupLog(`Mention Everyone taken off in ${guild.name}: ${stripped.changed.join(', ') || 'none'}${stripped.failed.length ? ` (failed: ${stripped.failed.join(', ')})` : ''}`);
         }
+        // For the owner to check: every role that can still ping @everyone, and why (a log only, nothing on Discord).
+        logger.info(describeMentionEveryoneHolders(guild, stripped.kept));
       } catch (error) {
         logger.error(`Failed to take Mention Everyone off staff roles in ${guild.name}:`, error);
       }

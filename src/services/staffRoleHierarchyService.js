@@ -50,7 +50,7 @@ const PERMISSION_LABELS = new Map([
 ]);
 
 // Every permission except Administrator and Mention Everyone: 🔨 Moderator can do everything without being an
-// administrator, but no staff role may mention @everyone / @here (GH #320: that is the owner's alone).
+// administrator, but no staff role may mention @everyone / @here (GH #320: that is the owners' and the trusted's alone).
 const ALL_EXCEPT_ADMINISTRATOR = new PermissionsBitField(PermissionsBitField.All)
   .remove(PermissionFlagsBits.Administrator, PermissionFlagsBits.MentionEveryone).bitfield;
 
@@ -135,8 +135,9 @@ function allButAdministratorLines(role) {
   return lines;
 }
 
-// GH #320: shown on every role of the board; the guard deletes a staff @everyone / @here even with Administrator.
-const NO_EVERYONE_LINE = '🚫 منشن @everyone / @here للأونر بس';
+// GH #320: shown on every role of the board; the guard deletes a staff @everyone / @here even with Administrator,
+// unless the member is trusted (owner's decision after GH #320).
+const NO_EVERYONE_LINE = '🚫 منشن @everyone / @here للأونر والتراستد بس';
 
 // A plain embed object rather than an EmbedBuilder: src/utils/embeds.js drops builder footers (and strips emojis),
 // and the footer is how the bot recognizes its board message to edit it instead of posting a new one.
@@ -272,18 +273,38 @@ export async function demoteAdministratorsBelowAdmin(guild, { force = false } = 
 
 // GH #320: no staff role may mention @everyone / @here. Staff roles are the ROLE_DEFINITIONS roles (by saved ID or
 // name) and, in every server, any role holding a moderation permission. Runs on every startup, all servers.
+// Owner's decision after it: the trusted may mention @everyone, and Discord only lets a ping through with Mention
+// Everyone (or Administrator), so the trusted roles of the server's config (antiNukeTrustedRoles, as isTrusted
+// reads them) keep it. The other staff roles lose it as before; members are never touched, only roles.
 const STAFF_POWER_PERMISSIONS = [
   PermissionFlagsBits.ManageGuild, PermissionFlagsBits.ManageRoles, PermissionFlagsBits.ManageChannels,
   PermissionFlagsBits.BanMembers, PermissionFlagsBits.KickMembers, PermissionFlagsBits.ModerateMembers,
   PermissionFlagsBits.ManageMessages,
 ];
 
+export const MENTION_EVERYONE_KEPT_REASONS = Object.freeze({
+  everyoneRole: '@everyone role',
+  managed: 'managed/integration',
+  administrator: 'Administrator',
+  trusted: 'trusted role',
+  owner: 'owner role',
+  aboveBot: 'above the bot',
+  notStaff: 'skipped: not a staff role',
+  failed: 'failed to change',
+});
+
+/**
+ * Takes Mention Everyone off the staff roles. Returns `{ changed, failed, kept }`: `kept` lists every role that still
+ * holds Mention Everyone afterwards (Administrator included), each with the reasons it was left (for the startup log).
+ */
 export async function removeMentionEveryoneFromStaffRoles(guild) {
-  if (!guild?.roles?.fetch) return { changed: [], failed: [] };
+  if (!guild?.roles?.fetch) return { changed: [], failed: [], kept: [] };
   const roles = await guild.roles.fetch();
   const me = guild.members?.me || await guild.members?.fetchMe?.().catch(() => null);
   const botHighest = me?.roles?.highest?.position ?? Infinity;
   const staffIds = new Set((await filterStaffRoles(guild, roles.values())).map((role) => role.id));
+  const config = guild.client?.db ? await getGuildConfig(guild.client, guild.id).catch(() => null) : null;
+  const trustedRoleIds = new Set((config?.antiNukeTrustedRoles || []).map(String));
 
   // The owners' own permissions stay: a role an owner relies on (no Administrator elsewhere) is left alone.
   const ownerRoleIds = new Set();
@@ -293,21 +314,31 @@ export async function removeMentionEveryoneFromStaffRoles(guild) {
     for (const roleId of owner.roles?.cache?.keys?.() || []) ownerRoleIds.add(roleId);
   }
 
-  const targets = [...roles.values()].filter((role) =>
-    role.id !== guild.id &&
-    !role.managed &&
-    role.position < botHighest &&
-    role.name !== '👑 Owner' &&
-    role.name.toLowerCase() !== 'owner' &&
-    !ownerRoleIds.has(role.id) &&
+  const R = MENTION_EVERYONE_KEPT_REASONS;
+  // Why a role is left as it is ([] = it is a target).
+  const reasonsToKeep = (role) => {
+    const reasons = [];
+    if (role.id === guild.id) reasons.push(R.everyoneRole);
+    if (role.managed) reasons.push(R.managed);
     // Administrator implies every permission; Discord cannot take Mention Everyone from it (the guard deletes those pings).
-    !role.permissions.has(PermissionFlagsBits.Administrator, false) &&
-    role.permissions.has(PermissionFlagsBits.MentionEveryone, false) &&
-    (staffIds.has(role.id) || role.permissions.any(STAFF_POWER_PERMISSIONS, false))
-  );
+    if (role.permissions.has(PermissionFlagsBits.Administrator, false)) reasons.push(R.administrator);
+    if (trustedRoleIds.has(role.id)) reasons.push(R.trusted);
+    if (role.name === '👑 Owner' || role.name.toLowerCase() === 'owner' || ownerRoleIds.has(role.id)) reasons.push(R.owner);
+    if (role.position >= botHighest) reasons.push(R.aboveBot);
+    if (!reasons.length && !(staffIds.has(role.id) || role.permissions.any(STAFF_POWER_PERMISSIONS, false))) reasons.push(R.notStaff);
+    return reasons;
+  };
+
+  const holders = [...roles.values()].filter((role) => role.permissions.has(PermissionFlagsBits.MentionEveryone));
   const changed = [];
   const failed = [];
-  for (const role of targets) {
+  const kept = [];
+  for (const role of holders) {
+    const reasons = reasonsToKeep(role);
+    if (reasons.length) {
+      kept.push({ id: role.id, name: role.name, reasons });
+      continue;
+    }
     const bits = BigInt(role.permissions.bitfield) & ~PermissionFlagsBits.MentionEveryone;
     const done = await role.setPermissions(bits, 'GH #320: staff may not mention @everyone / @here')
       .then(() => true)
@@ -316,8 +347,15 @@ export async function removeMentionEveryoneFromStaffRoles(guild) {
         return false;
       });
     (done ? changed : failed).push(role.name);
+    if (!done) kept.push({ id: role.id, name: role.name, reasons: [R.failed] });
   }
-  return { changed, failed };
+  return { changed, failed, kept };
+}
+
+/** The startup log line of the roles that still hold Mention Everyone, and why. */
+export function describeMentionEveryoneHolders(guild, kept = []) {
+  const list = kept.map((role) => `${role.name} (${role.id}) [${role.reasons.join(', ')}]`).join('; ');
+  return `Mention Everyone still held in ${guild?.name || guild?.id} (${guild?.id}): ${list || 'no role'}`;
 }
 
 const BOARD_KEY = 'staffPermissions';

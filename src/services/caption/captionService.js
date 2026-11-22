@@ -1,28 +1,55 @@
 // captionService.js: `.caption <text>` / `.كابشن <text>` and `/caption`, report #297:
 // writes the text above the picture on a solid white background (meme caption style).
+// GH #325: an animated GIF / WebP comes back as an animated GIF with the caption on every frame (kept under
+// MAX_OUTPUT_BYTES by shrinking it, then by dropping frames); a still picture comes back as a PNG.
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import sharp from 'sharp';
-import { findImageUrl, isSafeUrl, download } from '../gifConverterService.js';
+import { findImageSource, isSafeUrl, download, downloadFirst } from '../gifConverterService.js';
 import { logger } from '../../utils/logger.js';
 
 export const MAX_INPUT_BYTES = 10 * 1024 * 1024;
+// Discord's upload limit is 10 MB: the GIF stays under 8 MB.
+export const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export const MAX_TEXT_LENGTH = 500;
 export const COOLDOWN_MS = 3_000;
+// Animated captions hold every frame in memory, so only a couple run at the same time.
+export const MAX_JOBS = 2;
 export const CAPTION_WORDS = new Set(['caption', 'كابشن']);
 const CAPTION_SYMBOL_PREFIX = /^[.!/-]$/u;
 
 const FONT_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../promo/fonts/Cairo-Bold.ttf');
+
+const PIXEL_LIMIT = 150_000_000;
+const STATIC_MAX_WIDTH = 1200;
+const ANIMATED_MAX_WIDTH = 540;
+const ANIMATED_MIN_WIDTH = 160;
+// The decoded frames are held as RGBA: about 100 MB at most, a long GIF is made narrower to fit.
+const ANIMATED_PIXEL_BUDGET = 25_000_000;
+const DEFAULT_FRAME_DELAY_MS = 100;
+// Tried in order until the GIF fits MAX_OUTPUT_BYTES: narrower, fewer colours, then every 2nd / 3rd frame
+// (the dropped frames' time is added to the kept ones, so the GIF plays at the same speed).
+const ANIMATED_ATTEMPTS = [
+  { scale: 1, step: 1, colours: 256 },
+  { scale: 0.8, step: 1, colours: 128, interFrameMaxError: 8 },
+  { scale: 0.6, step: 1, colours: 96, interFrameMaxError: 12 },
+  { scale: 0.6, step: 2, colours: 96, interFrameMaxError: 12 },
+  { scale: 0.45, step: 2, colours: 64, interFrameMaxError: 16 },
+  { scale: 0.45, step: 3, colours: 64, interFrameMaxError: 16 },
+];
 
 export const TEXT = {
   noImage: '🖼️ ابعت صورة مع الأمر أو اعمل ريبلاي على صورة: `.caption الكلام هنا`',
   noText: '✍️ اكتب الكلام اللي عايزه فوق الصورة: `.caption الكلام هنا`',
   unsafe: '❌ بشتغل على الصور اللي على ديسكورد بس: ارفع الصورة أو اعمل ريبلاي عليها.',
   tooBig: '❌ الصورة كبيرة أوي، أقصى حجم 10 ميجا.',
+  outputTooBig: '❌ الجيف طالع كبير أوي على ديسكورد، جرّب جيف أقصر.',
   notImage: '❌ الملف ده مش صورة.',
   textTooLong: '❌ الكلام طويل أوي، أقصى حد 500 حرف.',
   failed: '❌ حصل خطأ أثناء إضافة الكابشن، جرّب صورة تانية.',
+  busy: '⏳ البوت بيعمل كابشن لصور كتير دلوقتي، جرّب بعد شوية.',
+  videoStill: '⚠️ الجيف ده فيديو مش GIF، فطلع صورة ثابتة. ارفعه كملف GIF عشان يفضل متحرك.',
   cooldown: (s) => `⏳ استنى ${s} ثانية قبل ما تستخدم الأمر تاني.`,
 };
 
@@ -60,30 +87,10 @@ export function wrapText(text, maxCharsPerLine = 35) {
 }
 
 /**
- * Creates an image or GIF with text written above it on a solid white background.
- * If input is a GIF (animated), keeps it animated as a GIF; if static, outputs PNG.
+ * The white caption bar for a picture `width` wide, as `{ data, height }` with raw RGBA `data`.
  * Uses the bundled Cairo-Bold font directly to render on Linux (Railway) and all platforms without relying on OS fonts.
  */
-export async function generateCaption(imageBuffer, text) {
-  const metadata = await sharp(imageBuffer, { animated: true, limitInputPixels: 150_000_000 }).metadata();
-  const isGif = metadata.format === 'gif';
-  const pages = metadata.pages || 1;
-  const isAnimated = pages > 1;
-
-  let width = metadata.width || 500;
-  let pageHeight = metadata.pageHeight || (metadata.height ? Math.round(metadata.height / pages) : 500);
-
-  const maxWidth = isAnimated ? 540 : 1200;
-  let resizedBuffer = imageBuffer;
-  if (width > maxWidth) {
-    const scale = maxWidth / width;
-    width = maxWidth;
-    pageHeight = Math.round(pageHeight * scale);
-    resizedBuffer = await sharp(imageBuffer, { animated: isAnimated, limitInputPixels: 150_000_000 })
-      .resize({ width, withoutEnlargement: true })
-      .toBuffer();
-  }
-
+async function buildHeader(width, text) {
   const fontSize = Math.max(18, Math.min(44, Math.round(width / 16)));
   const paddingX = Math.round(width * 0.05);
   const innerWidth = width - (paddingX * 2);
@@ -106,7 +113,7 @@ export async function generateCaption(imageBuffer, text) {
   const paddingBottom = Math.round(fontSize * 0.8);
   const headerHeight = Math.max(50, textLayer.info.height + paddingTop + paddingBottom);
 
-  const headerBg = await sharp({
+  const data = await sharp({
     create: {
       width,
       height: headerHeight,
@@ -121,58 +128,134 @@ export async function generateCaption(imageBuffer, text) {
         left: Math.round((width - textLayer.info.width) / 2),
       },
     ])
-    .png()
+    .raw()
     .toBuffer();
 
-  if (isAnimated || isGif) {
-    const extended = await sharp(resizedBuffer, { animated: isAnimated, limitInputPixels: 150_000_000 })
-      .extend({ top: headerHeight, background: '#ffffff' })
-      .toBuffer();
+  return { data, height: headerHeight };
+}
 
-    const extMeta = await sharp(extended, { animated: isAnimated, limitInputPixels: 150_000_000 }).metadata();
-    const extPageHeight = extMeta.pageHeight || extMeta.height;
+/** The width an animated caption starts at: at most ANIMATED_MAX_WIDTH, and narrow enough for ANIMATED_PIXEL_BUDGET. */
+function animatedBaseWidth(width, pageHeight, pages) {
+  const fitting = Math.floor(Math.sqrt((ANIMATED_PIXEL_BUDGET * width) / Math.max(1, pageHeight * pages)));
+  return Math.max(Math.min(width, ANIMATED_MIN_WIDTH), Math.min(width, ANIMATED_MAX_WIDTH, fitting));
+}
 
-    const compositeInputs = [];
-    for (let i = 0; i < pages; i++) {
-      compositeInputs.push({
-        input: headerBg,
-        top: Math.round(i * extPageHeight),
-        left: 0,
-      });
-    }
+/** Every frame of an animated picture, `width` wide, as raw RGBA (sharp applies each frame's disposal). */
+async function decodeFrames(imageBuffer, width) {
+  const { data, info } = await sharp(imageBuffer, { animated: true, limitInputPixels: PIXEL_LIMIT })
+    .resize({ width, withoutEnlargement: true })
+    .toColourspace('srgb')
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const pages = info.pages || 1;
+  if (info.channels !== 4) throw new Error(`unexpected ${info.channels} channels`);
+  return { data, width: info.width, pageHeight: info.pageHeight || Math.round(info.height / pages), pages };
+}
 
-    const output = await sharp(extended, { animated: isAnimated, limitInputPixels: 150_000_000 })
-      .composite(compositeInputs)
-      .gif({ delay: metadata.delay, loop: metadata.loop ?? 0 })
-      .toBuffer();
-
-    return { buffer: output, filename: 'caption.gif', isGif: true };
+/** Every `step`-th frame with the caption bar on top of it, encoded as one animated GIF. */
+async function encodeCaptionedGif(frames, header, { step, colours, interFrameMaxError, delayOf, loop }) {
+  const { width, pageHeight, pages } = frames;
+  const frameBytes = width * pageHeight * 4;
+  const kept = [];
+  const delays = [];
+  for (let index = 0; index < pages; index += step) {
+    kept.push(index);
+    let delay = 0;
+    for (let skipped = index; skipped < Math.min(index + step, pages); skipped += 1) delay += delayOf(skipped);
+    delays.push(delay);
   }
+  const outPageHeight = header.height + pageHeight;
+  const raw = Buffer.allocUnsafe(kept.length * (header.data.length + frameBytes));
+  let offset = 0;
+  for (const index of kept) {
+    offset += header.data.copy(raw, offset);
+    offset += frames.data.copy(raw, offset, index * frameBytes, (index + 1) * frameBytes);
+  }
+  const options = { delay: delays, loop, colours };
+  if (interFrameMaxError) options.interFrameMaxError = interFrameMaxError;
+  return sharp(raw, {
+    raw: { width, height: outPageHeight * kept.length, channels: 4, pageHeight: outPageHeight },
+    limitInputPixels: PIXEL_LIMIT,
+  }).gif(options).toBuffer();
+}
 
-  const totalHeight = headerHeight + pageHeight;
-  const output = await sharp({
+async function animatedCaption(imageBuffer, text, metadata, maxBytes) {
+  const pages = metadata.pages;
+  const srcWidth = metadata.width || ANIMATED_MAX_WIDTH;
+  const srcPageHeight = metadata.pageHeight || Math.round((metadata.height || srcWidth) / pages);
+  const baseWidth = animatedBaseWidth(srcWidth, srcPageHeight, pages);
+  // Browsers (and Discord) play a frame of 10 ms or less as 100 ms: that is what it is counted as.
+  const delayOf = (index) => {
+    const delay = Number(metadata.delay?.[index]);
+    return Number.isFinite(delay) && delay > 10 ? delay : DEFAULT_FRAME_DELAY_MS;
+  };
+  const loop = metadata.loop ?? 0;
+
+  // Only the frames of the latest width are kept in memory.
+  let current = null;
+  for (const attempt of ANIMATED_ATTEMPTS) {
+    if (Math.ceil(pages / attempt.step) < 2) continue;
+    const width = Math.min(baseWidth, Math.max(Math.min(srcWidth, ANIMATED_MIN_WIDTH), Math.round(baseWidth * attempt.scale)));
+    if (current?.width !== width) {
+      current = null;
+      const frames = await decodeFrames(imageBuffer, width);
+      current = { width, frames, header: await buildHeader(frames.width, text) };
+    }
+    const gif = await encodeCaptionedGif(current.frames, current.header, { ...attempt, delayOf, loop });
+    if (gif.length <= maxBytes) return { buffer: gif, filename: 'caption.gif', isGif: true };
+  }
+  throw new Error('too big');
+}
+
+async function staticCaption(imageBuffer, text, metadata) {
+  let picture = imageBuffer;
+  let width = metadata.width || 500;
+  let height = metadata.height || 500;
+  if (width > STATIC_MAX_WIDTH) {
+    const resized = await sharp(imageBuffer, { limitInputPixels: PIXEL_LIMIT })
+      .resize({ width: STATIC_MAX_WIDTH, withoutEnlargement: true })
+      .toBuffer({ resolveWithObject: true });
+    ({ data: picture } = resized);
+    ({ width, height } = resized.info);
+  }
+  const header = await buildHeader(width, text);
+  const buffer = await sharp({
     create: {
       width,
-      height: totalHeight,
+      height: header.height + height,
       channels: 3,
       background: { r: 255, g: 255, b: 255 },
     },
   })
     .composite([
-      { input: headerBg, top: 0, left: 0 },
-      { input: resizedBuffer, top: headerHeight, left: 0 },
+      { input: header.data, raw: { width, height: header.height, channels: 4 }, top: 0, left: 0 },
+      { input: picture, top: header.height, left: 0, limitInputPixels: PIXEL_LIMIT },
     ])
     .png()
     .toBuffer();
+  return { buffer, filename: 'caption.png', isGif: false };
+}
 
-  return { buffer: output, filename: 'caption.png', isGif: false };
+/**
+ * Creates the picture with the text written above it on a solid white background.
+ * An animated GIF / WebP (more than one frame) stays animated: a GIF with the caption on every frame, kept under
+ * `maxBytes`. Anything else (a one-frame GIF too, like Tenor's still preview) comes out as a PNG.
+ * Throws 'too big' when not even the smallest GIF fits.
+ */
+export async function generateCaption(imageBuffer, text, { maxBytes = MAX_OUTPUT_BYTES } = {}) {
+  const metadata = await sharp(imageBuffer, { animated: true, limitInputPixels: PIXEL_LIMIT }).metadata();
+  if ((metadata.pages || 1) > 1) return animatedCaption(imageBuffer, text, metadata, maxBytes);
+  return staticCaption(imageBuffer, text, metadata);
 }
 
 const lastUse = new Map();
+let running = 0;
 
 /** For tests. */
 export function resetCaptionState() {
   lastUse.clear();
+  running = 0;
 }
 
 /** Whether a parsed typed command is `.caption`, `!caption`, `.كابشن`... */
@@ -205,26 +288,48 @@ export async function runCaption({ userId, text, getImage, respond }, deps = {})
   if (!image?.url) {
     return respond({ content: TEXT.noImage });
   }
-  if (!(deps.isSafeUrl || isSafeUrl)(image.url)) {
+  if (image.notImage) {
+    return respond({ content: TEXT.notImage });
+  }
+  const safe = deps.isSafeUrl || isSafeUrl;
+  if (!safe(image.url)) {
     return respond({ content: TEXT.unsafe });
   }
   if (Number(image.size || 0) > MAX_INPUT_BYTES) {
     return respond({ content: TEXT.tooBig });
   }
+  // Taken before the first await, so captions arriving together can't all slip past the limit.
+  if (running >= MAX_JOBS) {
+    return respond({ content: TEXT.busy });
+  }
 
   lastUse.set(userId, now);
-
+  running += 1;
   try {
-    const bytes = await (deps.download || download)(image.url, deps.fetch, MAX_INPUT_BYTES);
+    // A Tenor / Giphy GIF comes with its animated formats, best first: one that is missing or too big falls back.
+    const candidates = image.candidates?.length ? image.candidates : [image.url];
+    let bytes;
+    try {
+      ({ bytes } = await downloadFirst(candidates, { fetch: deps.fetch, maxBytes: MAX_INPUT_BYTES, download: deps.download || download, safe }));
+    } catch (error) {
+      logger.warn(`[CAPTION] download failed: ${error.message || error}`);
+      return respond({ content: error.message === 'too big' ? TEXT.tooBig : TEXT.failed });
+    }
     const result = await (deps.generateCaption || generateCaption)(bytes, cleanText);
     const buffer = Buffer.isBuffer(result) ? result : result.buffer;
-    const filename = result?.filename || (result?.isGif ? 'caption.gif' : 'caption.png');
+    const isGif = result?.isGif ?? /\.gif$/iu.test(result?.filename || '');
+    const filename = result?.filename || (isGif ? 'caption.gif' : 'caption.png');
+    // Only the still thumbnail of a video GIF could be read: say so instead of passing it off as the GIF.
+    const note = image.videoStill && !isGif ? { content: TEXT.videoStill } : {};
     return respond({
+      ...note,
       files: [{ attachment: buffer, name: filename }],
     });
   } catch (error) {
     logger.warn('Caption generation failed:', error.message || error);
-    return respond({ content: TEXT.failed });
+    return respond({ content: error.message === 'too big' ? TEXT.outputTooBig : TEXT.failed });
+  } finally {
+    running -= 1;
   }
 }
 
@@ -246,8 +351,7 @@ export async function handleCaptionCommand(message, args = [], deps = {}) {
     text,
     getImage: async () => {
       message.channel?.sendTyping?.().catch?.(() => {});
-      const url = await findImageUrl(message, args, deps);
-      return url ? { url } : null;
+      return findImageSource(message, args, deps);
     },
     respond,
   }, deps);
@@ -269,7 +373,8 @@ export async function handleCaptionInteraction(interaction, deps = {}) {
     text,
     getImage: async () => {
       if (!attachment) return null;
-      const isImage = attachment.contentType?.startsWith('image/') || /\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)$/iu.test(attachment.name || '');
+      const imageName = /\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?|$)/iu;
+      const isImage = attachment.contentType?.startsWith('image/') || imageName.test(attachment.name || '') || imageName.test(attachment.url || '');
       if (!isImage) return { url: attachment.url, size: attachment.size, notImage: true };
       return { url: attachment.url, size: attachment.size };
     },

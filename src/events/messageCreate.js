@@ -76,16 +76,18 @@ export default {
 
       // Danger list (`خطر @member`): @everyone/@here or an invite link from a listed member = a week of timeout.
       if (await handleDangerMessage(message)) return;
+      // Spam (antiSpamService, GH #323) before the guards below, which only delete or warn: a flood of @everyone,
+      // insults, invites or owner mentions is counted too and gets the spam timeout.
+      if (await handleSpam(message)) {
+        await punishDanger(message.guild, message.author.id, 'سبام');
+        return;
+      }
       if (await handleEveryoneMention(message)) return;
       // A moderator's proof in the moderation log channel is merged into their log message.
       if (await handleProofMessage(message)) return;
-      // Insults and banned words (chatFilterService), then spam and repeated owner mentions (antiSpamService).
+      // Insults and banned words (chatFilterService), then repeated owner mentions (antiSpamService).
       if (await handleChatFilter(message)) {
         await punishDanger(message.guild, message.author.id, 'شتيمة أو كلام ممنوع');
-        return;
-      }
-      if (await handleSpam(message)) {
-        await punishDanger(message.guild, message.author.id, 'سبام');
         return;
       }
       if (await handleOwnerMentionSpam(message)) return;

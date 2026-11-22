@@ -18,6 +18,7 @@ import { createError, ErrorTypes } from '../utils/errorHandler.js';
 import { ensureTypedServiceError, wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
 import { PRIORITY_MAP } from '../utils/helpers.js';
 import { TICKET_STAFF_ALLOW, ticketStaffRoleIds } from '../utils/ticket/ticketStaffAccess.js';
+import { utf8TextFile } from '../utils/textAttachment.js';
 
 /**
  * Overwrites that let the staff and admins see and answer a ticket (GH #316): the staff roles, every
@@ -622,7 +623,7 @@ function escapeHtml(text) {
     .replace(/'/g, '&#039;');
 }
 
-async function generateTranscript(channel) {
+export async function generateTranscript(channel) {
   try {
     logger.debug('Generating transcript for channel', {
       channelId: channel.id,
@@ -684,7 +685,8 @@ ${rows}
 </body>
 </html>`;
 
-    const buffer = Buffer.from(html, 'utf8');
+    // GH #324: the UTF-8 byte order mark keeps Discord's text preview from garbling the Arabic (browsers accept it).
+    const buffer = utf8TextFile(html);
     const attachment = new AttachmentBuilder(buffer, { name: `ticket-${channel.id}.html` });
 
     logger.info('✅ Successfully generated transcript', {

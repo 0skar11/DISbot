@@ -20,6 +20,7 @@ import { isServerOwner } from '../../config/serverOwners.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { grantTicketStaffAccess, isTicketStaffMember, ticketStaffRoleIds } from '../../utils/ticket/ticketStaffAccess.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
+import { utf8TextFile } from '../../utils/textAttachment.js';
 import { logger } from '../../utils/logger.js';
 
 export const TICKET_BUTTON_PREFIX = 'hticket';
@@ -391,7 +392,8 @@ export async function closeTicket(channel, member, { deleteAfterMs = CLOSE_DELAY
                 `🕒 اتفتح: <t:${Math.floor(ticket.createdAt / 1000)}:f>`,
             ].filter(Boolean).join('\n'),
         }],
-        files: [{ attachment: Buffer.from(transcript(messages).slice(-TRANSCRIPT_LIMIT * 200) || '—', 'utf8'), name: `ticket-${ticket.number}.txt` }],
+        // GH #324: with the UTF-8 byte order mark, Discord's preview shows the Arabic instead of Thai-looking letters.
+        files: [{ attachment: utf8TextFile(transcript(messages).slice(-TRANSCRIPT_LIMIT * 200) || '—'), name: `ticket-${ticket.number}.txt` }],
         allowedMentions: { parse: [] },
     }).catch((error) => logger.warn(`[TICKETS] Could not post transcript ${ticket.number}: ${error.message}`));
 

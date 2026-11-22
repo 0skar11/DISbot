@@ -114,6 +114,8 @@ async function buildEmbed(guild) {
     .setTitle(TRUSTED_BOARD_TITLE)
     .setDescription([
       'الأشخاص والبوتات والرتب دي مستثناة من نظام **Anti-Nuke / Anti-Raid**.',
+      // Owner's decision after GH #320: the trusted may mention @everyone / @here.
+      '📣 الـ Trusted يقدروا يعملوا منشن @everyone / @here.',
       `👑 **صاحب السيرفر:** <@${guild.ownerId}>`,
     ].join('\n'))
     .setThumbnail(guild.iconURL({ size: 256 }) || null)

@@ -1,7 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { handleGifCommand, isSafeUrl, toGif, findImageUrl, isGifCommand, isTenorOrGiphy, resolveMediaUrl, COOLDOWN_MS } from '../src/services/gifConverterService.js';
+import {
+    handleGifCommand, isSafeUrl, toGif, findImageUrl, findImageSource, isGifCommand, isTenorOrGiphy, resolveMediaUrl, COOLDOWN_MS,
+    tenorGifUrls, giphyGifUrls, animatedCandidates, originalDiscordFile, downloadFirst,
+} from '../src/services/gifConverterService.js';
 import { parseTypedCommand } from '../src/utils/prefixParser.js';
 
 const png = () => sharp({ create: { width: 30, height: 20, channels: 4, background: '#2255ff' } }).png().toBuffer();
@@ -160,4 +163,102 @@ test('a member must wait between conversions', async () => {
     const second = fakeMessage({ attachments: [att] }); second.author = { id: 'u-cool' };
     await handleGifCommand(second, [], { isSafeUrl: () => true, fetch: fetchStub, now: () => 10_000_000 + COOLDOWN_MS - 1 });
     assert.match(second.sent[0].content, /استنى/u);
+});
+
+// GH #325: the still preview (AAAAe), the mp4 or the webp of a Tenor GIF all lead to its animated GIF formats.
+test('tenorGifUrls: any Tenor media link gives the animated GIF formats, medium first', () => {
+    const expected = ['AAAAd', 'AAAAC', 'AAAAM'].map((format) => `https://media.tenor.com/x8v1oNUOmg4${format}/rickroll-roll.gif`);
+    for (const link of [
+        'https://media.tenor.com/x8v1oNUOmg4AAAAe/rickroll-roll.png',
+        'https://media.tenor.com/x8v1oNUOmg4AAAPo/rickroll-roll.mp4',
+        'https://media.tenor.com/x8v1oNUOmg4AAAA1/rickroll-roll.webp',
+        'https://media1.tenor.com/m/x8v1oNUOmg4AAAAC/rickroll-roll.gif',
+        'https://media.tenor.com/x8v1oNUOmg4AAAAe/rickroll-roll.png?width=498&height=280',
+    ]) assert.deepEqual(tenorGifUrls(link), expected, link);
+    assert.deepEqual(tenorGifUrls('https://media1.tenor.com/m/test/cat.gif'), []);
+    assert.deepEqual(tenorGifUrls('https://tenor.com/view/cat-123'), []);
+    assert.deepEqual(tenorGifUrls('https://evil.com/x8v1oNUOmg4AAAAe/a.png'), []);
+});
+
+test('giphyGifUrls: a still frame or an mp4 gives the animated GIF; an animated link is tried as it is first', () => {
+    const animated = ['giphy.gif', 'giphy-downsized-medium.gif', '200w.gif'].map((file) => `https://i.giphy.com/media/3o7abKhOpu0NwenH3O/${file}`);
+    assert.deepEqual(giphyGifUrls('https://media0.giphy.com/media/3o7abKhOpu0NwenH3O/giphy_s.gif'), animated);
+    assert.deepEqual(giphyGifUrls('https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.mp4'), animated);
+    assert.deepEqual(giphyGifUrls('https://media2.giphy.com/media/v1.Y2lkPTc5/3o7abKhOpu0NwenH3O/200w_s.gif?cid=1'), animated);
+    assert.equal(giphyGifUrls('https://media.giphy.com/media/3o7abKhOpu0NwenH3O/200w.gif')[0], 'https://media.giphy.com/media/3o7abKhOpu0NwenH3O/200w.gif');
+    assert.deepEqual(giphyGifUrls('https://giphy.com/gifs/cat-3o7abKhOpu0NwenH3O'), []);
+    assert.deepEqual(animatedCandidates('https://cdn.discordapp.com/a.png'), ['https://cdn.discordapp.com/a.png']);
+});
+
+test('a Tenor page gives its own GIF, not the first related GIF listed under it', async () => {
+    // Like on tenor.com, a related GIF (tinygif, AAAAM) shows up in the page before the page's own tags.
+    const html = `<html><head>
+        <link rel="preload" href="https://media.tenor.com/kGekz062mwgAAAAM/hugs-rickroll.gif">
+        <meta property="og:image" content="https://media1.tenor.com/m/x8v1oNUOmg4AAAAd/rickroll-roll.gif">
+        <link rel="image_src" href="https://media1.tenor.com/m/x8v1oNUOmg4AAAAC/rickroll-roll.gif">
+      </head><body><img src="https://media.tenor.com/IB9ol7welioAAAAM/dance-vibing.gif"></body></html>`;
+    const result = await resolveMediaUrl('https://tenor.com/view/rickroll-gif-22954713', async () => ({ ok: true, text: async () => html }));
+    assert.equal(result, 'https://media.tenor.com/x8v1oNUOmg4AAAAd/rickroll-roll.gif');
+});
+
+test('a Tenor still preview link resolves to the animated GIF without reading any page', async () => {
+    const noFetch = async () => { throw new Error('no fetch expected'); };
+    assert.equal(await resolveMediaUrl('https://images-ext-1.discordapp.net/external/abc/https/media.tenor.com/x8v1oNUOmg4AAAAe/rickroll-roll.png', noFetch), 'https://media.tenor.com/x8v1oNUOmg4AAAAd/rickroll-roll.gif');
+});
+
+test('a replied GIF from Discord\'s picker is read from its embed: the exact GIF, animated formats first', async () => {
+    const replied = {
+        attachments: new Map(),
+        content: 'https://tenor.com/view/rickroll-gif-22954713',
+        embeds: [{
+            type: 'gifv', url: 'https://tenor.com/view/rickroll-gif-22954713',
+            thumbnail: { url: 'https://media.tenor.com/x8v1oNUOmg4AAAAe/rickroll-roll.png', proxyURL: 'https://images-ext-1.discordapp.net/external/a/https/media.tenor.com/x8v1oNUOmg4AAAAe/rickroll-roll.png' },
+            video: { url: 'https://media.tenor.com/x8v1oNUOmg4AAAPo/rickroll-roll.mp4' },
+        }],
+    };
+    const source = await findImageSource(fakeMessage({ replied }), [], { fetch: async () => { throw new Error('no fetch expected'); } });
+    assert.equal(source.url, 'https://media.tenor.com/x8v1oNUOmg4AAAAd/rickroll-roll.gif');
+    assert.equal(source.candidates.length, 3);
+    assert.equal(source.videoStill, false);
+    assert.ok(source.candidates.every((url) => isSafeUrl(url) && !url.includes('AAAAe')));
+});
+
+test('a video GIF from another site is flagged: only its still thumbnail can be read', async () => {
+    const replied = {
+        attachments: new Map(), content: '',
+        embeds: [{ type: 'gifv', url: 'https://gifs.example.com/1', thumbnail: { url: 'https://static.example.com/1.png', proxyURL: 'https://images-ext-1.discordapp.net/external/b/https/static.example.com/1.png' }, video: { url: 'https://static.example.com/1.mp4' } }],
+    };
+    const source = await findImageSource(fakeMessage({ replied }));
+    assert.equal(source.url, 'https://images-ext-1.discordapp.net/external/b/https/static.example.com/1.png');
+    assert.equal(source.videoStill, true);
+});
+
+test('a GIF on Discord\'s media proxy is downloaded from the original file (signature kept)', () => {
+    assert.equal(
+        originalDiscordFile('https://media.discordapp.net/attachments/1/2/dance.gif?ex=6740&is=673f&hm=abc&width=498&height=280&format=webp'),
+        'https://cdn.discordapp.com/attachments/1/2/dance.gif?ex=6740&is=673f&hm=abc',
+    );
+    const png = 'https://media.discordapp.net/attachments/1/2/photo.png?ex=1&width=10';
+    assert.equal(originalDiscordFile(png), png);
+});
+
+test('downloadFirst falls back to the next link and never tries an unsafe one', async () => {
+    const tried = [];
+    const get = async (url) => { tried.push(url); if (url.endsWith('a.gif')) throw new Error('download failed (404)'); return Buffer.from(url); };
+    const result = await downloadFirst(['https://cdn.discordapp.com/a.gif', 'https://evil.com/x.gif', 'https://cdn.discordapp.com/b.gif'], { download: get });
+    assert.equal(result.url, 'https://cdn.discordapp.com/b.gif');
+    assert.deepEqual(tried, ['https://cdn.discordapp.com/a.gif', 'https://cdn.discordapp.com/b.gif']);
+    await assert.rejects(() => downloadFirst(['https://cdn.discordapp.com/a.gif'], { download: get }), /404/);
+});
+
+test('.gif on a replied Tenor GIF converts the animated GIF, not the still preview', async () => {
+    const frames = await Promise.all([[255, 0, 0], [0, 0, 255]].map(([r, g, b]) => sharp({ create: { width: 20, height: 20, channels: 4, background: { r, g, b, alpha: 1 } } }).raw().toBuffer()));
+    const gif = await sharp(Buffer.concat(frames), { raw: { width: 20, height: 40, channels: 4, pageHeight: 20 } }).gif().toBuffer();
+    const replied = { attachments: new Map(), content: '', embeds: [{ type: 'gifv', url: 'https://tenor.com/view/x-1', thumbnail: { url: 'https://media.tenor.com/AbCdEfGhIjkAAAAe/x.png' } }] };
+    const requested = [];
+    const fetchStub = async (url) => { requested.push(url); return { ok: true, headers: { get: () => String(gif.length) }, arrayBuffer: async () => gif }; };
+    const msg = fakeMessage({ replied }); msg.author = { id: 'u-tenor-gif' };
+    await handleGifCommand(msg, [], { fetch: fetchStub, now: () => 70_000_000 });
+    assert.deepEqual(requested, ['https://media.tenor.com/AbCdEfGhIjkAAAAd/x.gif']);
+    assert.equal((await sharp(msg.sent[0].files[0].attachment, { animated: true }).metadata()).pages, 2);
 });

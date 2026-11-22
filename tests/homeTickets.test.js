@@ -7,6 +7,8 @@ import {
   setupHomeTickets, openTicket, claimTicket, verifyTicket, closeTicket, SECTION_ROLE_IDS, TICKET_NAMES, VERIFIED_ROLE_ID,
   getVerifiedRoleId,
 } from '../src/services/tickets/homeTickets.js';
+import { generateTranscript } from '../src/services/ticket.js';
+import { utf8TextFile, UTF8_BOM } from '../src/utils/textAttachment.js';
 
 const MEMBER = '200000000000000001';
 const GIRL = '200000000000000002';
@@ -96,6 +98,7 @@ describe('our server\'s tickets (owner\'s request)', () => {
     const log = created[2];
     assert.equal(log.sent[0].files[0].name, 'ticket-0001.txt');
     assert.match(log.sent[0].embeds[0].description, new RegExp(`استلمه: <@200000000000000009>`));
+    assertUtf8Transcript(log.sent[0].files[0].attachment);
   });
 
   test('a verification ticket is seen only by its role (GH #322), pings only the opener, and ✅ gives the verified girl role', async () => {
@@ -175,5 +178,42 @@ describe('our server\'s tickets (owner\'s request)', () => {
     assert.equal(verified.ok, true);
     assert.equal(verified.roleId, zenithRoleId);
     assert.ok(girl.roles.cache.has(zenithRoleId));
+
+    // GH #324: the closing transcript is UTF-8 with a byte order mark here too.
+    assert.equal((await closeTicket(ticketChannel, girl, { deleteAfterMs: 0 })).ok, true);
+    const transcriptFile = log.sent.at(-1).files[0];
+    assert.match(transcriptFile.name, /^ticket-\d{4}\.txt$/u);
+    assertUtf8Transcript(transcriptFile.attachment);
+  });
+});
+
+/** GH #324: starts with the UTF-8 BOM (EF BB BF) and decodes back to the Arabic messages, unchanged. */
+function assertUtf8Transcript(buffer) {
+  assert.ok(Buffer.isBuffer(buffer));
+  assert.deepEqual([...buffer.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+  const text = buffer.toString('utf8');
+  assert.equal(text.charCodeAt(0), 0xFEFF);
+  assert.match(text.slice(1), /^\[1970-01-01 00:00\] x: مرحبا$/u);
+  assert.equal(text.indexOf(UTF8_BOM, 1), -1, 'only one BOM');
+}
+
+describe('GH #324: text attachments are UTF-8 with a BOM', () => {
+  test('utf8TextFile adds one BOM and keeps the text', () => {
+    const buffer = utf8TextFile('سلام عليكم\nhello');
+    assert.deepEqual([...buffer.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+    assert.equal(buffer.toString('utf8'), `${UTF8_BOM}سلام عليكم\nhello`);
+    assert.deepEqual(utf8TextFile(buffer.toString('utf8')), buffer, 'no second BOM');
+    assert.deepEqual([...utf8TextFile('')], [0xEF, 0xBB, 0xBF]);
+  });
+
+  test('the HTML transcript of the other ticket system starts with the BOM too', async () => {
+    const messages = new Map([['1', { createdTimestamp: 0, author: { tag: 'x' }, content: 'مرحبا يا جماعة', embeds: [] }]]);
+    const channel = { id: 'c1', name: 'ticket-1', messages: { fetch: async () => Object.assign(messages, { last: () => [...messages.values()].at(-1) }) } };
+    const attachment = await generateTranscript(channel);
+    const buffer = attachment.attachment;
+    assert.deepEqual([...buffer.subarray(0, 3)], [0xEF, 0xBB, 0xBF]);
+    assert.equal(buffer.toString('utf8').charCodeAt(0), 0xFEFF);
+    assert.ok(buffer.toString('utf8').slice(1).startsWith('<!DOCTYPE html>'), 'the HTML itself is unchanged');
+    assert.match(buffer.toString('utf8'), /مرحبا يا جماعة/u);
   });
 });

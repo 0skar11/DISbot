@@ -2,9 +2,13 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { PermissionFlagsBits, PermissionsBitField } from 'discord.js';
 import '../src/utils/embeds.js';
-import { ROLE_DEFINITIONS, ALL_EXCEPT_ADMINISTRATOR, rememberStaffRoles, demoteAdministratorsBelowAdmin, removeMentionEveryoneFromStaffRoles, buildGenericBoardEmbeds } from '../src/services/staffRoleHierarchyService.js';
+import {
+  ROLE_DEFINITIONS, ALL_EXCEPT_ADMINISTRATOR, rememberStaffRoles, demoteAdministratorsBelowAdmin, removeMentionEveryoneFromStaffRoles,
+  buildGenericBoardEmbeds, describeMentionEveryoneHolders,
+} from '../src/services/staffRoleHierarchyService.js';
 import { HOME_GUILD_ID } from '../src/config/homeGuild.js';
 import { memberHasModerationCommandAccess } from '../src/utils/permissionGuard.js';
+import { logger } from '../src/utils/logger.js';
 
 const permissionsOf = (name) => new PermissionsBitField(ROLE_DEFINITIONS.find((definition) => definition.name === name).permissions);
 const VOICE = [PermissionFlagsBits.MoveMembers, PermissionFlagsBits.MuteMembers, PermissionFlagsBits.DeafenMembers, PermissionFlagsBits.ModerateMembers];
@@ -226,11 +230,91 @@ describe('GH #320: Mention Everyone is taken off existing staff roles', () => {
     const result = await removeMentionEveryoneFromStaffRoles(guildWith('1569932761471524874', roles, [owner]));
     assert.deepEqual(result.changed, []);
     assert.ok(roles[0].permissions.has(ME, false));
+    assert.deepEqual(result.kept, [{ id: 'mods', name: 'Mods', reasons: ['owner role'] }]);
   });
 
-  test('the permission board says @everyone is the owner\'s alone', () => {
+  // Owner's decision after GH #320: the trusted may mention @everyone, so the trusted roles keep the permission.
+  const withTrustedRoles = (guild, trustedRoles) => ({
+    ...guild,
+    client: { db: { get: async (key, fallback) => (String(key).includes('config') ? { antiNukeTrustedRoles: trustedRoles } : fallback), set: async () => true } },
+  });
+
+  for (const guildId of [HOME_GUILD_ID, '1569932761471524874']) {
+    test(`the trusted roles keep Mention Everyone, other staff roles still lose it (server ${guildId})`, async () => {
+      const roles = [
+        make('supervisor', '🎖️ Supervisor', 15, PermissionsBitField.All & ~PermissionFlagsBits.Administrator),
+        make('mod', '🔨 Moderator', 10, PermissionsBitField.All & ~PermissionFlagsBits.Administrator),
+        make('trusted', 'Trusted', 12, PermissionFlagsBits.SendMessages | ME),
+      ];
+      const result = await removeMentionEveryoneFromStaffRoles(withTrustedRoles(guildWith(guildId, roles), ['supervisor', 'trusted']));
+      assert.deepEqual(result.changed, ['🔨 Moderator']);
+      const byId = Object.fromEntries(roles.map((role) => [role.id, role]));
+      assert.ok(byId.supervisor.permissions.has(ME, false));
+      assert.ok(byId.trusted.permissions.has(ME, false));
+      assert.equal(byId.mod.permissions.has(ME, false), false);
+      assert.deepEqual(result.kept.map(({ id, reasons }) => [id, reasons]).sort(), [['supervisor', ['trusted role']], ['trusted', ['trusted role']]]);
+    });
+  }
+
+  test('every role that still holds Mention Everyone is listed with why, for the startup log', async () => {
+    const guildId = '1569932761471524874';
+    const roles = [
+      make(guildId, '@everyone', 0, PermissionFlagsBits.SendMessages | ME),
+      make('admin', '🛡️ Admin', 20, PermissionFlagsBits.Administrator),
+      make('owner', '👑 Owner', 30, PermissionFlagsBits.BanMembers | ME),
+      make('vip', 'VIP', 3, PermissionFlagsBits.SendMessages | ME),
+      make('integration', 'SomeBot', 9, PermissionFlagsBits.ManageMessages | ME, true),
+      make('above', 'Above bot', 60, PermissionFlagsBits.ManageMessages | ME),
+      make('trusted', 'Trusted', 12, PermissionFlagsBits.ManageMessages | ME),
+      make('stuck', 'Stuck', 11, PermissionFlagsBits.ManageMessages | ME),
+      make('plain', 'Plain', 2, PermissionFlagsBits.SendMessages),
+    ];
+    roles.find((role) => role.id === 'stuck').setPermissions = async () => { throw new Error('Missing Permissions'); };
+    const guild = { ...withTrustedRoles(guildWith(guildId, roles), ['trusted']), name: 'Zenith' };
+    const result = await removeMentionEveryoneFromStaffRoles(guild);
+    assert.deepEqual(result.failed, ['Stuck']);
+    const reasons = Object.fromEntries(result.kept.map((role) => [role.id, role.reasons]));
+    assert.deepEqual(reasons, {
+      [guildId]: ['@everyone role'],
+      admin: ['Administrator'],
+      owner: ['owner role'],
+      vip: ['skipped: not a staff role'],
+      integration: ['managed/integration'],
+      above: ['above the bot'],
+      trusted: ['trusted role'],
+      stuck: ['failed to change'],
+    });
+    const line = describeMentionEveryoneHolders(guild, result.kept);
+    assert.match(line, /^Mention Everyone still held in Zenith \(1569932761471524874\): /u);
+    assert.match(line, /🛡️ Admin \(admin\) \[Administrator\]/u);
+    assert.match(line, /Trusted \(trusted\) \[trusted role\]/u);
+    assert.ok(!line.includes('Plain'));
+    assert.match(describeMentionEveryoneHolders({ id: 'g', name: 'G' }, []), /: no role$/u);
+  });
+
+  test('the startup run logs that line once per server (a log only)', async () => {
+    const { default: staffRoleHierarchy } = await import('../src/events/staffRoleHierarchy.js');
+    const roles = [make('admin', '🛡️ Admin', 20, PermissionFlagsBits.Administrator)];
+    const guilds = [HOME_GUILD_ID, '1569932761471524874'].map((id) => ({
+      ...guildWith(id, roles),
+      name: `server ${id}`,
+      channels: { fetch: async () => null },
+    }));
+    const lines = [];
+    const original = logger.info;
+    logger.info = (message, ...rest) => { if (String(message).startsWith('Mention Everyone still held')) lines.push(String(message)); else original.call(logger, message, ...rest); };
+    try {
+      await staffRoleHierarchy.execute({ guilds: { cache: new Map(guilds.map((guild) => [guild.id, guild])) } });
+    } finally {
+      logger.info = original;
+    }
+    assert.equal(lines.length, 2);
+    for (const guild of guilds) assert.ok(lines.some((line) => line.includes(`(${guild.id})`) && line.includes('[Administrator]')), guild.id);
+  });
+
+  test('the permission board says @everyone is the owners\' and the trusted\'s', () => {
     const roles = new Map([['r', make('r', 'Mods', 4, PermissionFlagsBits.ManageMessages)]]);
-    assert.match(buildGenericBoardEmbeds(roles)[0].description, /@everyone/u);
+    assert.match(buildGenericBoardEmbeds(roles)[0].description, /@everyone \/ @here للأونر والتراستد بس/u);
   });
 });
 

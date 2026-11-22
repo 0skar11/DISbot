@@ -12,6 +12,7 @@ import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { sanitizeInput } from '../../utils/validation.js';
 import { isChannelArg } from '../../utils/prefixArgs.js';
 import { isServerOwner } from '../../config/serverOwners.js';
+import { canLiftHardBan } from '../../services/moderation/hardBanService.js';
 
 // Who used `say` is only shown in the audit log and this channel, never in the target channel.
 const SAY_LOG_CHANNEL_ID = '1550596180940034079';
@@ -171,11 +172,12 @@ export default {
             });
         }
 
-        // GH #320: only the owners may make the bot ping @everyone / @here.
-        const ownerSender = isServerOwner(interaction.user.id) || interaction.user.id === interaction.guild.ownerId;
+        // GH #320: only the owners and (owner's decision after it) the trusted may make the bot ping @everyone / @here.
+        const everyoneSender = isServerOwner(interaction.user.id) || interaction.user.id === interaction.guild.ownerId
+            || await canLiftHardBan(interaction.guild, interaction.user.id).catch(() => false);
         const sentMessage = await channel.send({
             content: message,
-            allowedMentions: { parse: ownerSender ? ['users', 'roles', 'everyone'] : ['users', 'roles'] },
+            allowedMentions: { parse: everyoneSender ? ['users', 'roles', 'everyone'] : ['users', 'roles'] },
         });
 
         await logEvent({
