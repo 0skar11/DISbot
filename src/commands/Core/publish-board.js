@@ -38,7 +38,7 @@ export default {
         const changed = result.changed?.length ? result.changed.join(', ') : 'لا يوجد';
         const failed = result.failed?.length ? `\n⚠️ تعذر تعديل: ${result.failed.join(', ')}` : '';
         return interaction.editReply({
-          content: `✅ تم الإبقاء على صلاحية Administrator لأول 3 رتب فقط، وإزالتها من الرتب الأقل مع تفعيل كافة الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`,
+          content: `✅ تم الإبقاء على صلاحية Administrator للرتب حتى سايكو (أو أول 3 رتب)، وإزالتها من الرتب الأقل مع تفعيل كافة الصلاحيات الأخرى:\n• الرتب المعدلة: ${changed}${failed}`,
         });
       } else if (interaction.options.getSubcommand() === 'trusted') {
         const result = await publishTrustedBoard(interaction.client, { allowSend: true });

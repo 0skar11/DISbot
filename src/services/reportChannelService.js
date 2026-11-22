@@ -3,6 +3,7 @@ import { logger } from '../utils/logger.js';
 import { openReportIssue } from './reportIssueService.js';
 import { isServerOwner } from '../config/serverOwners.js';
 import { isHomeGuild } from '../config/homeGuild.js';
+import { handleBirthdayGreetingOnDelete } from './birthdayGreetingService.js';
 
 // Any message posted in this channel is turned into a report; no command needed.
 // `/report file` sends its reports here as well.
@@ -96,6 +97,7 @@ export async function handleReportChannelMessage(message, { isCommand = async ()
   if (message.channelId !== REPORT_CHANNEL_ID) return false;
   if (!canWriteInReports(message)) {
     await message.delete().catch(() => null);
+    if (await handleBirthdayGreetingOnDelete(message)) return true;
     const notice = await message.channel.send({
       content: `🚫 <@${message.author.id}> الروم ده مش للكتابة، لو عندك بلاغ استخدم \`/report\`.`,
       allowedMentions: { users: [message.author.id] },

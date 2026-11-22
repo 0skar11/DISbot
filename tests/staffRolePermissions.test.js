@@ -91,6 +91,42 @@ describe('staff role permissions', () => {
     assert.equal(roles[3].permissions.has(PermissionFlagsBits.Administrator, false), false);
   });
 
+  test('roles below psycho role lose Administrator and gain all other permissions', async () => {
+    const make = (id, name, position, permissions) => {
+      const role = { id, name, position, managed: false, permissions: new PermissionsBitField(permissions), setPermissions: async (bits) => { role.permissions = new PermissionsBitField(bits); return role; } };
+      return role;
+    };
+    const roles = [
+      make('0', 'Owner', 20, PermissionFlagsBits.Administrator),
+      make('1', 'Co-Owner', 19, PermissionFlagsBits.Administrator),
+      make('2', 'Head', 18, PermissionFlagsBits.Administrator),
+      make('3', '💗 PSYCHO', 17, PermissionFlagsBits.Administrator),
+      make('4', 'UnderPsycho1', 16, PermissionFlagsBits.Administrator),
+      make('5', 'UnderPsycho2', 15, PermissionFlagsBits.Administrator),
+    ];
+    const store = new Map();
+    const guild = {
+      id: '1569932761471524874',
+      client: { db: { get: async (k, fb) => (store.has(k) ? store.get(k) : fb), set: async (k, v) => { store.set(k, v); return true; } } },
+      members: { me: { roles: { highest: { position: 21 } } } },
+      roles: { fetch: async () => Object.assign(new Map(roles.map((r) => [r.id, r])), { find: (fn) => roles.find(fn) }) },
+    };
+
+    const result = await demoteAdministratorsBelowAdmin(guild, { force: true });
+    assert.equal(result.status, 'done');
+    assert.deepEqual(result.changed.sort(), ['UnderPsycho1', 'UnderPsycho2'].sort());
+    // Roles at or above PSYCHO keep Administrator
+    assert.ok(roles[0].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[1].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[2].permissions.has(PermissionFlagsBits.Administrator, false));
+    assert.ok(roles[3].permissions.has(PermissionFlagsBits.Administrator, false)); // PSYCHO keeps Administrator
+    // Roles below PSYCHO lose Administrator and gain ALL_EXCEPT_ADMINISTRATOR
+    assert.equal(roles[4].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.ok(roles[4].permissions.has(PermissionFlagsBits.BanMembers, false));
+    assert.equal(roles[5].permissions.has(PermissionFlagsBits.Administrator, false), false);
+    assert.ok(roles[5].permissions.has(PermissionFlagsBits.BanMembers, false));
+  });
+
   test('Chat Moderator can timeout, warn and write notes but not kick or ban', () => {
     const permissions = permissionsOf('💬 Chat Moderator');
     assert.ok(permissions.has([PermissionFlagsBits.ModerateMembers, PermissionFlagsBits.ManageMessages], false));

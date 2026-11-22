@@ -1,5 +1,6 @@
 import { isServerOwner } from '../config/serverOwners.js';
 import { canLiftHardBan } from './moderation/hardBanService.js';
+import { handleBirthdayGreetingOnDelete } from './birthdayGreetingService.js';
 
 // Image-only channel: every message there needs at least one image (text with the image is fine).
 // Anything else is deleted and the author gets a short notice (gone after 1 second).
@@ -44,6 +45,7 @@ export async function handleImageOnlyChannelMessage(message) {
   if (await canWriteWithoutImage(message)) return false;
 
   await message.delete().catch(() => {});
+  if (await handleBirthdayGreetingOnDelete(message)) return true;
   if (silent) return true;
   const notice = await message.channel.send({
     content: `🚫 <@${message.author.id}> الروم دي للصور بس، ابعت صورة (ومعاها كلام لو حابب).`,

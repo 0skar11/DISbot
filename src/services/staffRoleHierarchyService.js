@@ -202,10 +202,10 @@ export async function rememberStaffRoles(guild) {
   return { found };
 }
 
-// Reports #208 & #302: keep Administrator for the top 3 roles only, remove Administrator from
-// any role below them across all servers and grant all other permissions. Bump the version to
-// run it again on startup, or pass { force: true }.
-const ADMIN_STRIP_VERSION = 3;
+// Reports #208, #302 & owner request: keep Administrator for roles at or above Psycho (or top 3 roles),
+// remove Administrator from any role below Psycho (or below top 3) and grant all other permissions.
+// Bump the version to run it again on startup, or pass { force: true }.
+const ADMIN_STRIP_VERSION = 4;
 const ADMIN_STRIP_KEY = 'adminStripVersion';
 
 export async function demoteAdministratorsBelowAdmin(guild, { force = false } = {}) {
@@ -216,25 +216,39 @@ export async function demoteAdministratorsBelowAdmin(guild, { force = false } = 
   const me = guild.members?.me || await guild.members?.fetchMe?.().catch(() => null);
   const botHighest = me?.roles?.highest?.position ?? Infinity;
 
-  // The first 3 roles in the server hierarchy keep Administrator (report #302: "سيب الستريتور مع اول 3 رولات في السيرفر بس").
   // Exclude @everyone and managed integration/bot roles.
   const unmanagedRoles = [...roles.values()]
     .filter((role) => role.id !== guild.id && !role.managed)
     .sort((a, b) => (b.position ?? 0) - (a.position ?? 0));
-  const top3RoleIds = new Set(unmanagedRoles.slice(0, 3).map((role) => role.id));
 
-  // In guilds with defined staff roles, ensure the top 3 staff roles keep Administrator
+  const isPsycho = (role) => /psycho|سايكو/iu.test(role?.name || '');
+  const psychoRole = unmanagedRoles.find(isPsycho);
+
+  let keepAdminRoleIds = new Set();
+  if (psychoRole) {
+    // Keep Administrator for all unmanaged roles at or above the psycho role's position
+    keepAdminRoleIds = new Set(
+      unmanagedRoles.filter((role) => (role.position ?? 0) >= (psychoRole.position ?? 0)).map((role) => role.id)
+    );
+  } else {
+    // Fallback: top 3 roles in server hierarchy keep Administrator
+    keepAdminRoleIds = new Set(unmanagedRoles.slice(0, 3).map((role) => role.id));
+  }
+
+  // In guilds with defined staff roles, ensure the top 3 staff roles (if >= psycho or fallback) keep Administrator
   for (const def of ROLE_DEFINITIONS.slice(0, 3)) {
     const staffRole = findStaffRole(roles, def, await savedStaffRoleIds(guild));
-    if (staffRole) top3RoleIds.add(staffRole.id);
-    if (staffRole && staffRole.position < botHighest && !staffRole.permissions.has(PermissionFlagsBits.Administrator)) {
-      await staffRole.setPermissions([PermissionFlagsBits.Administrator], 'Report #302: keep Administrator for top 3 staff roles')
-        .catch((err) => logger.warn(`Could not restore Administrator to ${staffRole.name}: ${err.message}`));
+    if (staffRole && (!psychoRole || (staffRole.position ?? 0) >= (psychoRole.position ?? 0))) {
+      keepAdminRoleIds.add(staffRole.id);
+      if (staffRole.position < botHighest && !staffRole.permissions.has(PermissionFlagsBits.Administrator)) {
+        await staffRole.setPermissions([PermissionFlagsBits.Administrator], 'Keep Administrator for top staff roles')
+          .catch((err) => logger.warn(`Could not restore Administrator to ${staffRole.name}: ${err.message}`));
+      }
     }
   }
 
   const targets = unmanagedRoles.filter((role) =>
-    !top3RoleIds.has(role.id) &&
+    !keepAdminRoleIds.has(role.id) &&
     role.position < botHighest &&
     role.name !== '👑 Owner' &&
     role.name.toLowerCase() !== 'owner' &&
@@ -243,7 +257,7 @@ export async function demoteAdministratorsBelowAdmin(guild, { force = false } = 
   const changed = [];
   const failed = [];
   for (const role of targets) {
-    const done = await role.setPermissions(ALL_EXCEPT_ADMINISTRATOR, 'Report #302: remove Administrator below top 3 roles and grant all other permissions')
+    const done = await role.setPermissions(ALL_EXCEPT_ADMINISTRATOR, 'Remove Administrator below psycho/top 3 roles and grant all other permissions')
       .then(() => true)
       .catch((error) => {
         logger.warn(`Could not take Administrator off ${role.name}: ${error.message}`);

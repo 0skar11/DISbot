@@ -1,6 +1,7 @@
 import { TRUSTED_BOARD_CHANNEL_ID } from './trustedBoardService.js';
 import { MODERATION_COMMANDS_CHANNEL_ID, EXTRA_COMMANDS_CHANNEL_IDS } from './moderationCommandsBoardService.js';
 import { isServerOwner, isTrustManager } from '../config/serverOwners.js';
+import { handleBirthdayGreetingOnDelete } from './birthdayGreetingService.js';
 
 // Board channels where only the owners and this bot may write.
 const PROTECTED_CHANNEL_IDS = new Set([TRUSTED_BOARD_CHANNEL_ID, MODERATION_COMMANDS_CHANNEL_ID, ...EXTRA_COMMANDS_CHANNEL_IDS, '1571076213705809941']);
@@ -26,6 +27,7 @@ export async function handleProtectedChannelMessage(message) {
       && embed.footer?.text === SERVERS_BOARD_FOOTER) return false;
 
   await message.delete().catch(() => {});
+  if (await handleBirthdayGreetingOnDelete(message)) return true;
   if (message.author?.bot || message.webhookId) return true;
   const notice = await message.channel.send({
     content: `🚫 <@${message.author.id}> ممنوع الكتابة هنا.`,
