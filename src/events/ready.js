@@ -24,6 +24,7 @@ import { startCustomRoles } from "../services/cc/customRoleService.js";
 import { startVoteKickSweeps } from "../services/voice/voteKickService.js";
 import { isHomeGuild } from "../config/homeGuild.js";
 import { loadAutomodRules } from "../services/moderation/automodStore.js";
+import { reconcileDeletedBirthdayGreetings } from "../services/birthdayGreetingService.js";
 
 export default {
   name: Events.ClientReady,
@@ -85,6 +86,14 @@ export default {
         await removeRetiredBoards(client);
       } catch (error) {
         logger.error("Failed to remove retired boards:", error);
+      }
+      try {
+        const bdayStats = await reconcileDeletedBirthdayGreetings(client);
+        if (bdayStats.found > 0) {
+          startupLog(`Birthday DM replies: sent ${bdayStats.sent} of ${bdayStats.found} found (${bdayStats.scanned} scanned)`);
+        }
+      } catch (error) {
+        logger.error("Failed to reconcile deleted birthday greetings:", error);
       }
       try {
         const ccTopBoard = await startCCTopBoard(client);

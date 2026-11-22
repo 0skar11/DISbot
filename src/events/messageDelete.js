@@ -3,7 +3,6 @@ import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
 import { getReactionRoleMessage, deleteReactionRoleMessage } from '../services/reactionRoleService.js';
 import { formatLogLine } from '../utils/logging/logEmbeds.js';
-import { handleBirthdayGreetingOnDelete } from '../services/birthdayGreetingService.js';
 
 const MAX_LOGGED_MESSAGE_CONTENT_LENGTH = 1024;
 
@@ -45,8 +44,6 @@ export default {
       }
 
       if (message.author?.bot) return;
-
-      await handleBirthdayGreetingOnDelete(message).catch(() => {});
 
       const metaLines = [
         formatLogLine('Channel', message.channel ? `${message.channel.name} ${message.channel.toString()}` : 'Unknown'),

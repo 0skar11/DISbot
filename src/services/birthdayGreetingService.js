@@ -1,8 +1,9 @@
+import { resolveAuditRoom } from './logging/auditRooms.js';
 import { SERVER_OWNER_IDS } from '../config/serverOwners.js';
 import { logger } from '../utils/logger.js';
 
 /**
- * Regex matching birthday and holiday greetings to the owner:
+ * Regex matching birthday and holiday greetings:
  * "كل سنه وانت طيب", "كل سنة وانت طيب يا اوسكار", "كل عام وانت بخير", "happy birthday", "hbd", etc.
  */
 export const BIRTHDAY_GREETING_REGEX = /(?:كل\s*(?:سنة|سنه|عام)\s*و?\s*(?:انت|انتا|انتي|انتم|انتوا)?\s*(?:طيب|طيبة|طيبه|طيبين|بخير|سالم|بصحة|بصحه)|happy\s*birthday|\bhbd\b)/iu;
@@ -12,60 +13,88 @@ export function isBirthdayGreeting(text) {
   return BIRTHDAY_GREETING_REGEX.test(text);
 }
 
-export function formatBirthdayReply(userId) {
-  return `❤️ <@${userId}> **الرسالة وصلت متقلقش، وانت طيب وبألف خير يا رب!**\n\n*— by oskar ✨*`;
+/**
+ * Direct Message reply sent to users whose birthday greeting messages were deleted.
+ */
+export function formatBirthdayReplyDm() {
+  return `❤️ **الرسالة وصلت متقلقش، وانت طيب وبألف خير يا رب!**\n\n*— by oskar ✨*`;
 }
 
-// Track recently handled message IDs so messageCreate and messageDelete don't double-reply
-const handledMessages = new Set();
+export const REPLIED_USERS_DB_KEY = 'birthday:replied_users';
 
 /**
- * When a message containing a birthday greeting is deleted anywhere in the server,
- * replies to reassure the author that the message reached Oskar and wishes them well.
- * Also forwards the message details to the server owners so Oskar can read it.
+ * Scans the message audit log rooms in all guilds for messages that were ALREADY deleted
+ * and contained birthday greetings, and sends a DM reply to each author directly.
  */
-export async function handleBirthdayGreetingOnDelete(message) {
-  if (!message?.channel || !message?.author || message.author.bot) return false;
-  if (!isBirthdayGreeting(message.content)) return false;
-  if (handledMessages.has(message.id)) return false;
+export async function reconcileDeletedBirthdayGreetings(client, { maxPerRoom = 100 } = {}) {
+  const alreadyRepliedList = (await client.db?.get?.(REPLIED_USERS_DB_KEY, [])) || [];
+  const alreadyReplied = new Set(Array.isArray(alreadyRepliedList) ? alreadyRepliedList : []);
 
-  handledMessages.add(message.id);
-  setTimeout(() => handledMessages.delete(message.id), 60_000).unref?.();
+  const stats = { scanned: 0, found: 0, sent: 0, failed: 0, users: [] };
 
-  const replyText = formatBirthdayReply(message.author.id);
+  for (const guild of client.guilds.cache.values()) {
+    try {
+      const room = await resolveAuditRoom(guild, 'message');
+      if (!room || !room.isTextBased?.()) continue;
 
-  try {
-    const sent = await message.channel.send({
-      content: replyText,
-      allowedMentions: { users: [message.author.id] },
-    }).catch(() => null);
+      const messages = await room.messages.fetch({ limit: maxPerRoom }).catch((err) => {
+        logger.warn(`Could not fetch messages from audit room ${room.id} in guild ${guild.id}: ${err.message}`);
+        return null;
+      });
+      if (!messages) continue;
 
-    // Keep visible for 25 seconds before removing so the member can read it
-    if (sent) {
-      setTimeout(() => sent.delete().catch(() => {}), 25_000).unref?.();
+      for (const logMsg of messages.values()) {
+        stats.scanned++;
+        const embed = logMsg.embeds?.[0];
+        if (!embed) continue;
+
+        const title = String(embed.title || '').toLowerCase();
+        // Only inspect message delete audit logs
+        if (!title.includes('message') && !title.includes('delete') && !title.includes('حذف')) continue;
+
+        const textToSearch = [
+          embed.description || '',
+          ...(embed.fields || []).map((f) => `${f.name} ${f.value}`),
+        ].join('\n');
+
+        if (!isBirthdayGreeting(textToSearch)) continue;
+
+        // Extract author ID from description (e.g. "Message author: <@1159601661392715906>")
+        const authorMatch = textToSearch.match(/Message author[:\s]+<@!?(\d{17,20})>/i)
+          || textToSearch.match(/<@!?(\d{17,20})>/);
+        if (!authorMatch) continue;
+
+        const authorId = authorMatch[1];
+        // Don't DM bots or owners
+        if (authorId === client.user?.id || SERVER_OWNER_IDS.includes(authorId)) continue;
+
+        stats.found++;
+        if (alreadyReplied.has(authorId)) continue;
+
+        try {
+          const user = await client.users.fetch(authorId).catch(() => null);
+          if (user && !user.bot) {
+            await user.send({ content: formatBirthdayReplyDm() });
+            alreadyReplied.add(authorId);
+            stats.sent++;
+            stats.users.push({ id: authorId, tag: user.tag || user.username });
+            logger.info(`[BIRTHDAY DM] Sent birthday reassurance to ${user.tag} (${authorId})`);
+          } else {
+            stats.failed++;
+          }
+        } catch (dmError) {
+          logger.warn(`[BIRTHDAY DM] Could not send DM to ${authorId}: ${dmError.message}`);
+          stats.failed++;
+        }
+      }
+    } catch (guildError) {
+      logger.warn(`Error scanning guild ${guild.id} for deleted birthday greetings: ${guildError.message}`);
     }
-
-    // Forward a copy of the greeting to the server owners (Oskar)
-    await forwardGreetingToOwner(message).catch(() => {});
-
-    return true;
-  } catch (error) {
-    logger.warn(`Failed to send birthday greeting reply: ${error.message}`);
-    return false;
   }
-}
 
-async function forwardGreetingToOwner(message) {
-  const content = message.content?.trim();
-  const authorTag = message.author?.tag || message.author?.username || message.author?.id;
-  const channelName = message.channel?.name ? `#${message.channel.name}` : `<#${message.channelId}>`;
-
-  for (const ownerId of SERVER_OWNER_IDS) {
-    const ownerUser = await message.client?.users?.fetch?.(ownerId).catch(() => null);
-    if (ownerUser) {
-      await ownerUser.send({
-        content: `🎂 **تهنئة عيد ميلاد** من <@${message.author.id}> (${authorTag}) في ${channelName}:\n> ${content}`,
-      }).catch(() => {});
-    }
+  if (client.db && stats.sent > 0) {
+    await client.db.set(REPLIED_USERS_DB_KEY, [...alreadyReplied]).catch(() => {});
   }
+
+  return stats;
 }

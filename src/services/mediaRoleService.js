@@ -3,7 +3,6 @@ import { isServerOwner } from '../config/serverOwners.js';
 import { canLiftHardBan } from './moderation/hardBanService.js';
 import { getGuildConfig, updateGuildConfig } from './config/guildConfig.js';
 import { logger } from '../utils/logger.js';
-import { handleBirthdayGreetingOnDelete } from './birthdayGreetingService.js';
 
 // Images/files, GIFs and links are for members of the `media` role (and admins) only.
 // The role and its permissions are the owner's to set: the bot never changes them. Discord permissions
@@ -128,7 +127,6 @@ export async function handleMediaMessage(message) {
   if (await canSendMedia(message)) return false;
 
   await message.delete().catch(() => {});
-  if (await handleBirthdayGreetingOnDelete(message)) return true;
   const notice = await message.channel.send({
     content: `🚫 <@${message.author.id}> الصور والـ GIF واللينكات لرتبة ${MEDIA_ROLE_NAME} بس.`,
     allowedMentions: { users: [message.author.id] },
