@@ -1,6 +1,6 @@
 // geminiRoom.js — the Gemini chat room (owner's request of 2026-11-24, docs/gemini-room.md).
 //
-// In a server's Gemini room the bot answers every normal message with Google Gemini. GEMINI_API_KEY turns it
+// In a server's Gemini room the bot answers a normal message with Google Gemini only when it is mentioned or replied to. GEMINI_API_KEY turns it
 // on (no key = off, with one warning in the log); GEMINI_MODEL picks the model. The rooms below are the
 // defaults; an owner can set or turn off the room of any server with `/gemini-room` (saved in the database
 // under GEMINI_ROOMS_DB_KEY, which wins over these defaults). Works in every server (all-servers rule).

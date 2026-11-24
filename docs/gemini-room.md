@@ -16,7 +16,8 @@ A chat room where the bot answers with Google Gemini (owner's request of 2026-11
 
 ## What it does
 
-- Every normal message in the room gets a short answer: Egyptian Arabic by default, the writer's language
+- A normal message in the room gets an answer only when someone mentions the bot or replies to one of its
+  messages (an @everyone or role ping does not count); other messages are left alone. The answer is short: Egyptian Arabic by default, the writer's language
   otherwise, plain text, a reply that pings nobody (`allowedMentions` none, mentions taken out), split at 2000
   characters (3 messages at most), with the typing indicator.
 - In the room, commands need a prefix (`!`, `.`, `-` ...): prefixed messages, other bots' commands (`-p`, `$bal`,

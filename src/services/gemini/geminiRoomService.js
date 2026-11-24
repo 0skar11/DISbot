@@ -208,6 +208,21 @@ function questionOf(message, client, prefixes) {
   return text;
 }
 
+/**
+ * True when the message mentions the bot directly (an @everyone/@here or role ping does not count) or is a
+ * reply to one of the bot's own messages.
+ */
+async function isAddressedToBot(message, client) {
+  const botId = String(client?.user?.id ?? '');
+  if (!botId) return false;
+  if (message.mentions?.everyone !== true && message.mentions?.users?.has?.(botId)) return true;
+  if (new RegExp(`<@!?${botId}>`, 'u').test(String(message.content ?? ''))) return true;
+  const referenceId = message.reference?.messageId;
+  if (!referenceId) return false;
+  const replied = await quietly(() => message.fetchReference?.());
+  return String(replied?.author?.id ?? '') === botId;
+}
+
 /** The room's last few messages before `message` (this channel only), oldest first. */
 async function roomContext(message, client, prefixes) {
   const { contextMessages, contextMaxAgeMs } = GEMINI_LIMITS;
@@ -409,6 +424,8 @@ export async function handleGeminiRoomMessage(message, client, options = {}) {
       }
       return false;
     }
+    // The bot answers only when someone mentions it or replies to one of its messages (owner's request).
+    if (!(await isAddressedToBot(message, client))) return false;
     const prefixes = await prefixesOf(message, client, options);
     const question = questionOf(message, client, prefixes);
     if (!question) return false;

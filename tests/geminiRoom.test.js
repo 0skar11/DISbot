@@ -74,12 +74,15 @@ function addChannel(guild, id, name, { canPost = true } = {}) {
   return channel;
 }
 
-function makeMessage(guild, channel, content, { authorId = MEMBER, bot = false, webhookId = null, username = 'alice', createdTimestamp = Date.now() } = {}) {
+// The bot answers only when it is mentioned or replied to: by default these test messages mention it.
+function makeMessage(guild, channel, content, { authorId = MEMBER, bot = false, webhookId = null, username = 'alice', createdTimestamp = Date.now(), addressed = true, replyToAuthorId = null, mentionsEveryone = false } = {}) {
   const message = {
     id: newId(), content, guild, channel, channelId: channel.id, webhookId, system: false, createdTimestamp,
     author: { id: authorId, bot, username, tag: `${username}#0001` },
     member: { id: authorId },
-    mentions: { users: new Map() },
+    mentions: { users: new Map(addressed ? [[BOT_ID, { id: BOT_ID }]] : []), everyone: mentionsEveryone },
+    reference: replyToAuthorId ? { messageId: 'ref-1' } : null,
+    fetchReference: async () => (replyToAuthorId ? { id: 'ref-1', author: { id: replyToAuthorId } } : null),
     replies: [],
     replyObjects: [],
     reply: async (payload) => {
@@ -497,6 +500,30 @@ describe('Gemini room: text in and out', () => {
   });
 });
 
+describe('Gemini room: only when addressed', () => {
+  test('a plain message is ignored; a mention or a reply to the bot is answered; replies to others and @everyone are not', async () => {
+    for (const guildId of [undefined, '1569932761471524874']) {
+      const { client, guild, room } = zenith();
+      if (guildId) guild.id = guildId;
+      const { fetchImpl, calls } = geminiFetch(textAnswer('a'), textAnswer('b'), textAnswer('c'));
+      const plain = makeMessage(guild, room, 'ازيك يا شباب', { addressed: false });
+      assert.equal(await run(plain, client, { fetchImpl }), false);
+      assert.equal(plain.replies.length, 0);
+      const toSomeone = makeMessage(guild, room, 'اه فعلا', { addressed: false, replyToAuthorId: '200000000000000009' });
+      assert.equal(await run(toSomeone, client, { fetchImpl }), false);
+      const everyone = makeMessage(guild, room, '@everyone ازيك', { addressed: false, mentionsEveryone: true });
+      assert.equal(await run(everyone, client, { fetchImpl }), false);
+      assert.equal(calls.length, 0, 'no request to Gemini');
+
+      const reply = makeMessage(guild, room, 'وبعدين؟', { addressed: false, replyToAuthorId: BOT_ID, authorId: '200000000000000011' });
+      assert.equal(await run(reply, client, { fetchImpl }), true);
+      const mention = makeMessage(guild, room, `<@${BOT_ID}> ازيك`, { addressed: false, authorId: '200000000000000012' });
+      assert.equal(await run(mention, client, { fetchImpl }), true);
+      assert.equal(calls.length, 2);
+    }
+  });
+});
+
 describe('Gemini room: which messages', () => {
   test('bots, webhooks, commands, other bots\' commands, trust words and afk are left to the usual handlers', async () => {
     const { client, guild, room } = zenith();
@@ -586,7 +613,7 @@ describe('Gemini room: messageCreate', () => {
     const room = addChannel(guild, ZENITH_ROOM, 'gemini');
     const message = makeMessage(guild, room, content, { authorId: '250000000000000001' });
     message.member = { id: message.author.id, roles: { cache: new Map() }, permissions: { has: () => false } };
-    message.mentions = { users: new Map(), roles: new Map(), everyone: false, has: () => false };
+    message.mentions = { users: new Map([[BOT_ID, { id: BOT_ID }]]), roles: new Map(), everyone: false, has: () => false };
     message.attachments = new Map();
     message.stickers = new Map();
     return { client, room, message };
