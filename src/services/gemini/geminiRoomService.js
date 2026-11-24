@@ -340,6 +340,7 @@ function startTyping(channel) {
 }
 
 const MODEL_LIST_TTL_MS = 60 * 60_000;
+const WORKING_MODEL_MS = 10 * 60_000; // after a fallback model answered, new questions start with it this long
 
 /**
  * Models to try when the main one fails: GEMINI_FALLBACK_MODEL if set, then the chat models this key can use
@@ -389,22 +390,26 @@ async function answer(message, client, context) {
     const deadline = now() + GEMINI_LIMITS.timeoutMs;
     const request = buildRequest({ owner, message, client, question, context: await roomContext(message, client, prefixes) });
     // 404 (unknown model), 5xx (overloaded) and a slow model (timeout) are worth another model; a refused key, a 429 or a bad request are not.
+    const startModel = state.working && state.working.until > now() ? state.working.model : model;
     const worthAnotherModel = (error) => error?.kind === 'timeout' || (error?.kind === 'http' && [404, 500, 502, 503, 504].includes(error.status));
     const attemptMs = () => Math.max(1, Math.min(deadline - now(), GEMINI_LIMITS.attemptTimeoutMs));
     const ask = async () => {
       try {
-        return readAnswer(await generateContent({ apiKey, model, body: request, timeoutMs: attemptMs() + 3000, fetchImpl }));
+        const worked = readAnswer(await generateContent({ apiKey, model: startModel, body: request, timeoutMs: attemptMs() + 3000, fetchImpl }));
+        if (startModel === model) state.working = null;
+        return worked;
       } catch (error) {
         if (!worthAnotherModel(error)) throw error;
-        log.warn(`Gemini room: ${model} answered ${error.status ?? error.kind}${error.detail ? ` (${error.detail})` : ''}.`);
+        log.warn(`Gemini room: ${startModel} answered ${error.status ?? error.kind}${error.detail ? ` (${error.detail})` : ''}.`);
         let last = error;
         let tries = 0;
-        for await (const other of fallbackModels({ state, apiKey, env: context.env || process.env, fetchImpl, model, log })) {
+        for await (const other of fallbackModels({ state, apiKey, env: context.env || process.env, fetchImpl, model: startModel, log })) {
           if (deadline - now() < 3000 || tries >= 3) break;
           tries += 1;
           try {
             const answer = readAnswer(await generateContent({ apiKey, model: other, body: request, timeoutMs: attemptMs(), fetchImpl }));
-            log.warn(`Gemini room: answered with ${other} instead of ${model}.`);
+            log.warn(`Gemini room: answered with ${other} instead of ${startModel}.`);
+            state.working = { model: other, until: now() + WORKING_MODEL_MS }; // start with it for a while, no waiting on the slow one
             return answer;
           } catch (retryError) {
             last = retryError;

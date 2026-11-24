@@ -101,7 +101,8 @@ export async function listChatModels({ apiKey, timeoutMs = 8000, fetchImpl = glo
   let json;
   try { json = await response.json(); } catch { throw new GeminiError('bad_response'); }
   const version = (name) => Number(String(name).match(/gemini-(\d+(?:\.\d+)?)/u)?.[1] ?? 0);
-  const rank = (name) => (/flash/u.test(name) && !/lite/u.test(name) ? 3 : /flash/u.test(name) ? 2 : /pro/u.test(name) ? 1 : 0);
+  // Lite models first: they answer fastest and are the least likely to be overloaded when the newest Flash is.
+  const rank = (name) => (/flash/u.test(name) && /lite/u.test(name) ? 3 : /flash/u.test(name) ? 2 : /pro/u.test(name) ? 1 : 0);
   return (json?.models || [])
     .filter((model) => (model?.supportedGenerationMethods || []).includes('generateContent'))
     .map((model) => String(model.name || '').replace(/^models\//u, ''))
