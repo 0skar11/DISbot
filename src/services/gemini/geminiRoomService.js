@@ -21,7 +21,7 @@ import { isServerOwner } from '../../config/serverOwners.js';
 import { GEMINI_DEFAULT_ROOMS, GEMINI_LIMITS, GEMINI_ROOMS_DB_KEY, geminiApiKey, geminiFallbackModel, geminiModel } from '../../config/geminiRoom.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { logger } from '../../utils/logger.js';
-import { GEMINI_SAFETY_SETTINGS, generateContent, readAnswer } from './geminiClient.js';
+import { GEMINI_SAFETY_SETTINGS, generateContent, listChatModels, readAnswer } from './geminiClient.js';
 import { anonymizeForPrompt, clip, splitMessage, stripMentions } from './geminiText.js';
 import { GEMINI_TOOL_DECLARATIONS, armConfirmation, confirmationPreview, confirmationRow, runGeminiTool } from './geminiTools.js';
 
@@ -339,6 +339,37 @@ function startTyping(channel) {
   return { stop: () => clearInterval(timer) };
 }
 
+const MODEL_LIST_TTL_MS = 60 * 60_000;
+
+/**
+ * Models to try when the main one fails: GEMINI_FALLBACK_MODEL if set, then the chat models this key can use
+ * (listed from the API once an hour), the main model left out. Never throws.
+ */
+async function* fallbackModels({ state, apiKey, env, fetchImpl, model, log }) {
+  const seen = new Set([model]);
+  const configured = geminiFallbackModel(env);
+  if (configured && !seen.has(configured)) {
+    seen.add(configured);
+    yield configured;
+  }
+  const nowMs = Date.now();
+  try {
+    if (!state.modelList || nowMs - state.modelList.at > MODEL_LIST_TTL_MS) {
+      state.modelList = { at: nowMs, models: await listChatModels({ apiKey, fetchImpl }) };
+      log.info(`Gemini room: ${state.modelList.models.length} usable chat models found; first: ${state.modelList.models.slice(0, 3).join(', ') || 'none'}.`);
+    }
+  } catch (error) {
+    log.warn(`Gemini room: could not list the models (${error?.message}).`);
+    return;
+  }
+  for (const name of state.modelList.models) {
+    if (name && !seen.has(name)) {
+      seen.add(name);
+      yield name;
+    }
+  }
+}
+
 async function answer(message, client, context) {
   const { log, state, apiKey, model, question, prefixes, fetchImpl, now } = context;
   const userId = String(message.author.id);
@@ -357,16 +388,30 @@ async function answer(message, client, context) {
     const owner = isServerOwner(userId);
     const deadline = now() + GEMINI_LIMITS.timeoutMs;
     const request = buildRequest({ owner, message, client, question, context: await roomContext(message, client, prefixes) });
-    const fallbackModel = geminiFallbackModel(context.env || process.env);
     const ask = async () => {
       try {
         return readAnswer(await generateContent({ apiKey, model, body: request, timeoutMs: deadline - now(), fetchImpl }));
       } catch (error) {
-        // An overloaded (5xx) or unknown (404) main model: one try on the fallback model, same deadline.
+        // An overloaded (5xx) or unknown (404) main model: up to two tries on other models, same deadline.
         const retryable = error?.kind === 'http' && [404, 500, 502, 503, 504].includes(error.status);
-        if (!retryable || !fallbackModel || fallbackModel === model || deadline - now() < 3000) throw error;
-        log.warn(`Gemini room: ${model} answered ${error.status}, trying ${fallbackModel}.`);
-        return readAnswer(await generateContent({ apiKey, model: fallbackModel, body: request, timeoutMs: deadline - now(), fetchImpl }));
+        if (!retryable) throw error;
+        log.warn(`Gemini room: ${model} answered ${error.status}${error.detail ? ` (${error.detail})` : ''}.`);
+        let last = error;
+        let tries = 0;
+        for await (const other of fallbackModels({ state, apiKey, env: context.env || process.env, fetchImpl, model, log })) {
+          if (deadline - now() < 3000 || tries >= 2) break;
+          tries += 1;
+          try {
+            const answer = readAnswer(await generateContent({ apiKey, model: other, body: request, timeoutMs: deadline - now(), fetchImpl }));
+            log.warn(`Gemini room: answered with ${other} instead of ${model}.`);
+            return answer;
+          } catch (retryError) {
+            last = retryError;
+            log.warn(`Gemini room: ${other} answered ${retryError?.status ?? retryError?.kind}${retryError?.detail ? ` (${retryError.detail})` : ''}.`);
+            if (!(retryError?.kind === 'http' && [404, 500, 502, 503, 504].includes(retryError.status))) break;
+          }
+        }
+        throw last;
       }
     };
 

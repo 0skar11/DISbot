@@ -42,12 +42,13 @@ export function geminiApiKey(env = process.env) {
   return String(env?.GEMINI_API_KEY ?? '').trim();
 }
 
-/** Tried once when the main model answers 500/502/503/504 (overloaded) or 404; GEMINI_FALLBACK_MODEL overrides it. */
-export const GEMINI_DEFAULT_FALLBACK_MODEL = 'gemini-2.5-flash';
-
+/**
+ * Optional: tried first when the main model answers 500/502/503/504 (overloaded) or 404. Empty = none; the bot then
+ * uses the chat models the API key can list.
+ */
 export function geminiFallbackModel(env = process.env) {
   const model = String(env?.GEMINI_FALLBACK_MODEL ?? '').trim().toLowerCase().replace(/^models\//u, '');
-  return MODEL_ID.test(model) ? model : GEMINI_DEFAULT_FALLBACK_MODEL;
+  return MODEL_ID.test(model) ? model : '';
 }
 
 /** GEMINI_MODEL when it looks like a model ID (it goes into the request URL), otherwise the default. */
