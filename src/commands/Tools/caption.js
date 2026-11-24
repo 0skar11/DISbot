@@ -12,7 +12,7 @@ export default {
       .setRequired(true))
     .addAttachmentOption((option) => option
       .setName('image')
-      .setDescription('The picture to caption (up to 10 MB)')
+      .setDescription('The picture, GIF or video to caption (pictures up to 10 MB, videos up to 20 MB)')
       .setRequired(false)),
 
   async execute(interaction) {

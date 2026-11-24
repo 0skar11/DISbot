@@ -2,14 +2,21 @@
 // writes the text above the picture on a solid white background (meme caption style).
 // GH #325: an animated GIF / WebP comes back as an animated GIF with the caption on every frame (kept under
 // MAX_OUTPUT_BYTES by shrinking it, then by dropping frames); a still picture comes back as a PNG.
+// A video GIF (Discord's GIF picker often sends only an mp4 / webm) or an uploaded video is turned into a GIF first
+// (videoToGif.js: its first 10 seconds) and then captioned the same way; only when that fails is its still thumbnail
+// used, with a short note.
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import sharp from 'sharp';
-import { findImageSource, isSafeUrl, download, downloadFirst } from '../gifConverterService.js';
+import { findMediaSource, isSafeUrl, download, downloadFirst, videoAttachmentSource } from '../gifConverterService.js';
+import { videoToGif, MAX_VIDEO_BYTES } from './videoToGif.js';
 import { logger } from '../../utils/logger.js';
 
+export { MAX_VIDEO_BYTES };
 export const MAX_INPUT_BYTES = 10 * 1024 * 1024;
+// A video is bigger than a picture and may take longer to arrive.
+const VIDEO_FETCH_TIMEOUT_MS = 20_000;
 // Discord's upload limit is 10 MB: the GIF stays under 8 MB.
 export const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export const MAX_TEXT_LENGTH = 500;
@@ -51,7 +58,10 @@ export const TEXT = {
   textTooLong: '❌ الكلام طويل أوي، أقصى حد 500 حرف.',
   failed: '❌ حصل خطأ أثناء إضافة الكابشن، جرّب صورة تانية.',
   busy: '⏳ البوت بيعمل كابشن لصور كتير دلوقتي، جرّب بعد شوية.',
-  videoStill: '⚠️ الجيف ده فيديو مش GIF، فطلع صورة ثابتة. ارفعه كملف GIF عشان يفضل متحرك.',
+  videoStill: '⚠️ معرفتش أحوّل الجيف ده لجيف متحرك، فطلع صورة ثابتة.',
+  videoTooBig: '❌ الفيديو كبير أوي، أقصى حجم 20 ميجا.',
+  videoFailed: '❌ معرفتش أحوّل الفيديو ده لجيف، جرّب جيف أو فيديو تاني.',
+  videoBusy: '⏳ البوت بيحوّل فيديو تاني دلوقتي، جرّب بعد شوية.',
   cooldown: (s) => `⏳ استنى ${s} ثانية قبل ما تستخدم الأمر تاني.`,
 };
 
@@ -88,11 +98,22 @@ export function wrapText(text, maxCharsPerLine = 35) {
   return lines.length ? lines : [' '];
 }
 
+// On Windows, the first text drawn with `fontfile` registers the font with fontconfig while pango is still starting
+// fontconfig in its own thread (scanning C:\Windows\Fonts): about 1 process in 5 crashed (heap corruption) on its
+// first caption. One plain text drawn first lets pango finish starting, then the font file is safe to add.
+let fontsReady = null;
+function prepareFonts() {
+  if (process.platform !== 'win32') return null;
+  fontsReady ??= sharp({ text: { text: 'x', rgba: true } }).png().toBuffer().then(() => {}, () => {});
+  return fontsReady;
+}
+
 /**
  * The white caption bar for a picture `width` wide, as `{ data, height }` with raw RGBA `data`.
  * Uses the bundled Cairo-Bold font directly to render on Linux (Railway) and all platforms without relying on OS fonts.
  */
 async function buildHeader(width, text) {
+  await prepareFonts();
   const fontSize = Math.max(18, Math.min(44, Math.round(width / 16)));
   const paddingX = Math.round(width * 0.05);
   const innerWidth = width - (paddingX * 2);
@@ -273,9 +294,37 @@ export function isCaptionCommand(parsed) {
 }
 
 /**
- * Handles message or interaction caption request.
+ * What to try, in order: `{ video, urls, still }`. The picture (`candidates`, or the link itself) and the video
+ * (`video.candidates`, turned into a GIF). A real GIF (Tenor / Giphy) goes before its video, the video before a
+ * picture that is only its still thumbnail (`videoStill`); a source that is only a video has no picture.
  */
-export async function runCaption({ userId, text, getImage, respond }, deps = {}) {
+function captionAttempts(image, safe) {
+  const pictures = image.video
+    ? (image.candidates || [])
+    : (image.candidates?.length ? image.candidates : [image.url]);
+  const videos = image.video?.candidates || [];
+  const picture = pictures.some((url) => safe(url)) ? { video: false, urls: pictures, still: Boolean(image.videoStill) } : null;
+  const video = videos.some((url) => safe(url)) ? { video: true, urls: videos } : null;
+  return (image.videoStill ? [video, picture] : [picture, video]).filter(Boolean);
+}
+
+/** The answer when nothing could be captioned; `failures` are `{ video, stage, message }`, best attempt first. */
+function failureText(failures) {
+  if (failures.some((failure) => failure.video && failure.message === 'busy')) return TEXT.videoBusy;
+  const first = failures[0];
+  if (!first) return TEXT.failed;
+  if (first.message === 'too big') {
+    if (first.stage === 'caption') return TEXT.outputTooBig;
+    return first.video ? TEXT.videoTooBig : TEXT.tooBig;
+  }
+  return first.video ? TEXT.videoFailed : TEXT.failed;
+}
+
+/**
+ * Handles message or interaction caption request. `working` (optional) is called before a video is converted, which
+ * takes a while (the typed command shows "typing" again).
+ */
+export async function runCaption({ userId, text, getImage, respond, working }, deps = {}) {
   const now = (deps.now || Date.now)();
   const last = lastUse.get(userId);
   if (last !== undefined && now - last < COOLDOWN_MS) {
@@ -311,32 +360,45 @@ export async function runCaption({ userId, text, getImage, respond }, deps = {})
 
   lastUse.set(userId, now);
   running += 1;
+  const failures = [];
+  let answer = null;
   try {
-    // A Tenor / Giphy GIF comes with its animated formats, best first: one that is missing or too big falls back.
-    const candidates = image.candidates?.length ? image.candidates : [image.url];
-    let bytes;
-    try {
-      ({ bytes } = await downloadFirst(candidates, { fetch: deps.fetch, maxBytes: MAX_INPUT_BYTES, download: deps.download || download, safe }));
-    } catch (error) {
-      logger.warn(`[CAPTION] download failed: ${error.message || error}`);
-      return respond({ content: error.message === 'too big' ? TEXT.tooBig : TEXT.failed });
+    for (const attempt of captionAttempts(image, safe)) {
+      let stage = 'download';
+      try {
+        if (attempt.video && Number(image.video.size || 0) > MAX_VIDEO_BYTES) throw new Error('too big');
+        // A Tenor / Giphy GIF comes with its animated formats, best first: one that is missing or too big falls back.
+        let { bytes } = await downloadFirst(attempt.urls, {
+          fetch: deps.fetch,
+          maxBytes: attempt.video ? MAX_VIDEO_BYTES : MAX_INPUT_BYTES,
+          timeoutMs: attempt.video ? VIDEO_FETCH_TIMEOUT_MS : undefined,
+          download: deps.download || download,
+          safe,
+        });
+        if (attempt.video) {
+          stage = 'convert';
+          try { working?.(); } catch {}
+          bytes = await (deps.videoToGif || videoToGif)(bytes, deps);
+        }
+        stage = 'caption';
+        const result = await (deps.generateCaption || generateCaption)(bytes, cleanText);
+        const buffer = Buffer.isBuffer(result) ? result : result.buffer;
+        const isGif = result?.isGif ?? /\.gif$/iu.test(result?.filename || '');
+        const filename = result?.filename || (isGif ? 'caption.gif' : 'caption.png');
+        // Only the still thumbnail of a video GIF could be read: say so instead of passing it off as the GIF.
+        const note = attempt.still && !isGif ? { content: TEXT.videoStill } : {};
+        answer = { ...note, files: [{ attachment: buffer, name: filename }] };
+        break;
+      } catch (error) {
+        const message = error?.message || String(error);
+        logger.warn(`[CAPTION] ${attempt.video ? 'video' : 'picture'} ${stage} failed: ${message}`);
+        failures.push({ video: attempt.video, stage, message });
+      }
     }
-    const result = await (deps.generateCaption || generateCaption)(bytes, cleanText);
-    const buffer = Buffer.isBuffer(result) ? result : result.buffer;
-    const isGif = result?.isGif ?? /\.gif$/iu.test(result?.filename || '');
-    const filename = result?.filename || (isGif ? 'caption.gif' : 'caption.png');
-    // Only the still thumbnail of a video GIF could be read: say so instead of passing it off as the GIF.
-    const note = image.videoStill && !isGif ? { content: TEXT.videoStill } : {};
-    return respond({
-      ...note,
-      files: [{ attachment: buffer, name: filename }],
-    });
-  } catch (error) {
-    logger.warn('Caption generation failed:', error.message || error);
-    return respond({ content: error.message === 'too big' ? TEXT.outputTooBig : TEXT.failed });
   } finally {
     running -= 1;
   }
+  return respond(answer || { content: failureText(failures) });
 }
 
 /** Typed handler. Returns true when the message was this command. */
@@ -352,14 +414,16 @@ export async function handleCaptionCommand(message, args = [], deps = {}) {
   const textArgs = args.filter((arg) => !/^https?:\/\//i.test(arg));
   const text = textArgs.join(' ');
 
+  const typing = () => message.channel?.sendTyping?.()?.catch?.(() => {});
   await runCaption({
     userId: message.author?.id,
     text,
     getImage: async () => {
-      message.channel?.sendTyping?.().catch?.(() => {});
-      return findImageSource(message, args, deps);
+      typing();
+      return findMediaSource(message, args, deps);
     },
     respond,
+    working: typing,
   }, deps);
   return true;
 }
@@ -381,8 +445,9 @@ export async function handleCaptionInteraction(interaction, deps = {}) {
       if (!attachment) return null;
       const imageName = /\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?|$)/iu;
       const isImage = attachment.contentType?.startsWith('image/') || imageName.test(attachment.name || '') || imageName.test(attachment.url || '');
-      if (!isImage) return { url: attachment.url, size: attachment.size, notImage: true };
-      return { url: attachment.url, size: attachment.size };
+      if (isImage) return { url: attachment.url, size: attachment.size };
+      // An uploaded video (mp4 / webm / mov) is turned into a GIF.
+      return videoAttachmentSource(attachment) || { url: attachment.url, size: attachment.size, notImage: true };
     },
     respond,
   }, deps);

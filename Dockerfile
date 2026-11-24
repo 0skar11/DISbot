@@ -8,6 +8,8 @@ ENV NODE_ENV=production
 ENV ONNXRUNTIME_NODE_INSTALL=skip
 
 COPY package*.json ./
+# ffmpeg-static (`.caption` on video GIFs) downloads its static ffmpeg (linux-x64, about 30 MB) from GitHub during
+# npm ci, so the build needs to reach github.com; FFMPEG_BIN can point at another ffmpeg instead.
 RUN npm ci --omit=dev
 
 COPY . .

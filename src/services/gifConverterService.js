@@ -30,6 +30,9 @@ const lastUse = new Map(); // userId -> time
 let running = 0;
 const URL_PATTERN = /https:\/\/[^\s<>]+/iu;
 const IMAGE_NAME = /\.(?:png|jpe?g|webp|gif|bmp|tiff?|avif)(?:\?|$)/iu;
+const VIDEO_NAME = /\.(?:mp4|webm|mov|m4v|mkv)(?:\?|$)/iu;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 3;
 
 const DISCORD_IMAGE_HOSTS = [
     /^cdn\.discordapp\.com$/u,
@@ -219,6 +222,27 @@ export function isSafeUrl(value) {
 }
 
 const isImageAttachment = (attachment) => Boolean(attachment?.contentType?.startsWith('image/') || IMAGE_NAME.test(attachment?.name || attachment?.url || ''));
+const isVideoAttachment = (attachment) => Boolean(attachment?.contentType?.startsWith('video/') || VIDEO_NAME.test(attachment?.name || '') || VIDEO_NAME.test(attachment?.url || ''));
+
+/** The links among `links` we may download, each once, in order. */
+const safeLinks = (...links) => [...new Set(links.filter((link) => link && isSafeUrl(link)))];
+
+/** The video of an embed (a `gifv` from the GIF picker, a video link) as `{ candidates }`: its own link, then Discord's proxy copy. */
+function embedVideo(embed) {
+    const candidates = safeLinks(embed?.video?.url, embed?.video?.proxyURL);
+    return candidates.length ? { candidates } : null;
+}
+
+/**
+ * The source for an uploaded video (an mp4 / webm / mov attachment), or null when it is not one: no picture to try,
+ * only the video, which `.caption` turns into a GIF.
+ */
+export function videoAttachmentSource(attachment) {
+    if (!isVideoAttachment(attachment)) return null;
+    const candidates = safeLinks(attachment.url, attachment.proxyURL);
+    if (!candidates.length) return null;
+    return { url: candidates[0], candidates: [], videoStill: false, video: { candidates, size: attachment.size } };
+}
 
 /**
  * The animated GIF of a Tenor / Giphy embed (a GIF sent from Discord's GIF picker is a `gifv` embed: a still
@@ -236,14 +260,49 @@ function embedGifUrl(embed) {
     return null;
 }
 
-/** `{ url, videoStill }` of the picture in a message, or null. `videoStill`: only the still thumbnail of a video GIF. */
-function sourceFromMessage(message) {
-    const attachment = [...(message?.attachments?.values?.() || [])].find(isImageAttachment);
+/** The picture of an embed with no Tenor / Giphy media link: `{ url, page, videoStill }`, or null. */
+function embedPicture(embed) {
+    // A Tenor / Giphy page: its GIF is read from the page.
+    if (embed.url && isTenorOrGiphy(embed.url)) {
+        return { url: embed.url, page: true };
+    }
+    const proxyCandidate = embed.thumbnail?.url || embed.image?.url || embed.thumbnail?.proxyURL || embed.image?.proxyURL;
+    if (proxyCandidate) {
+        const unwrapped = unwrapDiscordProxyUrl(proxyCandidate);
+        if (isTenorOrGiphy(unwrapped)) {
+            return { url: unwrapped };
+        }
+    }
+    if (embed.image?.url && isSafeUrl(embed.image.url)) {
+        return { url: embed.image.url };
+    }
+    if (embed.thumbnail?.url && isSafeUrl(embed.thumbnail.url) && IMAGE_NAME.test(embed.thumbnail.url)) {
+        return { url: embed.thumbnail.url };
+    }
+    // Prefer Discord's proxy copy for external images: the plain URL of a link embed is an outside site.
+    const fallback = embed.image?.proxyURL || embed.thumbnail?.proxyURL || embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
+    // A video GIF (`gifv`) from another site only has a still thumbnail here: sharp cannot read its mp4.
+    if (fallback) return { url: fallback, videoStill: embed.type === 'gifv' || Boolean(embed.video?.url) };
+    return null;
+}
+
+/**
+ * `{ url, videoStill, video, videoOnly }` of the picture in a message, or null. `videoStill`: only the still thumbnail
+ * of a video GIF. With `videos` (`.caption`, which turns a video into a GIF): `video` is `{ candidates }`, the links of
+ * the message's video, and `videoOnly` a source that is only a video (an uploaded mp4, say).
+ */
+function sourceFromMessage(message, { videos = false } = {}) {
+    const attachments = [...(message?.attachments?.values?.() || [])];
+    const attachment = attachments.find(isImageAttachment);
     if (attachment) return { url: attachment.url };
+    if (videos) {
+        const clip = attachments.map(videoAttachmentSource).find(Boolean);
+        if (clip) return { ...clip, videoOnly: true };
+    }
 
     for (const embed of message?.embeds || []) {
         const gif = embedGifUrl(embed);
-        if (gif) return { url: gif };
+        if (gif) return videos ? { url: gif, video: embedVideo(embed) } : { url: gif };
     }
 
     // Check message content for Tenor / Giphy or direct safe Discord attachment links FIRST
@@ -252,31 +311,25 @@ function sourceFromMessage(message) {
     for (const w of words) {
         const link = URL_PATTERN.exec(w)?.[0];
         if (link && (isTenorOrGiphy(link) || (isSafeUrl(link) && IMAGE_NAME.test(link)))) {
-            return { url: link };
+            // A Tenor / Giphy mp4 link gives its GIF, the mp4 itself being the fallback.
+            return videos && VIDEO_NAME.test(link) ? { url: link, video: { candidates: [link] } } : { url: link };
+        }
+        if (videos && link && isSafeUrl(link) && VIDEO_NAME.test(link)) {
+            return { url: link, videoOnly: true, video: { candidates: [link] } };
         }
     }
 
     for (const embed of message?.embeds || []) {
-        if (embed.url && isTenorOrGiphy(embed.url)) {
-            return { url: embed.url };
+        const picture = embedPicture(embed);
+        const video = videos ? embedVideo(embed) : null;
+        if (!video) {
+            if (picture) return picture;
+            continue;
         }
-        const proxyCandidate = embed.thumbnail?.url || embed.image?.url || embed.thumbnail?.proxyURL || embed.image?.proxyURL;
-        if (proxyCandidate) {
-            const unwrapped = unwrapDiscordProxyUrl(proxyCandidate);
-            if (isTenorOrGiphy(unwrapped)) {
-                return { url: unwrapped };
-            }
-        }
-        if (embed.image?.url && isSafeUrl(embed.image.url)) {
-            return { url: embed.image.url };
-        }
-        if (embed.thumbnail?.url && isSafeUrl(embed.thumbnail.url) && IMAGE_NAME.test(embed.thumbnail.url)) {
-            return { url: embed.thumbnail.url };
-        }
-        // Prefer Discord's proxy copy for external images: the plain URL of a link embed is an outside site.
-        const fallback = embed.image?.proxyURL || embed.thumbnail?.proxyURL || embed.image?.url || embed.thumbnail?.url || (embed.type === 'image' ? embed.url : null);
-        // A video GIF (`gifv`) from another site only has a still thumbnail here: sharp cannot read its mp4.
-        if (fallback) return { url: fallback, videoStill: embed.type === 'gifv' || Boolean(embed.video?.url) };
+        if (!picture) return { url: video.candidates[0], videoOnly: true, video };
+        // A Tenor / Giphy page gives the real GIF (the video is its fallback); anything else here is only the
+        // video's still thumbnail, so the video is tried first.
+        return { ...picture, video, videoStill: !picture.page };
     }
     return null;
 }
@@ -299,15 +352,28 @@ export function originalDiscordFile(value) {
  * links to download, best first (for Tenor / Giphy: the animated GIF formats, smaller ones as a fallback).
  */
 export async function findImageSource(message, args = [], deps = {}) {
+    return findSource(message, args, deps, { videos: false });
+}
+
+/**
+ * Like findImageSource, for `.caption`, which can turn a video into a GIF: also `video` (`{ candidates, size }`, the
+ * links of the video GIF / video, or null). A source that is only a video (an uploaded mp4) has no `candidates`.
+ */
+export async function findMediaSource(message, args = [], deps = {}) {
+    return findSource(message, args, deps, { videos: true });
+}
+
+async function findSource(message, args, deps, { videos }) {
     const fetchImpl = deps?.fetch || fetch;
-    let source = sourceFromMessage(message);
+    let source = sourceFromMessage(message, { videos });
     if (!source && message.reference?.messageId) {
         const replied = await message.fetchReference().catch(() => null);
-        source = sourceFromMessage(replied);
+        source = sourceFromMessage(replied, { videos });
     }
     if (!source) {
         const link = args.map((arg) => URL_PATTERN.exec(arg)?.[0]).find(Boolean);
         if (link && (isTenorOrGiphy(link) || IMAGE_NAME.test(link))) source = { url: link };
+        else if (videos && link && isSafeUrl(link) && VIDEO_NAME.test(link)) source = { url: link, videoOnly: true, video: { candidates: [link] } };
     }
     if (!source) {
         const mentioned = message.mentions?.users?.first?.();
@@ -315,10 +381,12 @@ export async function findImageSource(message, args = [], deps = {}) {
         if (avatar) source = { url: avatar };
     }
     if (!source?.url) return null;
+    if (source.videoOnly) return { url: source.url, candidates: [], videoStill: false, video: source.video };
     let url = unwrapDiscordProxyUrl(source.url);
     if (isTenorOrGiphy(url)) url = await (deps?.resolveMediaUrl || resolveMediaUrl)(url, fetchImpl);
     url = originalDiscordFile(url);
-    return { url, candidates: animatedCandidates(url), videoStill: Boolean(source.videoStill) };
+    const found = { url, candidates: animatedCandidates(url), videoStill: Boolean(source.videoStill) };
+    return videos ? { ...found, video: source.video || null } : found;
 }
 
 /** Where the picture is: a URL, or null when the message gives none. */
@@ -326,9 +394,24 @@ export async function findImageUrl(message, args = [], deps = {}) {
     return (await findImageSource(message, args, deps))?.url ?? null;
 }
 
-/** Downloads a picture, streamed and stopped at `maxBytes` (error 'too big'). Also used by `شيل الخلفية`. */
-export async function download(url, fetchImpl = fetch, maxBytes = MAX_INPUT_BYTES) {
-    const response = await fetchImpl(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS), redirect: 'error' });
+/**
+ * Downloads a picture, streamed and stopped at `maxBytes` (error 'too big'). Also used by `شيل الخلفية`.
+ * A redirect is followed only to a link that passes `safe` (at most MAX_REDIRECTS), else error 'unsafe redirect'.
+ */
+export async function download(url, fetchImpl = fetch, maxBytes = MAX_INPUT_BYTES, { timeoutMs = FETCH_TIMEOUT_MS, safe = isSafeUrl } = {}) {
+    const signal = AbortSignal.timeout(timeoutMs);
+    let current = url;
+    let response;
+    for (let redirects = 0; ; redirects += 1) {
+        response = await fetchImpl(current, { signal, redirect: 'manual' });
+        const location = REDIRECT_STATUSES.has(response.status) ? response.headers?.get?.('location') : null;
+        if (!location) break;
+        await response.body?.cancel?.().catch?.(() => {});
+        let next;
+        try { next = new URL(location, current).href; } catch { throw new Error('unsafe redirect'); }
+        if (redirects >= MAX_REDIRECTS || !safe(next)) throw new Error('unsafe redirect');
+        current = next;
+    }
     if (!response.ok) throw new Error(`download failed (${response.status})`);
     if (Number(response.headers.get('content-length') || 0) > maxBytes) {
         await response.body?.cancel?.().catch?.(() => {});
@@ -357,11 +440,11 @@ export async function download(url, fetchImpl = fetch, maxBytes = MAX_INPUT_BYTE
  * Downloads the first of `urls` that works (a Tenor format that is missing or too big falls back to the next one).
  * Only links that pass `safe` are tried. Throws the last error when none works.
  */
-export async function downloadFirst(urls, { fetch: fetchImpl = fetch, maxBytes = MAX_INPUT_BYTES, download: get = download, safe = isSafeUrl } = {}) {
+export async function downloadFirst(urls, { fetch: fetchImpl = fetch, maxBytes = MAX_INPUT_BYTES, download: get = download, safe = isSafeUrl, timeoutMs = FETCH_TIMEOUT_MS } = {}) {
     let lastError = new Error('download failed');
     for (const url of urls.filter((candidate) => safe(candidate))) {
         try {
-            return { bytes: await get(url, fetchImpl, maxBytes), url };
+            return { bytes: await get(url, fetchImpl, maxBytes, { timeoutMs, safe }), url };
         } catch (error) {
             lastError = error;
         }

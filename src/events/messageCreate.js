@@ -43,6 +43,7 @@ import { handleMentionGroupCommand } from '../services/mentionGroup.js';
 import { handleStreakCommand, handleStreakMessage, isStreakChannel } from '../services/cc/streakService.js';
 import { handleDangerCommand, handleDangerMessage, punishDanger, blockDangerCommand, DANGER_COMMAND_WORD } from '../services/moderation/dangerList.js';
 import { isHomeGuild } from '../config/homeGuild.js';
+import { handleGeminiRoomMessage } from '../services/gemini/geminiRoomService.js';
 import { handleAutomodMessage, isAutomodCommand } from '../services/moderation/automodCommand.js';
 import { getCommandDefaultPermissions, memberMeetsCommandPermissions } from '../utils/permissionGuard.js';
 import { assertCanActOn } from '../services/moderation/memberHierarchy.js';
@@ -105,6 +106,9 @@ export default {
       handleStreakMessage(message);
       // Clears the author's AFK (unless this is the afk command itself) and announces AFK members they mention.
       await handleAfkMessage(message, client, { isAfkCommand: AFK_COMMAND.test(message.content || '') });
+      // The Gemini room (docs/gemini-room.md): a normal message there gets Gemini's answer and nothing else (no
+      // auto-reply, no command word without the prefix); prefixed commands and `afk` go on below as usual.
+      if (await handleGeminiRoomMessage(message, client)) return;
       // In the games channel only game commands run (the rest there is game answers).
       const gamesOnly = isGamesOnlyFor(message);
       // "السلام عليكم" gets "عليكم السلام" (our server only); the message still goes on to the commands.
