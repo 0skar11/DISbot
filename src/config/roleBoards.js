@@ -24,13 +24,19 @@ export const ROLE_BOARDS = [
     color: 0x5865f2,
     // The game roles from the board in the report. The names are found in the server; the emojis are
     // defaults and can be changed to the server's own game icons ('<:name:id>').
+    // emojiName: the server emoji uploaded to CHAOS Club (the bot sees it in every server, so Zenith can use it).
+    // emoji is the fallback. A role that does not exist in the server is skipped, never shown.
     roles: [
-      { emoji: '🚀', name: 'Rocket League' },
-      { emoji: '🧱', name: 'Roblox' },
-      { emoji: '🎯', name: 'Valorant' },
-      { emoji: '⭐', name: 'Brawl Stars' },
-      { emoji: '🕵️', name: 'Codenames' },
-      { emoji: '⚔️', name: 'Combat Master' },
+      { emoji: '🚀', emojiName: 'game_rocketleague', name: 'Rocket League' },
+      { emoji: '🧱', emojiName: 'game_roblox', name: 'Roblox' },
+      { emoji: '🔫', emojiName: 'game_pubg', name: 'PUBG' },
+      { emoji: '🗡️', emojiName: 'game_brawlhalla', name: 'Brawlhalla' },
+      { emoji: '⭐', emojiName: 'game_brawlstars', name: 'Brawl Stars' },
+      { emoji: '🎯', emojiName: 'game_valorant', name: 'Valorant' },
+      { emoji: '⛏️', emojiName: 'game_minecraft', name: 'Minecraft' },
+      { emoji: '🛸', emojiName: 'game_amongus', name: 'Among Us' },
+      { emoji: '🕵️', emojiName: 'game_codenames', name: 'Codenames' },
+      { emoji: '⚔️', emojiName: 'game_combatmaster', name: 'Combat Master' },
     ],
   },
   {

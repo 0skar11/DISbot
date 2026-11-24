@@ -51,6 +51,21 @@ export async function readBoardToCopy(guild, reference, fallbackChannel) {
 const normalizeName = (name) => String(name ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 const SPARE_EMOJIS = ['🎲', '🕹️', '🏆', '🎳', '🧩', '🏁', '🎮', '🎰', '🛡️', '🚗'];
 
+/** `<:name:id>` of a server emoji the bot can see (in any server it is in), or null. */
+export function serverEmoji(client, name) {
+  if (!name) return null;
+  const found = client?.emojis?.cache?.find?.((emoji) => emoji.name === name && emoji.available !== false);
+  return found ? `<${found.animated ? 'a' : ''}:${found.name}:${found.id}>` : null;
+}
+
+/** A board's own roles with their server emoji (emojiName) where the bot can see one. */
+export function withServerEmojis(client, entries) {
+  return (entries || []).map((entry) => {
+    const own = serverEmoji(client, entry.emojiName);
+    return own ? { ...entry, emoji: own } : entry;
+  });
+}
+
 /**
  * A copied board may use custom emojis from a server the bot is not in, which the bot cannot react with.
  * Those get an emoji it can use: the default one of the same-named role in the config, else a spare one.
@@ -67,7 +82,8 @@ export function withUsableEmojis(client, guild, entries, board = ROLE_BOARDS.fin
     const roleName = normalizeName(guild?.roles?.cache?.get(entry.roleId)?.name);
     const preset = board?.roles?.find((role) => role.name && normalizeName(role.name) === roleName
       || (roleName && role.name && roleName.includes(normalizeName(role.name))));
-    let emoji = preset?.emoji && !used.has(preset.emoji) ? preset.emoji : spare.shift();
+    const own = serverEmoji(client, preset?.emojiName);
+    let emoji = own && !used.has(own) ? own : (preset?.emoji && !used.has(preset.emoji) ? preset.emoji : spare.shift());
     if (!emoji) return entry;
     used.add(emoji);
     return { ...entry, emoji };
@@ -107,7 +123,7 @@ export async function executeRoleBoards(interaction) {
 
     const lines = [];
     for (const board of boards) {
-      const entries = board.key === 'games' && copied ? withUsableEmojis(interaction.client, interaction.guild, copied, board) : board.roles;
+      const entries = board.key === 'games' && copied ? withUsableEmojis(interaction.client, interaction.guild, copied, board) : withServerEmojis(interaction.client, board.roles);
       if (!entries?.length) {
         lines.push(`ℹ️ **${board.title}**: لسه مفيش رولات متحطة ليها (src/config/roleBoards.js)، فمتبعتتش.`);
         continue;
