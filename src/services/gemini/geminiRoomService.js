@@ -18,7 +18,7 @@
 
 import { getCommandPrefix } from '../../config/bot.js';
 import { isServerOwner } from '../../config/serverOwners.js';
-import { GEMINI_DEFAULT_ROOMS, GEMINI_LIMITS, GEMINI_ROOMS_DB_KEY, geminiApiKey, geminiModel } from '../../config/geminiRoom.js';
+import { GEMINI_DEFAULT_ROOMS, GEMINI_LIMITS, GEMINI_ROOMS_DB_KEY, geminiApiKey, geminiFallbackModel, geminiModel } from '../../config/geminiRoom.js';
 import { getGuildConfig } from '../config/guildConfig.js';
 import { logger } from '../../utils/logger.js';
 import { GEMINI_SAFETY_SETTINGS, generateContent, readAnswer } from './geminiClient.js';
@@ -357,7 +357,18 @@ async function answer(message, client, context) {
     const owner = isServerOwner(userId);
     const deadline = now() + GEMINI_LIMITS.timeoutMs;
     const request = buildRequest({ owner, message, client, question, context: await roomContext(message, client, prefixes) });
-    const ask = async () => readAnswer(await generateContent({ apiKey, model, body: request, timeoutMs: deadline - now(), fetchImpl }));
+    const fallbackModel = geminiFallbackModel(context.env || process.env);
+    const ask = async () => {
+      try {
+        return readAnswer(await generateContent({ apiKey, model, body: request, timeoutMs: deadline - now(), fetchImpl }));
+      } catch (error) {
+        // An overloaded (5xx) or unknown (404) main model: one try on the fallback model, same deadline.
+        const retryable = error?.kind === 'http' && [404, 500, 502, 503, 504].includes(error.status);
+        if (!retryable || !fallbackModel || fallbackModel === model || deadline - now() < 3000) throw error;
+        log.warn(`Gemini room: ${model} answered ${error.status}, trying ${fallbackModel}.`);
+        return readAnswer(await generateContent({ apiKey, model: fallbackModel, body: request, timeoutMs: deadline - now(), fetchImpl }));
+      }
+    };
 
     let result = await ask();
     let pending = null;
@@ -431,7 +442,7 @@ export async function handleGeminiRoomMessage(message, client, options = {}) {
     if (!question) return false;
     handled = true;
     await answer(message, client, {
-      log, state, apiKey, model: geminiModel(env), question, prefixes, fetchImpl: options.fetchImpl, now: options.now || Date.now,
+      log, state, apiKey, env, model: geminiModel(env), question, prefixes, fetchImpl: options.fetchImpl, now: options.now || Date.now,
     });
     return true;
   } catch (error) {

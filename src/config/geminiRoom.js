@@ -42,6 +42,14 @@ export function geminiApiKey(env = process.env) {
   return String(env?.GEMINI_API_KEY ?? '').trim();
 }
 
+/** Tried once when the main model answers 500/502/503/504 (overloaded) or 404; GEMINI_FALLBACK_MODEL overrides it. */
+export const GEMINI_DEFAULT_FALLBACK_MODEL = 'gemini-2.5-flash';
+
+export function geminiFallbackModel(env = process.env) {
+  const model = String(env?.GEMINI_FALLBACK_MODEL ?? '').trim().toLowerCase().replace(/^models\//u, '');
+  return MODEL_ID.test(model) ? model : GEMINI_DEFAULT_FALLBACK_MODEL;
+}
+
 /** GEMINI_MODEL when it looks like a model ID (it goes into the request URL), otherwise the default. */
 export function geminiModel(env = process.env) {
   const model = String(env?.GEMINI_MODEL ?? '').trim().toLowerCase().replace(/^models\//u, '');

@@ -658,3 +658,25 @@ describe('Gemini room: messageCreate', () => {
     });
   });
 });
+
+describe('Gemini room: overloaded main model', () => {
+  test('a 503 from the main model is retried once on the fallback model; a 401 is not', async () => {
+    for (const guildId of [undefined, '1569932761471524874']) {
+      const { client, guild, room } = zenith();
+      if (guildId) guild.id = guildId;
+      const { fetchImpl, calls } = geminiFetch({ status: 503 }, textAnswer('رد من البديل'));
+      const message = makeMessage(guild, room, 'ازيك');
+      assert.equal(await run(message, client, { fetchImpl }), true);
+      assert.equal(calls.length, 2);
+      assert.notEqual(calls[0].url, calls[1].url, 'the second request goes to another model');
+      assert.match(calls[1].url, /gemini-2\.5-flash/u);
+      assert.deepEqual(message.replies.map((reply) => reply.content), ['رد من البديل']);
+
+      const second = zenith();
+      const denied = geminiFetch({ status: 401 });
+      const refused = makeMessage(second.guild, second.room, 'ازيك', { authorId: '200000000000000021' });
+      await run(refused, second.client, { fetchImpl: denied.fetchImpl });
+      assert.equal(denied.calls.length, 1, 'a refused key is not retried on another model');
+    }
+  });
+});
