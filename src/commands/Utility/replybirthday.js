@@ -21,11 +21,13 @@ export default {
       await interaction.deferReply({ ephemeral: true }).catch(() => {});
     }
 
-    const stats = await reconcileDeletedBirthdayGreetings(interaction.client);
+    // A manual run reports failed DMs to #bot-updates too (the startup run only reports sent ones).
+    const stats = await reconcileDeletedBirthdayGreetings(interaction.client, { reportFailures: true });
     const sentList = stats.users?.length
       ? `\n• الأعضاء اللي تم إرسال الرد لهم الآن:\n${stats.users.map((u) => `- <@${u.id}> (${u.tag})`).join('\n')}`
       : '';
-    const content = `✅ **تم فحص سجل الرسائل المحذوفة بنجاح:**\n• رسايل جديدة أُرسلت الآن: **${stats.sent}**\n• إجمالي الأعضاء الذين وصلتهم الرسالة: **${stats.totalReplied ?? stats.sent}**\n• تم تسجيل التحديث في روم **#bot-updates** باللوج.${sentList}`;
+    const logged = stats.sent + stats.failed > 0 ? `\n• اتسجل في روم **#bot-updates** (وصلت ${stats.sent}، فشلت ${stats.failed}).` : '';
+    const content = `✅ **تم فحص سجل الرسائل المحذوفة بنجاح:**\n• رسايل جديدة أُرسلت الآن: **${stats.sent}**\n• إجمالي الأعضاء الذين وصلتهم الرسالة: **${stats.totalReplied ?? stats.sent}**${logged}${sentList}`;
 
     if (interaction.deferred) {
       return interaction.editReply({ content });

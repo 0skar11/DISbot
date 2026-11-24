@@ -134,9 +134,15 @@ was in the server before (a rejoin, or they already have a CC record), when some
 themselves, or when the invited member leaves before the reward. Each member can only ever be paid
 for once.
 
-Under the `welcome to chaos` message the bot posts a second, small message (Discord subtext) saying
-who invited the member and the reward conditions, or why the invite doesn't count. When the reward
-is paid, the welcome channel gets a notice that pings the inviter.
+The welcome (`src/events/voidWelcome.js`, every server) is one message from this bot (GH #329):
+`welcome to <server> @member 👋`, and under it (Discord subtext) who invited the member. Where the CC
+bot pays its invite gift (its level room is in the server, and the CC bot is there with Manage
+Server), it also says what the inviter gets (`🎁 @inviter هياخد 5,000 CC لما @member يوصل لفل 5 ويكتب
+50 رسالة`), or why the invite doesn't count (a rejoin, an account younger than 7 days). The CC bot
+tracks and pays the gift and posts nothing when a member joins. Its numbers are copied in
+`src/config/ccInviteGift.js` (keep them equal to the CC bot's `CC.inviteReward`); the Railway variables
+`CC_INVITE_GIFT_ENABLED` and `CC_LEVEL_CHANNEL_IDS` mirror its `INVITE_REWARD_ENABLED` and
+`LEVEL_CHANNEL_IDS`. Only the member and the inviter can be pinged by the welcome.
 
 Paid invites give roles: `📨 5 Invites`, `💌 10 Invites`, `🏆 25 Invites`. They are created at
 startup when missing (with no permissions, placed at the bottom, so move them where you like), and a

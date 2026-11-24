@@ -9,6 +9,7 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { replyUserError, ErrorTypes } from '../../utils/errorHandler.js';
 import { isUserArg } from '../../utils/prefixArgs.js';
 import { MAIN_INVITE_CODE, MAIN_INVITE_URL } from '../../config/security.js';
+import { noteBotAction } from '../../services/botActivityStats.js';
 
 /**
  * A permanent link to the server: the vanity URL when there is one, otherwise a never-expiring invite
@@ -106,6 +107,7 @@ export default {
 
             const dmChannel = await targetUser.createDM();
             await dmChannel.send(buildStaffDm(interaction.guild, sanitized, inviteUrl));
+            noteBotAction(interaction.client, 'dm', { guildId: interaction.guildId });
 
             // The member never sees who sent it; the staff log still does.
             await logEvent({

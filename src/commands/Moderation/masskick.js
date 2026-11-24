@@ -11,6 +11,7 @@ import { groupLeadingUsers } from '../../utils/prefixArgs.js';
 import { sendPunishmentDm } from '../../services/moderation/punishmentDm.js';
 import { assertCanActOn, lookupMember, LOOKUP_FAILED_MESSAGE } from '../../services/moderation/memberHierarchy.js';
 import { withInvoker } from '../../services/moderation/commandInvoker.js';
+import { reportMassModeration } from '../../services/botUpdatesRoom.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("masskick")
@@ -73,6 +74,7 @@ export default {
                 failed: [],
                 skipped: []
             };
+            const dms = { tried: 0, sent: 0 };
 
             for (const userId of userIds) {
                 try {
@@ -121,7 +123,8 @@ export default {
                         continue;
                     }
 
-                    await sendPunishmentDm(interaction.guild, member.user, 'kick', reason, interaction.user);
+                    dms.tried += 1;
+                    if (await sendPunishmentDm(interaction.guild, member.user, 'kick', reason, interaction.user)) dms.sent += 1;
                     await withInvoker(interaction.guild.id, 'kick', member.id, interaction.user, () => member.kick(reason));
 
                     results.successful.push({
@@ -155,6 +158,14 @@ export default {
                         reason,
                     });
                 }
+            }
+
+            // #bot-updates: who ran it, the results and the DMs (in the background, never throws).
+            if (results.successful.length || results.failed.length) {
+                void reportMassModeration(client, interaction.guild.id, {
+                    action: 'kick', byId: interaction.user.id, done: results.successful.length, skipped: results.skipped.length,
+                    failed: results.failed.length, dmTried: dms.tried, dmSent: dms.sent,
+                });
             }
 
             let description = `**Mass Kick Results:**\n\n`;

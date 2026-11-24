@@ -22,6 +22,7 @@ import { sendModerationActionLog } from './moderationActionLogService.js';
 import { canLiftHardBan } from './hardBanService.js';
 import { isStaffMember } from '../staffRoleHierarchyService.js';
 import { postAuditRoom } from '../logging/auditRooms.js';
+import { reportAntiSpam, reportOwnerMention } from '../botUpdatesRoom.js';
 import { logger } from '../../utils/logger.js';
 
 export const FLOOD_MESSAGES = 10;
@@ -156,6 +157,8 @@ export async function handleSpam(message, { now = Date.now(), warn = issueWarnin
     }
 
     await notice(message.channel, message.author.id, `${reason} ・ ${punishment.join(' + ')}`);
+    // #bot-updates: one summary per 10 minutes (botUpdatesRoom.js), never throws.
+    reportAntiSpam(message, { reason, punishment: punishment.join(' + ') });
     return true;
 }
 
@@ -231,5 +234,6 @@ export async function handleOwnerMentionSpam(message, { now = Date.now() } = {})
     }
 
     await notice(message.channel, message.author.id, `متمنشنش صاحب السيرفر كتير ・ ${punishment}`);
+    reportOwnerMention(message, { punishment });
     return true;
 }

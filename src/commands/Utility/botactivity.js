@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { isServerOwner } from '../../config/serverOwners.js';
-import { getBotActivityStats, postActivitySummary } from '../../services/botUpdatesRoom.js';
+import { getBotActivityStats, guildActivityStats, postActivitySummary } from '../../services/botUpdatesRoom.js';
 import { REPLIED_USERS_DB_KEY } from '../../services/birthdayGreetingService.js';
 
 export default {
@@ -30,7 +30,8 @@ export default {
 
     const postCard = interaction.options.getBoolean('post_card') || false;
     const stats = await getBotActivityStats(interaction.client);
-    const repliedList = (await interaction.client.db?.get?.(REPLIED_USERS_DB_KEY, [])) || [];
+    const here = guildActivityStats(stats, interaction.guildId);
+    const repliedList = (await interaction.client.db?.get?.(REPLIED_USERS_DB_KEY, [])?.catch?.(() => [])) || [];
     const repliedCount = Array.isArray(repliedList) ? repliedList.length : 0;
 
     const totalDms = Math.max(stats.dmsSent || 0, repliedCount);
@@ -46,6 +47,7 @@ export default {
       `• 🎂 رسائل التهنئة بعيد الميلاد المستلمة: **${birthdayDms}**`,
       `• ⚙️ الأوامر المنفذة: **${stats.commandsExecuted || 0}**`,
       `• 🛡️ الإجراءات والعمليات المنفذة: **${stats.actionsPerformed || 0}**`,
+      `• 🏠 في السيرفر ده: **${here.commandsExecuted}** أمر، **${here.actionsPerformed}** إجراء، **${here.dmsSent}** رسالة خاص`,
       postCard ? '✅ تم نشر كارت التحديث في روم **#bot-updates** بنجاح.' : '💡 يمكنك تمرير `post_card: True` لنشر الكارت في روم **#bot-updates**.',
     ].join('\n');
 

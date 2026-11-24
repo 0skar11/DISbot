@@ -10,6 +10,7 @@ import { getCommandPrefix } from '../config/bot.js';
 import { ResponseCoordinator, buildPrefixUsage } from './responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from './permissionGuard.js';
 import { scheduleNoPermissionDelete } from './noPermissionReply.js';
+import { noteBotAction } from '../services/botActivityStats.js';
 
 export { buildPrefixUsage };
 
@@ -247,6 +248,8 @@ export async function executePrefixCommand(command, message, args, client, prefi
       return;
     }
 
+    // The #bot-updates activity count of typed commands (in memory, never throws).
+    noteBotAction(client || message?.client, 'command', { guildId: message?.guild?.id });
     if (command.prefixExecute) {
       await command.prefixExecute(mockInteraction, guildConfig, client);
     } else {

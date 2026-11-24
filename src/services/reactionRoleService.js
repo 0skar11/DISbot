@@ -415,6 +415,24 @@ export async function setReactionRoleChannel(client, guildId, messageId, channel
     }
 }
 
+/**
+ * Drops roles that were deleted from the server from a select-menu panel and saves it, so the panel and
+ * its dashboard never list "@unknown-role". Returns the removed role ids. Does nothing while the guild's
+ * roles are not loaded (an empty cache must not look like "every role was deleted").
+ */
+export async function pruneMissingPanelRoles(client, guild, panelData) {
+    if (!guild || guild.available === false || !guild.roles?.cache?.has?.(guild.id)) return [];
+    if (!panelData?.messageId || !Array.isArray(panelData.roles)) return [];
+
+    const removed = panelData.roles.filter(roleId => !guild.roles.cache.has(roleId));
+    if (!removed.length) return [];
+
+    panelData.roles = panelData.roles.filter(roleId => guild.roles.cache.has(roleId));
+    await client.db.set(getReactionRoleKey(guild.id, panelData.messageId), panelData);
+    logger.info(`Removed ${removed.length} deleted role(s) from reaction role panel ${panelData.messageId} in guild ${guild.id}`);
+    return removed;
+}
+
 export async function reconcileReactionRoleMessages(client, guildId = null) {
     const summary = {
         scannedGuilds: 0,

@@ -127,6 +127,11 @@ export function getReactionRolesPrefix(guildId) {
     return `guild:${guildId}:reaction_roles:`;
 }
 
+/** Emoji reaction-role boards of a guild: `{ boards: { <boardKey>: { channelId, messageId, entries, ... } } }`. */
+export function getRoleBoardsKey(guildId) {
+    return `guild:${guildId}:role_boards`;
+}
+
 export function getServerCountersKey(guildId) {
     return `guild:${guildId}:counters`;
 }

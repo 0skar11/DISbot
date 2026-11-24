@@ -27,6 +27,8 @@ const ANIMATED_MAX_WIDTH = 540;
 const ANIMATED_MIN_WIDTH = 160;
 // The decoded frames are held as RGBA: about 100 MB at most, a long GIF is made narrower to fit.
 const ANIMATED_PIXEL_BUDGET = 25_000_000;
+const ANIMATED_MAX_PAGES = 500;
+const ANIMATED_HEADER_ALLOWANCE = 400; // rows, generous for the caption bar above each frame
 const DEFAULT_FRAME_DELAY_MS = 100;
 // Tried in order until the GIF fits MAX_OUTPUT_BYTES: narrower, fewer colours, then every 2nd / 3rd frame
 // (the dropped frames' time is added to the kept ones, so the GIF plays at the same speed).
@@ -184,7 +186,11 @@ async function animatedCaption(imageBuffer, text, metadata, maxBytes) {
   const pages = metadata.pages;
   const srcWidth = metadata.width || ANIMATED_MAX_WIDTH;
   const srcPageHeight = metadata.pageHeight || Math.round((metadata.height || srcWidth) / pages);
+  if (pages > ANIMATED_MAX_PAGES) throw new Error('too big');
   const baseWidth = animatedBaseWidth(srcWidth, srcPageHeight, pages);
+  // The width floor must not defeat the memory budget: count the caption bar too and refuse when it would not fit.
+  const scaledPageHeight = Math.ceil((srcPageHeight * baseWidth) / Math.max(1, srcWidth));
+  if (pages * baseWidth * (scaledPageHeight + ANIMATED_HEADER_ALLOWANCE) > ANIMATED_PIXEL_BUDGET * 2) throw new Error('too big');
   // Browsers (and Discord) play a frame of 10 ms or less as 100 ms: that is what it is counted as.
   const delayOf = (index) => {
     const delay = Number(metadata.delay?.[index]);

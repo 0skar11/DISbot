@@ -1,6 +1,6 @@
 import { resolveAuditRoom } from './logging/auditRooms.js';
 import { SERVER_OWNER_IDS } from '../config/serverOwners.js';
-import { logBotUpdate, recordBotAction } from './botUpdatesRoom.js';
+import { reportMassDm, recordBotAction } from './botUpdatesRoom.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -26,14 +26,19 @@ export const REPLIED_USERS_DB_KEY = 'birthday:replied_users';
 /**
  * Scans the message audit log rooms in all guilds for messages that were ALREADY deleted
  * and contained birthday greetings, and sends a DM reply to each author directly.
+ * Each server's #bot-updates gets its own count (only its own members are listed there): when DMs were sent, or,
+ * with `reportFailures` (the /reply-birthday command), when they only failed. The startup run leaves out the
+ * repeated failures of closed DMs, which would otherwise be posted again on every restart.
  */
-export async function reconcileDeletedBirthdayGreetings(client, { maxPerRoom = 100 } = {}) {
+export async function reconcileDeletedBirthdayGreetings(client, { maxPerRoom = 100, reportFailures = false } = {}) {
   const alreadyRepliedList = (await client.db?.get?.(REPLIED_USERS_DB_KEY, [])) || [];
   const alreadyReplied = new Set(Array.isArray(alreadyRepliedList) ? alreadyRepliedList : []);
 
-  const stats = { scanned: 0, found: 0, sent: 0, failed: 0, users: [] };
+  const stats = { scanned: 0, found: 0, sent: 0, failed: 0, users: [], byGuild: {} };
 
   for (const guild of client.guilds.cache.values()) {
+    const here = { sent: 0, failed: 0, users: [] };
+    stats.byGuild[guild.id] = here;
     try {
       const room = await resolveAuditRoom(guild, 'message');
       if (!room || !room.isTextBased?.()) continue;
@@ -78,14 +83,18 @@ export async function reconcileDeletedBirthdayGreetings(client, { maxPerRoom = 1
             await user.send({ content: formatBirthdayReplyDm() });
             alreadyReplied.add(authorId);
             stats.sent++;
+            here.sent++;
             stats.users.push({ id: authorId, tag: user.tag || user.username });
+            here.users.push({ id: authorId, tag: user.tag || user.username });
             logger.info(`[BIRTHDAY DM] Sent birthday reassurance to ${user.tag} (${authorId})`);
           } else {
             stats.failed++;
+            here.failed++;
           }
         } catch (dmError) {
           logger.warn(`[BIRTHDAY DM] Could not send DM to ${authorId}: ${dmError.message}`);
           stats.failed++;
+          here.failed++;
         }
       }
     } catch (guildError) {
@@ -99,22 +108,11 @@ export async function reconcileDeletedBirthdayGreetings(client, { maxPerRoom = 1
     await client.db.set(REPLIED_USERS_DB_KEY, [...alreadyReplied]).catch(() => {});
   }
 
-  if (stats.sent > 0) {
-    await recordBotAction(client, 'birthday_dm', stats.sent).catch(() => {});
-    await logBotUpdate(client, {
-      title: '📬 إرسال رسائل التهنئة في الخاص',
-      description: 'تم فحص سجل الرسائل المحذوفة وإرسال الرد في الخاص للأعضاء الذين أرسلوا تهاني عيد الميلاد:',
-      fields: [
-        { name: '📥 تم العثور في السجل على', value: `${stats.found} رسالة`, inline: true },
-        { name: '✅ رسايل جديدة أُرسلت الآن', value: `**${stats.sent}** رسالة`, inline: true },
-        { name: '👥 إجمالي الأعضاء المستلمين حتى الآن', value: `**${stats.totalReplied}** عضو`, inline: true },
-        ...(stats.users.length > 0 ? [{
-          name: 'الأعضاء المستلمون في هذه العملية',
-          value: stats.users.map((u) => `• <@${u.id}> (${u.tag})`).join('\n').slice(0, 1024),
-        }] : []),
-      ],
-      color: 0x2ecc71,
-    }).catch(() => {});
+  for (const [guildId, here] of Object.entries(stats.byGuild)) {
+    if (here.sent > 0) await recordBotAction(client, 'birthday_dm', here.sent, guildId).catch(() => {});
+    if (here.sent > 0 || (reportFailures && here.failed > 0)) {
+      await reportMassDm(client, guildId, { what: 'ردود تهاني عيد الميلاد', ...here }).catch(() => {});
+    }
   }
 
   return stats;

@@ -4,7 +4,7 @@ import { createEmbed, successEmbed, infoEmbed, warningEmbed } from '../../utils/
 import { logger } from '../../utils/logger.js';
 import { createError, TitanBotError, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
-import { createReactionRoleMessage, hasDangerousPermissions, getAllReactionRoleMessages, deleteReactionRoleMessage } from '../../services/reactionRoleService.js';
+import { createReactionRoleMessage, hasDangerousPermissions, getAllReactionRoleMessages, deleteReactionRoleMessage, pruneMissingPanelRoles } from '../../services/reactionRoleService.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
 import {
     getReactionRolePanelStatus,
@@ -362,7 +362,8 @@ async function fetchPanelDiscordMessage(guild, panelData) {
     }
 }
 
-async function rebuildLivePanelMessage(guild, panelData) {
+/** Re-renders a live select-menu panel from its stored roles (also used when a role is deleted). */
+export async function rebuildLivePanelMessage(guild, panelData) {
     try {
         const channel = guild.channels.cache.get(panelData.channelId);
         if (!channel) return;
@@ -373,12 +374,21 @@ async function rebuildLivePanelMessage(guild, panelData) {
             .map(id => guild.roles.cache.get(id))
             .filter(Boolean);
 
-        if (roleObjects.length === 0) return;
-
         const currentEmbed = msg.embeds[0];
         const updatedEmbed = EmbedBuilder.from(currentEmbed);
         const fields = currentEmbed.fields.map(f => ({ name: f.name, value: f.value, inline: f.inline }));
         const roleFieldIdx = fields.findIndex(f => f.name === 'Available Roles');
+
+        if (roleObjects.length === 0) {
+            // Every role on the panel was deleted: drop the menu instead of offering roles that no longer exist.
+            if (roleFieldIdx !== -1) {
+                fields[roleFieldIdx] = { name: 'Available Roles', value: '`None`', inline: false };
+                updatedEmbed.setFields(fields);
+            }
+            await msg.edit({ embeds: [updatedEmbed], components: [] });
+            return;
+        }
+
         const newRoleValue = roleObjects.map(r => `• ${r}`).join('\n');
         if (roleFieldIdx !== -1) {
             fields[roleFieldIdx] = { name: 'Available Roles', value: newRoleValue, inline: false };
@@ -596,6 +606,11 @@ async function handleDashboard(interaction, selectedPanelId) {
     if (panelStatus.recoveredId) {
         await migrateReactionRoleMessageId(client, guildId, panelData, panelStatus.recoveredId);
         panelStatus = await getReactionRolePanelStatus(client, guild, panelData);
+    }
+
+    // Roles deleted while the bot was offline: clean them so neither the dashboard nor the panel shows "@unknown-role".
+    if ((await pruneMissingPanelRoles(client, guild, panelData)).length && panelStatus.exists) {
+        await rebuildLivePanelMessage(guild, panelData);
     }
 
     const discordMsg = panelStatus.message || (await fetchPanelDiscordMessage(guild, panelData));

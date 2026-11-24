@@ -4,6 +4,7 @@ import {
   rememberStaffRoles, refreshStaffPermissionBoard, demoteAdministratorsBelowAdmin, removeMentionEveryoneFromStaffRoles,
   describeMentionEveryoneHolders,
 } from '../services/staffRoleHierarchyService.js';
+import { reportRoleSync } from '../services/botUpdatesRoom.js';
 
 export default {
   name: Events.ClientReady,
@@ -22,9 +23,11 @@ export default {
       } catch (error) {
         logger.error(`Failed to find the staff roles in ${guild.name}:`, error);
       }
+      let demoted = null;
+      let stripped = null;
       // Reports #208 & #302: Administrator taken off roles across all servers and granted all other permissions.
       try {
-        const demoted = await demoteAdministratorsBelowAdmin(guild);
+        demoted = await demoteAdministratorsBelowAdmin(guild);
         if (demoted.status === 'done' && (demoted.changed.length || demoted.failed.length)) {
           startupLog(`Administrator taken off in ${guild.name}: ${demoted.changed.join(', ') || 'none'}${demoted.failed.length ? ` (failed: ${demoted.failed.join(', ')})` : ''}`);
         }
@@ -33,7 +36,7 @@ export default {
       }
       // GH #320: no staff role may mention @everyone / @here, in every server (the trusted roles keep it).
       try {
-        const stripped = await removeMentionEveryoneFromStaffRoles(guild);
+        stripped = await removeMentionEveryoneFromStaffRoles(guild);
         if (stripped.changed.length || stripped.failed.length) {
           startupLog(`Mention Everyone taken off in ${guild.name}: ${stripped.changed.join(', ') || 'none'}${stripped.failed.length ? ` (failed: ${stripped.failed.join(', ')})` : ''}`);
         }
@@ -42,6 +45,9 @@ export default {
       } catch (error) {
         logger.error(`Failed to take Mention Everyone off staff roles in ${guild.name}:`, error);
       }
+      // This server's #bot-updates: the roles changed, the failures and the roles that kept Mention Everyone, and why
+      // (posted only when something changed since the last post). It never throws.
+      await reportRoleSync(client, guild, { demoted, stripped });
       try {
         const board = await refreshStaffPermissionBoard(guild);
         boardResults.push(board.status === 'sent' ? `${board.status} (cleared ${board.deleted})` : board.status);

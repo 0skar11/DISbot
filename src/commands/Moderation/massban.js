@@ -13,6 +13,7 @@ import { sendModerationActionLog } from '../../services/moderation/moderationAct
 import { sendPunishmentDm } from '../../services/moderation/punishmentDm.js';
 import { assertCanActOn, hierarchyRuleApplies, lookupMember, LOOKUP_FAILED_MESSAGE } from '../../services/moderation/memberHierarchy.js';
 import { withInvoker } from '../../services/moderation/commandInvoker.js';
+import { reportMassModeration } from '../../services/botUpdatesRoom.js';
 export default {
     data: new SlashCommandBuilder()
         .setName("massban")
@@ -89,6 +90,7 @@ export default {
                 failed: [],
                 skipped: []
             };
+            const dms = { tried: 0, sent: 0 };
 
             for (const userId of userIds) {
                 try {
@@ -139,7 +141,10 @@ export default {
                     }
 
                     // Only members still in the server can be told (the bot must share a server to DM).
-                    if (member) await sendPunishmentDm(interaction.guild, user, 'ban', reason, interaction.user);
+                    if (member) {
+                        dms.tried += 1;
+                        if (await sendPunishmentDm(interaction.guild, user, 'ban', reason, interaction.user)) dms.sent += 1;
+                    }
                     // The ban log shows the member who ran the command; a failed ban leaves nothing behind (commandInvoker.js).
                     await withInvoker(interaction.guild.id, 'ban', userId, interaction.user, () => interaction.guild.members.ban(userId, {
                         reason: reason,
@@ -189,6 +194,13 @@ export default {
             }
 
             await addHardBans(client, interaction.guild.id, results.successful.map((result) => result.userId));
+            // #bot-updates: who ran it, the results and the DMs (in the background, never throws).
+            if (results.successful.length || results.failed.length) {
+                void reportMassModeration(client, interaction.guild.id, {
+                    action: 'ban', byId: interaction.user.id, done: results.successful.length, skipped: results.skipped.length,
+                    failed: results.failed.length, dmTried: dms.tried, dmSent: dms.sent,
+                });
+            }
 
             let description = `**Hard Ban Results** — فك البان متاح للـ trusted فقط\n\n`;
             

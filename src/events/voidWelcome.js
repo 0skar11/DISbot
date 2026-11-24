@@ -1,6 +1,8 @@
 import { ChannelType, Events, PermissionFlagsBits } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getWelcomeEmoji } from '../services/welcomeEmojiService.js';
+import { memberJoinInvite } from '../services/inviteTrackerService.js';
+import { welcomeInviteNote } from '../services/welcomeInviteNote.js';
 import { CHAOS_GUILD_ID, escapeGuildName, welcomeChannelSetting } from '../config/welcome.js';
 
 const TEXT_CHANNELS = new Set([ChannelType.GuildText, ChannelType.GuildAnnouncement]);
@@ -50,6 +52,20 @@ export async function resolveWelcomeChannel(guild, { env = process.env } = {}) {
   return null;
 }
 
+/**
+ * The one welcome message (GH #329): `welcome to <server> @member 👋`, and under it who invited the member and the
+ * CC bot's invite gift when known (services/welcomeInviteNote.js). Only the member and the inviter can be pinged.
+ */
+export function welcomePayload(member, note = null) {
+  const guildName = member.guild.name || (member.guild.id === CHAOS_GUILD_ID ? 'chaos' : '');
+  const welcome = `welcome to ${escapeGuildName(guildName)} <@${member.id}> ${getWelcomeEmoji(member.client)}`;
+  const users = [...new Set([String(member.id), ...(note?.text && note.inviterId ? [String(note.inviterId)] : [])])];
+  return {
+    content: note?.text ? `${welcome}\n${note.text}` : welcome,
+    allowedMentions: { users },
+  };
+}
+
 export default {
   name: Events.GuildMemberAdd,
   once: false,
@@ -58,17 +74,14 @@ export default {
     try {
       if (!member?.guild || member.user?.bot) return;
 
+      // The invite the member used, read once with the join log (events/inviteLogger.js): started at once.
+      const detected = Promise.resolve().then(() => memberJoinInvite(member)).catch(() => null);
       const channel = await resolveWelcomeChannel(member.guild);
       if (!channel) return;
 
-      const guildName = member.guild.name || (member.guild.id === CHAOS_GUILD_ID ? 'chaos' : '');
-      const content = `welcome to ${escapeGuildName(guildName)} <@${member.id}> ${getWelcomeEmoji(member.client)}`;
-
-      await channel.send({
-        content,
-        allowedMentions: { users: [member.id] },
-      });
-      logger.info(`Sent welcome for ${member.user?.tag || member.id} in channel ${channel.id}.`);
+      const note = await welcomeInviteNote(member, detected).catch(() => null);
+      await channel.send(welcomePayload(member, note));
+      logger.info(`Sent welcome for ${member.user?.tag || member.id} in channel ${channel.id}${note ? ` (invited by ${note.inviterId}${note.gift ? ', CC gift told' : ''})` : ''}.`);
     } catch (error) {
       logger.error('Failed to send welcome message:', error);
     }

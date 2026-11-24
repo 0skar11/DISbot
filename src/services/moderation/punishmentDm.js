@@ -1,6 +1,7 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import { getServerInviteUrl } from '../../commands/Moderation/dm.js';
+import { noteBotAction } from '../botActivityStats.js';
 
 // Ban and kick only (report #133): the member gets a DM with a mention of them that says what happened
 // and why, and names the moderator (with a mention) to talk to if they feel it was unfair. It is sent
@@ -53,6 +54,7 @@ export async function sendPunishmentDm(guild, user, action, reason, moderator = 
         const inviteUrl = action === 'kick' || action === 'unban' ? await getServerInviteUrl(guild).catch(() => null) : null;
         // The member's own mention on top, so the DM is clearly for them.
         await user.send({ content: `${user}`, ...buildPunishmentDm(guild, action, reason, inviteUrl, { user, moderator }) });
+        noteBotAction(guild?.client, 'dm', { guildId: guild?.id });
         return true;
     } catch (error) {
         logger.debug(`Could not DM ${user.tag || user.id} about the ${action}: ${error.message}`);

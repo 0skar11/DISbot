@@ -4,6 +4,7 @@ import { publishArabicModerationCommands } from '../../services/moderationComman
 import { publishTrustedBoard } from '../../services/trustedBoardService.js';
 import { publishRulesBoard } from '../../services/rulesBoardService.js';
 import { isServerOwner } from '../../config/serverOwners.js';
+import { addRoleBoardsSubcommand, executeRoleBoards } from './modules/roleBoardsCommand.js';
 
 // One command with subcommands keeps the bot under Discord's 100 global command limit.
 export default {
@@ -14,10 +15,13 @@ export default {
     .addSubcommand((sub) => sub.setName('admin-permissions').setDescription('Refresh the staff permission board (edit only)'))
     .addSubcommand((sub) => sub.setName('strip-admin').setDescription('Keep Administrator for top 3 roles only, remove from lower roles (Report #302)'))
     .addSubcommand((sub) => sub.setName('trusted').setDescription('Post or refresh the Anti-Nuke trusted list'))
-    .addSubcommand((sub) => sub.setName('rules').setDescription('Post (with @everyone) or refresh the server rules')),
+    .addSubcommand((sub) => sub.setName('rules').setDescription('Post (with @everyone) or refresh the server rules'))
+    .addSubcommand(addRoleBoardsSubcommand),
 
   async execute(interaction) {
     if (!interaction.inGuild()) return interaction.reply({ content: '❌ هذا الأمر يعمل داخل السيرفر فقط.', ephemeral: true });
+    // Owner-only (checked inside), so it does not need Manage Server (GH #326).
+    if (interaction.options.getSubcommand() === 'role-boards') return executeRoleBoards(interaction);
     if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return interaction.reply({ content: '❌ تحتاج إلى صلاحية Manage Server.', ephemeral: true });
 
     try {

@@ -7,22 +7,26 @@ import { logger } from '../utils/logger.js';
 // Works out which invite a new member used by comparing invite use counts before and after the join
 // and posts it to the `invites` log channel. Log only: invite rewards are paid by CC-bot, so this file
 // must never register joins or pay rewards (that would pay twice). Needs Manage Server to read invites.
-const VANITY = 'vanity';
-const cache = new Map(); // guildId -> Map<code, { uses, maxUses, inviterId }>
+// The welcome (events/voidWelcome.js) reads the same result (memberJoinInvite) to say who invited the member.
+export const VANITY = 'vanity';
+const cache = new Map(); // guildId -> Map<code, { uses, maxUses, inviterId, inviterBot }>
 const queues = new Map(); // guildId -> Promise, so joins that land together are compared one at a time
-const joins = new Map(); // guildId:memberId:joinedAt -> Promise of the join's result, shared by every caller
+const joins = new Map(); // guildId:memberId:joinedAt -> { detected, done }, shared by every caller
 
 function canReadInvites(guild) {
-  return Boolean(guild.members.me?.permissions.has(PermissionFlagsBits.ManageGuild));
+  return Boolean(guild.members?.me?.permissions?.has?.(PermissionFlagsBits.ManageGuild));
 }
+
+const inviteEntry = (invite) => ({
+  uses: invite.uses ?? 0,
+  maxUses: invite.maxUses ?? 0,
+  inviterId: invite.inviter?.id || invite.inviterId || null,
+  inviterBot: Boolean(invite.inviter?.bot),
+});
 
 async function snapshot(guild) {
   const invites = await guild.invites.fetch({ cache: false });
-  const map = new Map([...invites.values()].map((invite) => [invite.code, {
-    uses: invite.uses ?? 0,
-    maxUses: invite.maxUses ?? 0,
-    inviterId: invite.inviter?.id || invite.inviterId || null,
-  }]));
+  const map = new Map([...invites.values()].map((invite) => [invite.code, inviteEntry(invite)]));
   if (guild.vanityURLCode) {
     const vanity = await guild.fetchVanityData().catch(() => null);
     if (vanity) map.set(VANITY, { uses: vanity.uses ?? 0, maxUses: 0, inviterId: null, vanityCode: vanity.code });
@@ -40,7 +44,7 @@ export async function cacheGuildInvites(guild) {
 // member joins, and findUsedInvite needs the old entry to spot it.
 export function rememberInvite(invite) {
   const invites = cache.get(invite.guild?.id);
-  invites?.set(invite.code, { uses: invite.uses ?? 0, maxUses: invite.maxUses ?? 0, inviterId: invite.inviter?.id || invite.inviterId || null });
+  invites?.set(invite.code, inviteEntry(invite));
 }
 
 /** Compares two snapshots and returns the code + details of the invite that was used, or null. */
@@ -56,13 +60,28 @@ export function findUsedInvite(before, after) {
   return null;
 }
 
+/**
+ * Whether `used` (findUsedInvite) is the invite without any doubt, the way the CC bot decides who gets the invite gift
+ * (CC-bot src/services/cc/inviteTracker.js findUsedInvite): the one invite whose count went up; or, no count up, the
+ * only invite gone since the last count, used exactly once short of its max, in a server with no vanity link.
+ * Two counts up at once (two joins that landed together) is not sure: findUsedInvite's first pick may be wrong.
+ */
+export function isCertainInvite(before, after, used, { vanity = false } = {}) {
+  if (!before || !after || !used) return false;
+  const grown = [...after].filter(([code, now]) => now.uses > (before.get(code)?.uses ?? 0));
+  if (grown.length) return grown.length === 1 && grown[0][0] === used.code;
+  const gone = [...before.keys()].filter((code) => !after.has(code));
+  const old = before.get(used.code);
+  return !vanity && gone.length === 1 && gone[0] === used.code && old?.maxUses > 0 && old.uses + 1 === old.maxUses;
+}
+
 export function countInvitesBy(invites, inviterId) {
   let total = 0;
   for (const invite of invites.values()) if (invite.inviterId === inviterId) total += invite.uses;
   return total;
 }
 
-async function processJoin(member) {
+async function processJoin(member, onDetected = () => {}) {
   const { guild } = member;
   if (!canReadInvites(guild)) return null;
 
@@ -72,10 +91,13 @@ async function processJoin(member) {
   // Without an earlier snapshot (Manage Server granted after startup) any used invite would look new,
   // so this join is logged as unknown and the snapshot just taken is the baseline for the next one.
   const used = before ? findUsedInvite(before, after) : null;
+  const result = { used, certain: isCertainInvite(before, after, used, { vanity: Boolean(guild.vanityURLCode) }) };
+  // The welcome needs only the invite: it doesn't wait for the log below.
+  onDetected(result);
 
   await logJoin(member, used, after)
     .catch((error) => logger.error(`Invite log failed for ${member.user?.tag} in ${guild.name}:`, error));
-  return { used };
+  return result;
 }
 
 async function logJoin(member, used, after) {
@@ -108,22 +130,41 @@ async function logJoin(member, used, after) {
   });
 }
 
-/**
- * Handles a member's join once, however many listeners ask.
- * Resolves to `{ used }` (the invite used, or null when unknown), or null when invites can't be read.
- */
-export function handleMemberJoinInvite(member) {
+/** A member's join, read once however many listeners ask: `detected` once the invite is known, `done` once logged. */
+function trackJoin(member) {
   const key = `${member.guild.id}:${member.id}:${member.joinedTimestamp}`;
-  if (joins.has(key)) return joins.get(key);
+  const known = joins.get(key);
+  if (known) return known;
+  let detect;
+  const detected = new Promise((resolve) => { detect = resolve; });
   const previous = queues.get(member.guild.id) || Promise.resolve();
-  const next = previous
-    .then(() => processJoin(member))
+  const done = previous
+    .then(() => processJoin(member, detect))
     .catch((error) => {
       logger.error(`Invite tracking failed for ${member.user?.tag} in ${member.guild.name}:`, error);
       return null;
+    })
+    .then((result) => {
+      detect(result);
+      return result;
     });
-  queues.set(member.guild.id, next);
-  joins.set(key, next);
+  queues.set(member.guild.id, done);
+  const entry = { detected, done };
+  joins.set(key, entry);
   setTimeout(() => joins.delete(key), 60_000).unref?.();
-  return next;
+  return entry;
+}
+
+/**
+ * Handles a member's join once, however many listeners ask, and logs it.
+ * Resolves to `{ used, certain }` (the invite used, or null when unknown; certain: see isCertainInvite), or null
+ * when invites can't be read.
+ */
+export function handleMemberJoinInvite(member) {
+  return trackJoin(member).done;
+}
+
+/** The same result as handleMemberJoinInvite, as soon as the invite is known (it doesn't wait for the log). */
+export function memberJoinInvite(member) {
+  return trackJoin(member).detected;
 }

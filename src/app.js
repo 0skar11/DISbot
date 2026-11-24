@@ -19,6 +19,7 @@ import { runSafeTask, handleTaskError, ErrorCodes } from './utils/errorHandler.j
 import { initializeMusic } from './services/music/riffySetup.js';
 import { shutdownMusic } from './services/music/playerHandler.js';
 import { flushChatCounts } from './services/leveling/chatCounter.js';
+import { flushBotUpdates } from './services/botUpdatesRoom.js';
 import { tickVoiceActivity } from './services/leveling/voiceXp.js';
 import pkg from '../package.json' with { type: 'json' };
 import { EXPECTED_SCHEMA_VERSION, EXPECTED_SCHEMA_LABEL } from './config/database/schemaVersion.js';
@@ -374,6 +375,8 @@ class TitanBot extends Client {
 
       // Save message counts still held in memory before the database closes (top chat).
       await flushChatCounts(this).catch((error) => logger.error('Failed to save chat counts on shutdown:', error));
+      // The bot activity counts and the queued #bot-updates summaries (waits a few seconds at most).
+      await flushBotUpdates(this).catch((error) => logger.error('Failed to flush the bot updates on shutdown:', error));
 
       if (this.webServer) {
         logger.info('Closing web server...');

@@ -23,6 +23,7 @@ import { isBlockedStoreSlashCommand, STORE_ONLY_NOTICE } from '../services/cc/st
 import { ResponseCoordinator } from '../utils/responseCoordinator.js';
 import { enforceDefaultCommandPermissions } from '../utils/permissionGuard.js';
 import { blockDangerCommand } from '../services/moderation/dangerList.js';
+import { noteBotAction } from '../services/botActivityStats.js';
 
 const COMMAND_ERROR_SUBTYPES = {
   warn: 'warn_failed',
@@ -189,6 +190,8 @@ export default {
               return;
             }
 
+            // The #bot-updates activity count (in memory, never throws).
+            noteBotAction(client, 'command', { guildId: interaction.guildId });
             await command.execute(interaction, guildConfig, client);
           } catch (error) {
             await handleInteractionError(interaction, error, withTraceContext({

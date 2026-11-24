@@ -1,5 +1,6 @@
 import { isServerOwner } from '../config/serverOwners.js';
 import { canLiftHardBan } from './moderation/hardBanService.js';
+import { reportEveryoneMention } from './botUpdatesRoom.js';
 
 // Who may mention @everyone / @here: the owners (config/serverOwners.js), the server's owner, this bot (e.g. the rules
 // post) and, by the owner's decision after GH #320, the trusted members (the Anti-Nuke trusted list: members or roles,
@@ -26,7 +27,9 @@ export async function handleEveryoneMention(message) {
   if (!message.mentions?.everyone && !EVERYONE_MENTION.test(message.content || '')) return false;
   if (await canMentionEveryone(message)) return false;
 
-  await message.delete().catch(() => {});
+  const deleted = await message.delete().then(() => true, () => false);
+  // #bot-updates: one summary per 10 minutes (botUpdatesRoom.js), never throws.
+  reportEveryoneMention(message, { deleted });
   // A webhook is not a member: nobody to tell.
   if (message.webhookId) return true;
   const notice = await message.channel.send({

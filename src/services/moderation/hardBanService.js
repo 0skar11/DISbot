@@ -3,6 +3,7 @@ import { logger } from '../../utils/logger.js';
 import { getGuildConfig, updateGuildConfig } from '../config/guildConfig.js';
 import { isTrusted } from '../../utils/antiNukeLogging.js';
 import { isBotOwner } from '../../config/bot.js';
+import { reportHardBan } from '../botUpdatesRoom.js';
 
 // Hard bans (from `هارد بان` / massban) can only be lifted by trusted members.
 // Any other unban is reverted immediately, and a hard-banned user who rejoins is banned again.
@@ -53,19 +54,25 @@ export async function enforceHardBanOnUnban(ban) {
   if (executorId && executorId !== guild.client.user.id && await canLiftHardBan(guild, executorId)) {
     await removeHardBan(guild.client, guild.id, user.id);
     logger.info(`Hard ban on ${user.id} lifted by trusted member ${executorId} in ${guild.id}`);
+    // #bot-updates: one summary per minute (botUpdatesRoom.js), never throws.
+    reportHardBan(guild.client, guild.id, { event: 'lifted', userId: user.id, executorId });
     return;
   }
 
-  await guild.members.ban(user.id, { reason: REBAN_REASON }).catch((error) => {
+  const rebanned = await guild.members.ban(user.id, { reason: REBAN_REASON }).then(() => true, (error) => {
     logger.error(`Failed to re-apply hard ban on ${user.id} in ${guild.id}:`, error);
+    return false;
   });
   logger.warn(`Reverted unban of hard-banned user ${user.id} by ${executorId || 'unknown'} in ${guild.id}`);
+  reportHardBan(guild.client, guild.id, { event: 'reverted', userId: user.id, executorId, ok: rebanned });
 }
 
 /** GuildMemberAdd: a hard-banned user who got back in (e.g. unbanned while the bot was offline) is banned again. */
 export async function enforceHardBanOnJoin(member) {
   if (!(await isHardBanned(member.client, member.guild.id, member.id))) return;
-  await member.guild.members.ban(member.id, { reason: REBAN_REASON }).catch((error) => {
+  const rebanned = await member.guild.members.ban(member.id, { reason: REBAN_REASON }).then(() => true, (error) => {
     logger.error(`Failed to re-apply hard ban on ${member.id} in ${member.guild.id}:`, error);
+    return false;
   });
+  reportHardBan(member.client, member.guild.id, { event: 'rejoined', userId: member.id, ok: rebanned });
 }

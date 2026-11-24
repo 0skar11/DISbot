@@ -19,6 +19,7 @@ import { ensureTypedServiceError, wrapServiceBoundary } from '../utils/serviceEr
 import { PRIORITY_MAP } from '../utils/helpers.js';
 import { TICKET_STAFF_ALLOW, ticketStaffRoleIds } from '../utils/ticket/ticketStaffAccess.js';
 import { utf8TextFile } from '../utils/textAttachment.js';
+import { reportTicketClosed } from './botUpdatesRoom.js';
 
 /**
  * Overwrites that let the staff and admins see and answer a ticket (GH #316): the staff roles, every
@@ -413,7 +414,9 @@ components: []
         }
       }
     });
-    
+    // #bot-updates: one summary per 10 minutes (botUpdatesRoom.js), never throws.
+    reportTicketClosed(channel.client, channel.guild.id, { ticket: `#${channel.name}`, closedById: closer.id });
+
     return ticketData;
     
   } catch (error) {

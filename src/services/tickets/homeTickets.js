@@ -21,6 +21,7 @@ import { getGuildConfig } from '../config/guildConfig.js';
 import { grantTicketStaffAccess, isTicketStaffMember, ticketStaffRoleIds } from '../../utils/ticket/ticketStaffAccess.js';
 import { findBoardMessage, rememberBoardMessage } from '../../utils/boardMessage.js';
 import { utf8TextFile } from '../../utils/textAttachment.js';
+import { reportTicketClosed } from '../botUpdatesRoom.js';
 import { logger } from '../../utils/logger.js';
 
 export const TICKET_BUTTON_PREFIX = 'hticket';
@@ -381,7 +382,7 @@ export async function closeTicket(channel, member, { deleteAfterMs = CLOSE_DELAY
     const messages = await channel.messages.fetch({ limit: 100 }).catch(() => new Map());
     const log = state.logChannelId && guild.channels.cache.get(state.logChannelId);
     const section = SECTIONS[ticket.type];
-    await log?.send({
+    const transcriptPosted = !log ? false : await log.send({
         embeds: [{
             color: 0x95a5a6,
             title: `${section.title} #${ticket.number} اتقفل`,
@@ -395,7 +396,14 @@ export async function closeTicket(channel, member, { deleteAfterMs = CLOSE_DELAY
         // GH #324: with the UTF-8 byte order mark, Discord's preview shows the Arabic instead of Thai-looking letters.
         files: [{ attachment: utf8TextFile(transcript(messages).slice(-TRANSCRIPT_LIMIT * 200) || '—'), name: `ticket-${ticket.number}.txt` }],
         allowedMentions: { parse: [] },
-    }).catch((error) => logger.warn(`[TICKETS] Could not post transcript ${ticket.number}: ${error.message}`));
+    }).then(() => true, (error) => {
+        logger.warn(`[TICKETS] Could not post transcript ${ticket.number}: ${error.message}`);
+        return false;
+    });
+    // #bot-updates: one summary per 10 minutes (botUpdatesRoom.js), never throws.
+    reportTicketClosed(channel.client, guild.id, {
+        ticket: `${section.title} #${ticket.number}`, closedById: member.id, transcript: transcriptPosted,
+    });
 
     await channel.send({ content: `🔒 التكت اتقفل بواسطة <@${member.id}>، الروم هتتمسح بعد ${Math.round(deleteAfterMs / 1000)} ثواني.`, allowedMentions: { parse: [] } }).catch(() => {});
     setTimeout(() => channel.delete('Ticket closed').catch(() => {}), deleteAfterMs).unref?.();

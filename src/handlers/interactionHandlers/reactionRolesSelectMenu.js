@@ -4,7 +4,8 @@ import { logger } from '../../utils/logger.js';
 import { handleInteractionError, createError, ErrorTypes } from '../../utils/errorHandler.js';
 import { getColor } from '../../config/bot.js';
 import { logEvent, EVENT_TYPES } from '../../services/loggingService.js';
-import { getReactionRoleMessage } from '../../services/reactionRoleService.js';
+import { getReactionRoleMessage, pruneMissingPanelRoles } from '../../services/reactionRoleService.js';
+import { rebuildLivePanelMessage } from '../../commands/Reaction_roles/reactroles.js';
 
 export async function handleReactionRolesSelectMenu(interaction, client) {
     try {
@@ -59,6 +60,11 @@ export async function handleReactionRolesSelectMenu(interaction, client) {
         }
 
         const botRolePosition = me.roles.highest.position;
+
+        // Roles deleted since the panel was made: clean them from the panel and its menu (GH #326).
+        if ((await pruneMissingPanelRoles(client, interaction.guild, reactionRoleData).catch(() => [])).length) {
+            await rebuildLivePanelMessage(interaction.guild, reactionRoleData);
+        }
 
         const availableRoleIds = Array.isArray(reactionRoleData.roles)
             ? reactionRoleData.roles
