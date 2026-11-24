@@ -3,6 +3,7 @@
 import { ChannelType, MessageFlags } from 'discord.js';
 import { isServerOwner } from '../../../config/serverOwners.js';
 import { ROLE_BOARDS } from '../../../config/roleBoards.js';
+import { HOME_GUILD_ID } from '../../../config/homeGuild.js';
 import {
   publishRoleBoard,
   parseBoardMessageEntries,
@@ -51,10 +52,14 @@ export async function readBoardToCopy(guild, reference, fallbackChannel) {
 const normalizeName = (name) => String(name ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
 const SPARE_EMOJIS = ['🎲', '🕹️', '🏆', '🎳', '🧩', '🏁', '🎮', '🎰', '🛡️', '🚗'];
 
-/** `<:name:id>` of a server emoji the bot can see (in any server it is in), or null. */
+/**
+ * `<:name:id>` of the CHAOS Club (home guild) emoji with this name, or null. Only that guild's emojis count, so
+ * another server cannot supply an emoji with the same name.
+ */
 export function serverEmoji(client, name) {
   if (!name) return null;
-  const found = client?.emojis?.cache?.find?.((emoji) => emoji.name === name && emoji.available !== false);
+  const emojis = client?.guilds?.cache?.get?.(HOME_GUILD_ID)?.emojis?.cache;
+  const found = emojis?.find?.((emoji) => emoji.name === name && emoji.available !== false);
   return found ? `<${found.animated ? 'a' : ''}:${found.name}:${found.id}>` : null;
 }
 

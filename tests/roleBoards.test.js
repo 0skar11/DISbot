@@ -639,7 +639,9 @@ describe('GH #326: the board uses the CHAOS Club game emojis the bot can see', (
   test('emojiName resolves to the server emoji; copied boards swap invisible emojis for it', async () => {
     const { serverEmoji, withServerEmojis, withUsableEmojis } = await import('../src/commands/Core/modules/roleBoardsCommand.js');
     const emojis = [{ id: '700', name: 'game_roblox', animated: false }, { id: '701', name: 'game_pubg', animated: false }];
-    const client = { emojis: { cache: { find: (fn) => emojis.find(fn), has: (id) => emojis.some((e) => e.id === id) } } };
+    const cache = { find: (fn) => emojis.find(fn), has: (id) => emojis.some((e) => e.id === id) };
+    const other = { find: () => ({ id: '666', name: 'game_roblox', animated: false }) };
+    const client = { emojis: { cache }, guilds: { cache: new Map([['1155236281706627173', { emojis: { cache } }], ['999', { emojis: { cache: other } }]]) } };
     assert.equal(serverEmoji(client, 'game_roblox'), '<:game_roblox:700>');
     assert.equal(serverEmoji(client, 'nope'), null);
     assert.equal(withServerEmojis(client, [{ emoji: '🧱', emojiName: 'game_roblox', name: 'Roblox' }])[0].emoji, '<:game_roblox:700>');
