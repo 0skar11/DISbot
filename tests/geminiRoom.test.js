@@ -401,7 +401,8 @@ describe('Gemini room: failures', () => {
     let now = 7_000_000;
     const log = makeLog();
     const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError');
-    const { fetchImpl, calls } = geminiFetch(timeout, { status: 429, headers: { 'retry-after': '120' } }, textAnswer('رجعت'));
+    // A timeout looks for another model first (the list call fails here: 500), then the error answer and the pause.
+    const { fetchImpl, calls } = geminiFetch(timeout, { status: 500 }, { status: 429, headers: { 'retry-after': '120' } }, textAnswer('رجعت'));
     const send = (authorId) => {
       const message = makeMessage(guild, room, 'سؤال', { authorId });
       return run(message, client, { fetchImpl, now: () => now, log }).then((handled) => ({ handled, message }));
@@ -410,18 +411,18 @@ describe('Gemini room: failures', () => {
     const first = await send('230000000000000001');
     assert.equal(first.handled, true);
     assert.equal(first.message.replies[0].content, GEMINI_REPLIES.error);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2, 'the timed-out request and the model list');
     assert.equal((await send('230000000000000002')).message.replies[0].content, GEMINI_REPLIES.busy, 'paused after the timeout');
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
 
     now += 10_001;
     assert.equal((await send('230000000000000003')).message.replies[0].content, GEMINI_REPLIES.error);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3, 'a 429 is not retried on another model');
     now += 60_001;
     assert.equal((await send('230000000000000004')).message.replies[0].content, GEMINI_REPLIES.busy, 'Retry-After is kept');
     now += 60_000;
     assert.equal((await send('230000000000000005')).message.replies[0].content, 'رجعت');
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 4);
     assert.ok(log.lines.every((line) => !line.includes(KEY)), 'the key is never logged');
   });
 

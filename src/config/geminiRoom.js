@@ -19,7 +19,8 @@ export const GEMINI_DEFAULT_MODEL = 'gemini-3.8-flash';
 export const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 export const GEMINI_LIMITS = Object.freeze({
-  timeoutMs: 20_000, // one answer, every request to Gemini for it included
+  timeoutMs: 30_000, // one answer, every request to Gemini for it included
+  attemptTimeoutMs: 9_000, // one request: a slow (overloaded) model is dropped so the next one can be tried
   maxInputChars: 1_500, // a longer message gets a short "make it shorter" answer and no request
   perUserPerMinute: 5,
   globalPerMinute: 30, // every server together

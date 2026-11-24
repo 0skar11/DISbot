@@ -356,7 +356,7 @@ async function* fallbackModels({ state, apiKey, env, fetchImpl, model, log }) {
   try {
     if (!state.modelList || nowMs - state.modelList.at > MODEL_LIST_TTL_MS) {
       state.modelList = { at: nowMs, models: await listChatModels({ apiKey, fetchImpl }) };
-      log.info(`Gemini room: ${state.modelList.models.length} usable chat models found; first: ${state.modelList.models.slice(0, 3).join(', ') || 'none'}.`);
+      log.info(`Gemini room: ${state.modelList.models.length} usable chat models found: ${state.modelList.models.join(', ') || 'none'}.`);
     }
   } catch (error) {
     log.warn(`Gemini room: could not list the models (${error?.message}).`);
@@ -388,27 +388,28 @@ async function answer(message, client, context) {
     const owner = isServerOwner(userId);
     const deadline = now() + GEMINI_LIMITS.timeoutMs;
     const request = buildRequest({ owner, message, client, question, context: await roomContext(message, client, prefixes) });
+    // 404 (unknown model), 5xx (overloaded) and a slow model (timeout) are worth another model; a refused key, a 429 or a bad request are not.
+    const worthAnotherModel = (error) => error?.kind === 'timeout' || (error?.kind === 'http' && [404, 500, 502, 503, 504].includes(error.status));
+    const attemptMs = () => Math.max(1, Math.min(deadline - now(), GEMINI_LIMITS.attemptTimeoutMs));
     const ask = async () => {
       try {
-        return readAnswer(await generateContent({ apiKey, model, body: request, timeoutMs: deadline - now(), fetchImpl }));
+        return readAnswer(await generateContent({ apiKey, model, body: request, timeoutMs: attemptMs() + 3000, fetchImpl }));
       } catch (error) {
-        // An overloaded (5xx) or unknown (404) main model: up to two tries on other models, same deadline.
-        const retryable = error?.kind === 'http' && [404, 500, 502, 503, 504].includes(error.status);
-        if (!retryable) throw error;
-        log.warn(`Gemini room: ${model} answered ${error.status}${error.detail ? ` (${error.detail})` : ''}.`);
+        if (!worthAnotherModel(error)) throw error;
+        log.warn(`Gemini room: ${model} answered ${error.status ?? error.kind}${error.detail ? ` (${error.detail})` : ''}.`);
         let last = error;
         let tries = 0;
         for await (const other of fallbackModels({ state, apiKey, env: context.env || process.env, fetchImpl, model, log })) {
-          if (deadline - now() < 3000 || tries >= 2) break;
+          if (deadline - now() < 3000 || tries >= 3) break;
           tries += 1;
           try {
-            const answer = readAnswer(await generateContent({ apiKey, model: other, body: request, timeoutMs: deadline - now(), fetchImpl }));
+            const answer = readAnswer(await generateContent({ apiKey, model: other, body: request, timeoutMs: attemptMs(), fetchImpl }));
             log.warn(`Gemini room: answered with ${other} instead of ${model}.`);
             return answer;
           } catch (retryError) {
             last = retryError;
             log.warn(`Gemini room: ${other} answered ${retryError?.status ?? retryError?.kind}${retryError?.detail ? ` (${retryError.detail})` : ''}.`);
-            if (!(retryError?.kind === 'http' && [404, 500, 502, 503, 504].includes(retryError.status))) break;
+            if (!worthAnotherModel(retryError)) break;
           }
         }
         throw last;
