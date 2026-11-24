@@ -48,6 +48,32 @@ export async function readBoardToCopy(guild, reference, fallbackChannel) {
   return entries;
 }
 
+const normalizeName = (name) => String(name ?? '').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+const SPARE_EMOJIS = ['🎲', '🕹️', '🏆', '🎳', '🧩', '🏁', '🎮', '🎰', '🛡️', '🚗'];
+
+/**
+ * A copied board may use custom emojis from a server the bot is not in, which the bot cannot react with.
+ * Those get an emoji it can use: the default one of the same-named role in the config, else a spare one.
+ */
+export function withUsableEmojis(client, guild, entries, board = ROLE_BOARDS.find((item) => item.key === 'games')) {
+  const visible = (emoji) => {
+    const id = String(emoji ?? '').match(/^<a?:\w+:(\d+)>$/u)?.[1];
+    return !id || Boolean(client?.emojis?.cache?.has?.(id));
+  };
+  const used = new Set(entries.filter((entry) => visible(entry.emoji)).map((entry) => entry.emoji));
+  const spare = SPARE_EMOJIS.filter((emoji) => !used.has(emoji));
+  return entries.map((entry) => {
+    if (visible(entry.emoji)) return entry;
+    const roleName = normalizeName(guild?.roles?.cache?.get(entry.roleId)?.name);
+    const preset = board?.roles?.find((role) => role.name && normalizeName(role.name) === roleName
+      || (roleName && role.name && roleName.includes(normalizeName(role.name))));
+    let emoji = preset?.emoji && !used.has(preset.emoji) ? preset.emoji : spare.shift();
+    if (!emoji) return entry;
+    used.add(emoji);
+    return { ...entry, emoji };
+  });
+}
+
 function describeResult(board, result) {
   const count = `${result.entries.length} رول`;
   const head = {
@@ -81,7 +107,7 @@ export async function executeRoleBoards(interaction) {
 
     const lines = [];
     for (const board of boards) {
-      const entries = board.key === 'games' && copied ? copied : board.roles;
+      const entries = board.key === 'games' && copied ? withUsableEmojis(interaction.client, interaction.guild, copied, board) : board.roles;
       if (!entries?.length) {
         lines.push(`ℹ️ **${board.title}**: لسه مفيش رولات متحطة ليها (src/config/roleBoards.js)، فمتبعتتش.`);
         continue;

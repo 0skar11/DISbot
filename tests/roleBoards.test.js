@@ -610,3 +610,27 @@ describe('role boards config', () => {
     assert.deepEqual(await loadGuildBoards(makeClient(), OTHER), {});
   });
 });
+
+describe('GH #326: a copied board with emojis the bot cannot see', () => {
+  test('swaps them for usable emojis (same-named default first), keeps visible ones', async () => {
+    const { withUsableEmojis } = await import('../src/commands/Core/modules/roleBoardsCommand.js');
+    for (const guildId of ['1569932761471524874', '1155236281706627173']) {
+      const roles = new Map([
+        ['r1', { id: 'r1', name: '^ Rocket League ,' }],
+        ['r2', { id: 'r2', name: 'Some New Game' }],
+        ['r3', { id: 'r3', name: 'Roblox' }],
+      ]);
+      const guild = { id: guildId, roles: { cache: roles } };
+      const client = { emojis: { cache: new Map([['111', {}]]) } };
+      const out = withUsableEmojis(client, guild, [
+        { emoji: '<:rl:999>', roleId: 'r1' },
+        { emoji: '<:new:998>', roleId: 'r2' },
+        { emoji: '<:rb:111>', roleId: 'r3' },
+      ]);
+      assert.equal(out[0].emoji, '🚀');
+      assert.ok(out[1].emoji && !out[1].emoji.startsWith('<'));
+      assert.notEqual(out[1].emoji, out[0].emoji);
+      assert.equal(out[2].emoji, '<:rb:111>');
+    }
+  });
+});
